@@ -240,7 +240,12 @@ export default function Dashboard() {
       const res = await fetch(`${API_BASE}/api/scraper-status`);
       if (res.ok) {
         const data = await res.json();
-        setScraperStatus(data);
+        setScraperStatus((prev) => ({
+          ...prev,
+          ...data,
+          last_error: data.last_error ?? prev.last_error ?? null,
+          last_metrics: data.last_metrics ?? prev.last_metrics ?? {},
+        }));
       }
     } catch (e) {}
   };
@@ -277,7 +282,11 @@ export default function Dashboard() {
         const data = await res.json();
         if (data.success) {
           showStatus('Scraper agent successfully launched in background!', 'success');
-          setScraperStatus({ status: 'running', message: 'Sourcing jobs...' });
+          setScraperStatus((prev) => ({
+            ...prev,
+            status: 'running',
+            message: 'Sourcing jobs...',
+          }));
         } else {
           showStatus(data.message, 'error');
         }

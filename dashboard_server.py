@@ -13,13 +13,15 @@ import requests
 
 from jobsearch_paths import workspace_root
 from jobsearch_webhook import effective_webhook_url, public_config_for_api
-from notion_sqlite_mirror import upsert_notion_job_report
+from notion_sqlite_mirror import upsert_notion_job_report, ensure_notion_mirror_schema
 
 # Load env variables from repo root
 WORKSPACE_DIR = str(workspace_root())
 load_dotenv(dotenv_path=os.path.join(WORKSPACE_DIR, ".env"))
 
-PORT = 8080
+# HTTP API + dashboard backend (default 8080). Override if port is busy:
+#   JOBSEARCH_DASHBOARD_PORT=8081 python3 dashboard_server.py
+PORT = int(os.environ.get("JOBSEARCH_DASHBOARD_PORT", "8080"))
 CONFIG_PATH = os.path.join(WORKSPACE_DIR, "config.json")
 POLICY_CONFIG_PATH = os.path.join(WORKSPACE_DIR, "policy_config.json")
 APPROVED_PATH = os.path.join(WORKSPACE_DIR, "approved_jobs.json")
@@ -1167,6 +1169,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not Found")
 
 def main():
+    try:
+        ensure_notion_mirror_schema(WORKSPACE_DIR)
+    except Exception as e:
+        print(f"Notion SQLite mirror init warning: {e}")
+
     # Start background scheduler thread
     sched_thread = threading.Thread(target=scheduler_loop, daemon=True)
     sched_thread.start()

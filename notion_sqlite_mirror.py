@@ -55,6 +55,13 @@ def _init(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def ensure_notion_mirror_schema(workspace: Union[str, Path, None] = None) -> None:
+    """Create data/ and the SQLite file with tables (no rows). Safe to call at server startup."""
+    path = db_path(workspace)
+    with sqlite3.connect(path) as conn:
+        _init(conn)
+
+
 def _score_for_sqlite(job: Mapping[str, Any]) -> float:
     score = float(job.get("confidence_score") or 0)
     if score > 1.0:

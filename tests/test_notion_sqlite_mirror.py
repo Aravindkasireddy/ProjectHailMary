@@ -1,6 +1,18 @@
 import sqlite3
 
-from notion_sqlite_mirror import db_path, upsert_notion_job_report
+from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema, upsert_notion_job_report
+
+
+def test_ensure_schema_creates_table(tmp_path):
+    ensure_notion_mirror_schema(tmp_path)
+    path = db_path(tmp_path)
+    assert path.stat().st_size > 0
+    con = sqlite3.connect(path)
+    cur = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='notion_job_reports'"
+    )
+    assert cur.fetchone() is not None
+    con.close()
 
 
 def test_upsert_notion_job_report_roundtrip(tmp_path):

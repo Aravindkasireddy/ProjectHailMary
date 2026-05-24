@@ -22,7 +22,9 @@ Every successful Notion sync from `dashboard_server.py` (manual **Sync**, schedu
 
 `data/notion_job_reports.db` → table **`notion_job_reports`**
 
-The DB file is gitignored; it is created automatically. Inspect locally:
+The DB file is gitignored. The **table** is created when **`dashboard_server.py` starts** (or on first successful sync). **Rows appear only after a successful Notion sync** (manual **Sync**, scheduler auto-sync, or `save_to_notion.py`). If `notion_job_reports.db` is **0 bytes** with no tables (e.g. created with `touch`), delete it and restart the server or sync once.
+
+Inspect locally:
 
 ```bash
 sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_id, synced_at FROM notion_job_reports ORDER BY synced_at DESC LIMIT 10;"
@@ -52,6 +54,14 @@ sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_
    python dashboard_server.py
    ```
 
+   If you see **`Address already in use`**, something else is bound to **port 8080** (often another copy of this server). Either stop that process, or use another port and point the Next app at it:
+
+   ```bash
+   JOBSEARCH_DASHBOARD_PORT=8081 python dashboard_server.py
+   ```
+
+   Then set `NEXT_PUBLIC_API_URL=http://localhost:8081` in `dashboard/.env.local`.
+
 4. **Run the dashboard UI**
 
    ```bash
@@ -67,6 +77,57 @@ sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_
 3. `scripts/classify_and_save.py` — applies `candidate_jobs.json` overrides when present, else Gemini / keyword classifier.
 
 Logs append to `logs/pipeline.log` (server runs) and `logs/scrape.log` (discovery script).
+
+## Pipeline runner (local)
+
+From the **repository root**, run the same three stages as the dashboard scraper (stops on first failure):
+
+```bash
+chmod +x scripts/run_pipeline.sh   # once
+./scripts/run_pipeline.sh
+```
+
+Or with **Make**:
+
+```bash
+make pipeline          # uses the shell script
+make pipeline-py       # same steps, invoked directly by Make
+```
+
+Skip stages when reusing existing artifacts:
+
+```bash
+SKIP_SCRAPE=1 ./scripts/run_pipeline.sh      # only filter + classify
+SKIP_FILTER=1 SKIP_CLASSIFY=1 ./scripts/run_pipeline.sh   # scrape only
+```
+
+Override Python or repo root:
+
+```bash
+PYTHON=python3.12 ./scripts/run_pipeline.sh
+JOBSEARCH_ROOT=/path/to/Gemini-jobsearch ./scripts/run_pipeline.sh
+```
+
+## CI (GitHub Actions)
+
+On **push** and **pull_request** to `main` (and pushes to `cursor/**` branches), **CI** runs:
+
+- **Python:** `pip install -r requirements.txt`, `pytest`, and `compileall` on core modules.
+- **Dashboard:** `npm ci`, **`npm run build`** (required). **`npm run lint`** runs in CI with *continue on error* until legacy `any`/quote issues in `page.tsx` are cleaned up.
+
+Workflow file: `.github/workflows/ci.yml`.
+
+**Local parity** with the **required** GitHub checks (no strict lint):
+
+```bash
+make ci-check
+```
+
+Full local gate (**includes strict** `npm run lint`, which may fail until `page.tsx` ESLint issues are fixed):
+
+```bash
+make ci
+```
 
 ## CLI options
 
