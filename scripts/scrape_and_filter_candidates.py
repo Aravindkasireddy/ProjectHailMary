@@ -2,12 +2,52 @@ import json
 import re
 import sys
 import time
+import hashlib
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
+
+def compute_description_hash(description):
+    if not description:
+        return ""
+    normalized = "".join(description.lower().split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+def load_known_hashes(workspace_path):
+    approved_hashes = {}
+    failed_hashes = {}
+    
+    approved_path = workspace_path / "approved_jobs.json"
+    if approved_path.exists():
+        try:
+            jobs = json.loads(approved_path.read_text(encoding="utf-8"))
+            for j in jobs:
+                h = j.get("description_hash")
+                if not h and j.get("job_description"):
+                    h = compute_description_hash(j["job_description"])
+                if h:
+                    approved_hashes[h] = j
+        except Exception as e:
+            print(f"Error loading approved hashes: {e}")
+            
+    failed_path = workspace_path / "failed_candidate_jobs.json"
+    if failed_path.exists():
+        try:
+            jobs = json.loads(failed_path.read_text(encoding="utf-8"))
+            for j in jobs:
+                h = j.get("description_hash")
+                if not h and j.get("job_description"):
+                    h = compute_description_hash(j["job_description"])
+                if h:
+                    failed_hashes[h] = j
+        except Exception as e:
+            print(f"Error loading failed hashes: {e}")
+            
+    return approved_hashes, failed_hashes
+
 
 _scripts_dir = Path(__file__).resolve().parent
 _repo_root = _scripts_dir.parent
@@ -612,6 +652,43 @@ def check_red_flags(job):
     elif "desktop support" in title or "edi" in title:
         red_flags.append("Out of scope (Desktop support/EDI)")
         
+    # 5. Non-US Location check
+    loc_lower = job.get("location_work_type", "").lower()
+    non_us_countries_cities = [
+        "canada", "toronto", "vancouver", "montreal", "ottawa", "calgary", "edmonton", "quebec",
+        "united kingdom", " u.k.", ", uk", " u.k", "/uk", " london", "manchester",
+        "germany", "berlin", "munich", "frankfurt", "hamburg",
+        "india", "bangalore", "bengaluru", "pune", "mumbai", "hyderabad", "chennai", "delhi",
+        "australia", "sydney", "melbourne", "brisbane",
+        "france", "paris", "spain", "madrid", "barcelona",
+        "poland", "warsaw", "krakow", "netherlands", "amsterdam", "rotterdam",
+        "ireland", "dublin", "brazil", "mexico", "switzerland", "zurich", "geneva",
+        "sweden", "stockholm", "singapore", "philippines", "manila", "ukraine", "kyiv"
+    ]
+    
+    has_non_us_loc = False
+    for term in non_us_countries_cities:
+        if term in loc_lower:
+            red_flags.append(f"Non-US Location restriction (matched: {term} in location field)")
+            has_non_us_loc = True
+            break
+            
+    if not has_non_us_loc:
+        non_us_phrases = [
+            r"must be located in canada", r"must be based in canada",
+            r"must be based in the uk", r"must be located in the uk",
+            r"located in london", r"based in london",
+            r"located in germany", r"based in germany",
+            r"located in india", r"based in india",
+            r"must be resident of canada", r"must reside in canada",
+            r"eligible to work in canada", r"authorized to work in canada",
+            r"eligible to work in the uk", r"authorized to work in the uk"
+        ]
+        for phrase in non_us_phrases:
+            if re.search(phrase, desc):
+                red_flags.append(f"Non-US Location restriction (matched: {phrase} in description)")
+                break
+        
     return red_flags
 
 def main():
@@ -621,6 +698,8 @@ def main():
         
     print(f"Loaded {len(jobs)} scraped jobs. Validating active status and checking red flags...", flush=True)
     
+    approved_hashes, failed_hashes = load_known_hashes(WORKSPACE)
+    
     passed_jobs = []
     failed_jobs = []
     
@@ -629,6 +708,29 @@ def main():
         domain = urlparse(url).netloc.lower()
         company = job.get("company_name", "Unknown")
         
+        # Check description hash cache
+        desc = job.get("job_description", "")
+        h = job.get("description_hash")
+        if not h and desc:
+            h = compute_description_hash(desc)
+            job["description_hash"] = h
+            
+        if h:
+            if h in approved_hashes:
+                print(f"[{i+1}/{len(jobs)}] Cache HIT (Approved) for {company} - {url}. Skipping filter.", flush=True)
+                matched = approved_hashes[h]
+                job["red_flags"] = []
+                if "scraped_at" in matched:
+                    job["scraped_at"] = matched["scraped_at"]
+                passed_jobs.append(job)
+                continue
+            elif h in failed_hashes:
+                print(f"[{i+1}/{len(jobs)}] Cache HIT (Failed) for {company} - {url}. Skipping filter.", flush=True)
+                matched = failed_hashes[h]
+                job["red_flags"] = matched.get("red_flags", ["Previously rejected"])
+                failed_jobs.append(job)
+                continue
+
         print(f"[{i+1}/{len(jobs)}] Processing {company} - {url}...", flush=True)
         time.sleep(1) # Sleep to avoid rate limiting
         
@@ -742,6 +844,10 @@ def main():
                 continue
                 
         if scraped_data:
+            # Preserve scraped_at if it was in the original job
+            if "scraped_at" in job:
+                scraped_data["scraped_at"] = job["scraped_at"]
+                
             # Check length of description
             if len(scraped_data.get("job_description", "")) < 200:
                 print(f"  Inactive: Scraped description too short.", flush=True)

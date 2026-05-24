@@ -6,11 +6,165 @@ import time
 import logging
 import argparse
 import requests
+import hashlib
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, quote_plus
+from urllib.parse import urlparse, quote_plus, parse_qs
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+]
+
+def get_random_user_agent():
+    return random.choice(USER_AGENTS)
+
+def compute_description_hash(description):
+    if not description:
+        return ""
+    normalized = "".join(description.lower().split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+def search_duckduckgo(query):
+    headers = {
+        "User-Agent": get_random_user_agent(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    }
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+    links = []
+    try:
+        r = http_get(url, headers=headers, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if 'uddg=' in href:
+                    parsed_href = urlparse(href)
+                    queries = parse_qs(parsed_href.query)
+                    actual_url = queries.get('uddg', [None])[0]
+                    if actual_url:
+                        href = actual_url
+                
+                if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
+                    links.append(href)
+    except Exception as e:
+        log(f"DuckDuckGo search error for '{query}': {e}")
+    
+    valid_links = []
+    for link in links:
+        parsed = urlparse(link)
+        domain = parsed.netloc.lower()
+        if any(bad in domain for bad in ['duckduckgo.com']):
+            continue
+        if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
+            path_parts = [p for p in parsed.path.split('/') if p]
+            if 'greenhouse.io' in domain:
+                if len(path_parts) >= 3 and path_parts[1] == 'jobs':
+                    valid_links.append(link)
+            elif 'lever.co' in domain:
+                if len(path_parts) >= 2:
+                    valid_links.append(link)
+            elif 'myworkdayjobs.com' in domain:
+                if 'job' in path_parts:
+                    valid_links.append(link)
+            elif 'ashbyhq.com' in domain:
+                if len(path_parts) >= 2:
+                    valid_links.append(link)
+            elif 'workable.com' in domain:
+                if len(path_parts) >= 3 and path_parts[1] == 'j':
+                    valid_links.append(link)
+            elif 'smartrecruiters.com' in domain:
+                if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
+                    valid_links.append(link)
+            elif 'weworkremotely.com' in domain:
+                if 'remote-jobs' in path_parts:
+                    valid_links.append(link)
+            elif 'remote.co' in domain:
+                if 'job-details' in path_parts or 'job' in path_parts:
+                    valid_links.append(link)
+            elif 'linkedin.com' in domain:
+                if 'view' in path_parts:
+                    valid_links.append(link)
+            elif 'workatastartup.com' in domain:
+                if 'jobs' in path_parts:
+                    valid_links.append(link)
+    return list(set(valid_links))
+
+def extract_job_with_gemini(url, html, api_key):
+    if not api_key:
+        return None
+    try:
+        import google.generativeai as genai
+        body_text = clean_text(html)
+        body_text = body_text[:12000]
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        prompt = f"""
+You are an expert technical sourcing parser. Given a job posting webpage's text content, extract the job details.
+URL: {url}
+
+Page Content:
+\"\"\"
+{body_text}
+\"\"\"
+
+Extract the following fields and return ONLY a JSON object:
+- "job_title": The official title of the job.
+- "company_name": The hiring company's name.
+- "requirement_id": A unique job ID, requisition number, or code found in the text or URL. If not found, look at the URL path segments. If still not found, return "Unknown".
+- "job_description": The full text of the job description/requirements. Keep formatting clean.
+- "location_work_type": The location and work type (e.g. Remote, Hybrid, or city/state).
+
+Conform exactly to this JSON schema:
+{{
+  "job_title": "string",
+  "company_name": "string",
+  "requirement_id": "string",
+  "job_description": "string",
+  "location_work_type": "string"
+}}
+"""
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        data = json.loads(text)
+        
+        if data.get("job_title") and data.get("job_description"):
+            data["job_url"] = url
+            return data
+    except Exception as e:
+        print(f"Gemini fallback extraction failed for {url}: {e}", flush=True)
+    return None
+
+def scrape_url_with_gemini_fallback(url, api_key):
+    if not api_key:
+        return None
+    log(f"Triggering Gemini fallback parser for: {url}")
+    html = fetch_with_playwright(url)
+    if not html:
+        return None
+    return extract_job_with_gemini(url, html, api_key)
+
+
 
 from jobsearch_paths import workspace_root
 
@@ -73,14 +227,17 @@ def fetch_with_playwright(url):
     last_err = None
     for attempt in range(1, 4):
         try:
+            # Randomized pre-navigation delay (1-3s)
+            time.sleep(random.uniform(1.0, 3.0))
             with sync_playwright() as p:
                 browser = p.webkit.launch(headless=True)
                 context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+                    user_agent=get_random_user_agent()
                 )
                 page = context.new_page()
                 page.goto(url, wait_until="commit", timeout=20000)
-                time.sleep(3)
+                # Randomized post-navigation delay (2.5-4.5s)
+                time.sleep(random.uniform(2.5, 4.5))
                 html = page.content()
                 browser.close()
                 return html
@@ -90,6 +247,7 @@ def fetch_with_playwright(url):
             time.sleep(min(2 ** attempt, 8))
     print(f"Playwright WebKit error for {url}: {last_err}", flush=True)
     return None
+
 
 def scrape_weworkremotely(url):
     try:
@@ -894,6 +1052,49 @@ Conform exactly to this structure:
         return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
 
 
+def scrape_single_url(href, api_key=None):
+    domain = urlparse(href).netloc.lower()
+    job_data = None
+    try:
+        if 'greenhouse.io' in domain:
+            job_data = scrape_greenhouse(href)
+        elif 'lever.co' in domain:
+            job_data = scrape_lever(href)
+        elif 'myworkdayjobs.com' in domain:
+            job_data = scrape_workday(href)
+        elif 'ashbyhq.com' in domain:
+            job_data = scrape_ashby(href)
+        elif 'workable.com' in domain:
+            job_data = scrape_workable(href)
+        elif 'smartrecruiters.com' in domain:
+            job_data = scrape_smartrecruiters(href)
+        elif 'weworkremotely.com' in domain:
+            job_data = scrape_weworkremotely(href)
+        elif 'remote.co' in domain:
+            job_data = scrape_remoteco(href)
+        elif 'linkedin.com' in domain:
+            job_data = scrape_linkedin(href)
+        elif 'workatastartup.com' in domain:
+            job_data = scrape_yc(href)
+        else:
+            job_data = scrape_url_with_gemini_fallback(href, api_key)
+    except Exception as e:
+        print(f"Scraper error for {href}: {e}", flush=True)
+
+    if not job_data or len(job_data.get("job_description", "")) < 200:
+        if api_key:
+            try:
+                job_data = scrape_url_with_gemini_fallback(href, api_key)
+            except Exception as e:
+                print(f"Gemini fallback scraper failed for {href}: {e}", flush=True)
+                
+    if job_data:
+        desc = job_data.get("job_description", "")
+        if desc:
+            job_data["description_hash"] = compute_description_hash(desc)
+            
+    return job_data
+
 def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_urls):
     """
     Search Yahoo and scrape jobs for a given keyword/title.
@@ -902,10 +1103,14 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
     queries = build_yahoo_queries(keyword, search_cfg)
     keyword_scraped_jobs = []
     urls_found_for_keyword = 0
+    urls_to_scrape = []
     
     for query in queries:
         log(f"Searching: {query}")
         urls = search_yahoo(query)
+        if not urls:
+            log(f"Yahoo search returned 0 results for '{query}'. Falling back to DuckDuckGo...")
+            urls = search_duckduckgo(query)
         time.sleep(2)
 
         for href in urls:
@@ -920,44 +1125,33 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
             if dry_run:
                 dry_urls.append({"job_url": href, "query": query, "title_keyword": keyword})
                 continue
+            
+            urls_to_scrape.append(href)
 
-            domain = urlparse(href).netloc.lower()
-            job_data = None
-            try:
-                if 'greenhouse.io' in domain:
-                    job_data = scrape_greenhouse(href)
-                elif 'lever.co' in domain:
-                    job_data = scrape_lever(href)
-                elif 'myworkdayjobs.com' in domain:
-                    job_data = scrape_workday(href)
-                elif 'ashbyhq.com' in domain:
-                    job_data = scrape_ashby(href)
-                elif 'workable.com' in domain:
-                    job_data = scrape_workable(href)
-                elif 'smartrecruiters.com' in domain:
-                    job_data = scrape_smartrecruiters(href)
-                elif 'weworkremotely.com' in domain:
-                    job_data = scrape_weworkremotely(href)
-                elif 'remote.co' in domain:
-                    job_data = scrape_remoteco(href)
-                elif 'linkedin.com' in domain:
-                    job_data = scrape_linkedin(href)
-                elif 'workatastartup.com' in domain:
-                    job_data = scrape_yc(href)
-            except Exception as e:
-                log(f"Scraper error for {href}: {e}")
-
-            if job_data and job_data.get("job_description"):
-                if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
-                    log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
-                    keyword_scraped_jobs.append(job_data)
-                else:
-                    log(f"Discarded (No Requirement ID): {href}")
-            else:
-                if job_data:
-                    log(f"Discarded (No JD text or inactive): {href}")
+    if not dry_run and urls_to_scrape:
+        log(f"Scraping {len(urls_to_scrape)} URLs in parallel for keyword '{keyword}'...")
+        api_key = os.environ.get("GEMINI_API_KEY")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_url = {executor.submit(scrape_single_url, url, api_key): url for url in urls_to_scrape}
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    job_data = future.result()
+                    if job_data and job_data.get("job_description"):
+                        if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
+                            log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
+                            job_data["scraped_at"] = datetime.utcnow().isoformat()
+                            keyword_scraped_jobs.append(job_data)
+                        else:
+                            log(f"Discarded (No Requirement ID): {url}")
+                    else:
+                        if job_data:
+                            log(f"Discarded (No JD text or inactive): {url}")
+                except Exception as e:
+                    log(f"Thread execution error scraping {url}: {e}")
                     
     return keyword_scraped_jobs, urls_found_for_keyword
+
 
 
 def main(dry_run=False):
@@ -992,9 +1186,14 @@ def main(dry_run=False):
     merged_by_url = {}
     if merge_previous and SCRAPED_OUTPUT.exists():
         try:
+            mtime = datetime.utcfromtimestamp(SCRAPED_OUTPUT.stat().st_mtime).isoformat()
             for j in json.loads(SCRAPED_OUTPUT.read_text(encoding="utf-8")):
                 u = j.get("job_url")
                 if u:
+                    if "scraped_at" not in j:
+                        j["scraped_at"] = mtime
+                    if "description_hash" not in j and j.get("job_description"):
+                        j["description_hash"] = compute_description_hash(j["job_description"])
                     merged_by_url[normalize_job_url(u)] = j
         except Exception as e:
             log(f"Warning: could not merge previous scraped_jobs.json: {e}")

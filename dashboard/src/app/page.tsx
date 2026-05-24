@@ -20,7 +20,17 @@ import {
   BellRing,
   Info,
   BarChart3,
-  Shield
+  Shield,
+  Copy,
+  Undo,
+  Redo,
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  Link2,
+  Type
 } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -39,6 +49,10 @@ interface Job {
   red_flags?: string[];
   apply_decision_payload?: any;
   synced?: boolean;
+  synced_data?: any;
+  scraped_at?: string;
+  stale?: boolean;
+  archived?: boolean;
 }
 
 interface Config {
@@ -75,6 +89,29 @@ const CATEGORIES = [
   "AI Platform Engineer (AIOps)",
   "OutOfScope"
 ];
+
+const CopyButton = ({ text }: { text: string }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      type="button"
+      className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors flex items-center"
+      title="Copy to clipboard"
+    >
+      {copied ? (
+        <Check className="w-3.5 h-3.5 text-emerald-400 animate-in zoom-in-50 duration-150" />
+      ) : (
+        <Copy className="w-3.5 h-3.5" />
+      )}
+    </button>
+  );
+};
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -151,6 +188,10 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy'>('approved');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
+  const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
+  const [showActiveOnly, setShowActiveOnly] = useState(true);
 
   useEffect(() => {
     setSelectedRoleFilter('all');
@@ -173,6 +214,14 @@ export default function Dashboard() {
   const [editScore, setEditScore] = useState(85);
   const [editRationale, setEditRationale] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [editCloud, setEditCloud] = useState('Not specified');
+  const [editSeniority, setEditSeniority] = useState('Not specified');
+  const [editSource, setEditSource] = useState('Not specified');
+  const [editUrl, setEditUrl] = useState('');
+  const [editPayload, setEditPayload] = useState('');
+  const [isPayloadExpanded, setIsPayloadExpanded] = useState(false);
+  const [descHistory, setDescHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
   // Settings Panel States
   const [titlesInput, setTitlesInput] = useState('');
@@ -216,6 +265,8 @@ export default function Dashboard() {
       checkNotionStatus();
       // Check scraper status
       checkScraperStatus();
+      // Check stale status
+      checkStaleStatus();
     } catch (error) {
       showStatus('Failed to communicate with local dashboard API.', 'error');
     } finally {
@@ -297,6 +348,75 @@ export default function Dashboard() {
       }
     } catch (error) {
       showStatus('Failed to trigger scraper run.', 'error');
+    }
+  };
+
+  // Start stale check
+  const triggerStaleCheck = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/check-stale`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          showStatus('Stale job check successfully launched in background!', 'success');
+          setStaleCheckStatus((prev) => ({
+            ...prev,
+            status: 'running',
+          }));
+        } else {
+          showStatus(data.message, 'error');
+        }
+      }
+    } catch (error) {
+      showStatus('Failed to trigger stale check.', 'error');
+    }
+  };
+
+  const checkStaleStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/stale-status`);
+      if (res.ok) {
+        const data = await res.json();
+        setStaleCheckStatus(data);
+      }
+    } catch (e) {}
+  };
+
+  // Poll stale check status when it is running
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (staleCheckStatus.status === 'running') {
+      interval = setInterval(() => {
+        checkStaleStatus();
+        // Periodically refresh jobs list too
+        fetch(`${API_BASE}/api/jobs`)
+          .then(res => res.ok && res.json())
+          .then(data => data && setJobs(data));
+      }, 2000);
+    }
+    return () => clearInterval(interval);
+  }, [staleCheckStatus.status]);
+
+  // Delete / Archive Job
+  const deleteJob = async (job_url: string) => {
+    if (!confirm('Are you sure you want to archive this job posting? It will be hidden from the dashboard.')) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_url })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          showStatus('Job archived successfully!', 'success');
+          setJobs(prev => prev.map(j => j.job_url === job_url ? { ...j, archived: true } : j));
+        } else {
+          showStatus(data.message, 'error');
+        }
+      }
+    } catch (e) {
+      showStatus('Failed to archive job.', 'error');
     }
   };
 
@@ -391,18 +511,129 @@ export default function Dashboard() {
     }
   };
 
+  // Undo/Redo tracking for job description
+  const updateDescWithHistory = (newVal: string) => {
+    setEditDesc(newVal);
+    const cleanHistory = descHistory.slice(0, historyIndex + 1);
+    const updatedHistory = [...cleanHistory, newVal];
+    if (updatedHistory.length > 50) {
+      updatedHistory.shift();
+    }
+    setDescHistory(updatedHistory);
+    setHistoryIndex(updatedHistory.length - 1);
+  };
+
+  const handleUndo = () => {
+    if (historyIndex > 0) {
+      const prevIdx = historyIndex - 1;
+      setHistoryIndex(prevIdx);
+      setEditDesc(descHistory[prevIdx]);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndex < descHistory.length - 1) {
+      const nextIdx = historyIndex + 1;
+      setHistoryIndex(nextIdx);
+      setEditDesc(descHistory[nextIdx]);
+    }
+  };
+
+  const handleToolbarClick = (action: string) => {
+    const textarea = document.getElementById('job-desc-textarea') as HTMLTextAreaElement;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selectedText = text.substring(start, end);
+    
+    let replacement = '';
+    switch (action) {
+      case 'bold':
+        replacement = `**${selectedText || 'bold'}**`;
+        break;
+      case 'italic':
+        replacement = `*${selectedText || 'italic'}*`;
+        break;
+      case 'underline':
+        replacement = `<u>${selectedText || 'underlined'}</u>`;
+        break;
+      case 'bullet':
+        replacement = `\n- ${selectedText || 'list item'}`;
+        break;
+      case 'number':
+        replacement = `\n1. ${selectedText || 'list item'}`;
+        break;
+      case 'link':
+        replacement = `[${selectedText || 'link text'}](https://)`;
+        break;
+      case 'clear':
+        replacement = selectedText
+          .replace(/\*\*|\*|__/g, '')
+          .replace(/<u>|<\/u>/g, '')
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+        break;
+      default:
+        return;
+    }
+    
+    const newValue = text.substring(0, start) + replacement + text.substring(end);
+    updateDescWithHistory(newValue);
+    
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start, start + replacement.length);
+    }, 10);
+  };
+
   // Open inspection / override modal
   const openModal = (job: Job) => {
     setSelectedJob(job);
-    setEditTitle(job.job_title);
-    setEditCompany(job.company_name);
-    setEditReqId(job.requirement_id);
-    setEditLocation(job.location_work_type);
-    setEditDecision(job.apply_decision);
-    setEditLabel(job.strongest_label);
-    setEditScore(job.confidence_score);
-    setEditRationale(job.rationale);
-    setEditDesc(job.job_description);
+    setEditTitle(job.job_title || '');
+    setEditCompany(job.company_name || '');
+    setEditReqId(job.requirement_id || '');
+    setEditLocation(job.location_work_type || '');
+    setEditDecision(job.apply_decision || 'APPLY');
+    setEditLabel(job.strongest_label || 'DevOps Engineer');
+    setEditScore(job.confidence_score || 85);
+    setEditRationale(job.rationale || '');
+    setEditDesc(job.job_description || '');
+    setEditUrl(job.job_url || '');
+
+    // Initialize history for undo/redo
+    const initialDesc = job.job_description || '';
+    setDescHistory([initialDesc]);
+    setHistoryIndex(0);
+
+    // Parse cloud from payload or custom property
+    const jobCloud = (job as any).cloud || job.apply_decision_payload?.cloud?.primary_cloud || 'Not specified';
+    setEditCloud(jobCloud);
+
+    // Parse seniority from custom property or fallback
+    const jobSeniority = (job as any).seniority || 'Not specified';
+    setEditSeniority(jobSeniority);
+
+    // Determine source
+    let defaultSource = (job as any).source;
+    if (!defaultSource) {
+      if (job.job_url?.includes('lever.co')) defaultSource = 'Lever';
+      else if (job.job_url?.includes('greenhouse.io')) defaultSource = 'Greenhouse';
+      else if (job.job_url?.includes('ashbyhq.com')) defaultSource = 'Ashby';
+      else defaultSource = 'Yahoo Sourced';
+    }
+    setEditSource(defaultSource || 'Not specified');
+
+    // Decision payload string representation
+    const payloadObj = job.apply_decision_payload || {
+      apply_decision: job.apply_decision || 'APPLY',
+      strongest_label: job.strongest_label || 'DevOps Engineer',
+      red_flags: job.red_flags || [],
+      confidence_score: job.confidence_score || 85,
+      rationale: job.rationale || ''
+    };
+    setEditPayload(JSON.stringify(payloadObj, null, 2));
+    
+    setIsPayloadExpanded(false);
     setIsModalOpen(true);
   };
 
@@ -410,8 +641,18 @@ export default function Dashboard() {
   const submitOverride = async () => {
     if (!selectedJob) return;
 
+    let parsedPayload = null;
+    try {
+      if (editPayload.trim()) {
+        parsedPayload = JSON.parse(editPayload);
+      }
+    } catch (e) {
+      showStatus('Invalid Decision Payload JSON formatting. Please check the JSON syntax.', 'error');
+      return;
+    }
+
     const payload = {
-      job_url: selectedJob.job_url,
+      job_url: editUrl.trim(),
       job_title: editTitle.trim(),
       company_name: editCompany.trim(),
       requirement_id: editReqId.trim(),
@@ -421,7 +662,13 @@ export default function Dashboard() {
       confidence_score: Number(editScore),
       rationale: editRationale.trim(),
       job_description: editDesc.trim(),
-      red_flags: editDecision === 'APPLY' ? [] : (selectedJob.red_flags || ['Manual Disapproval'])
+      red_flags: editDecision === 'APPLY' ? [] : (selectedJob.red_flags || ['Manual Disapproval']),
+      
+      // Extended fields
+      cloud: editCloud,
+      seniority: editSeniority,
+      source: editSource,
+      apply_decision_payload: parsedPayload
     };
 
     try {
@@ -449,25 +696,75 @@ export default function Dashboard() {
   };
 
   // Categorize jobs
-  const approvedJobs = jobs.filter(j => j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0));
-  const rejectedJobs = jobs.filter(j => j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0));
-  const pendingJobs = jobs.filter(j => j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
+  const approvedJobs = jobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0));
+  const rejectedJobs = jobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0)));
+  const pendingJobs = jobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
 
   const filteredJobs = () => {
     let list = activeTab === 'approved' ? approvedJobs : activeTab === 'rejected' ? rejectedJobs : pendingJobs;
+    
+    // Filter out stale/closed jobs if showActiveOnly is enabled
+    if (activeTab === 'approved' && showActiveOnly) {
+      list = list.filter(j => !j.stale);
+    }
     
     // Filter approved jobs by role category if selected
     if (activeTab === 'approved' && selectedRoleFilter !== 'all') {
       list = list.filter(j => j.strongest_label === selectedRoleFilter);
     }
 
-    if (!searchTerm.trim()) return list;
-    const term = searchTerm.toLowerCase();
-    return list.filter(j => 
-      j.job_title.toLowerCase().includes(term) ||
-      j.company_name.toLowerCase().includes(term) ||
-      j.requirement_id.toLowerCase().includes(term)
-    );
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      list = list.filter(j => 
+        j.job_title.toLowerCase().includes(term) ||
+        j.company_name.toLowerCase().includes(term) ||
+        j.requirement_id.toLowerCase().includes(term)
+      );
+    }
+
+    // Filter by scraped timeframe
+    if (scrapedTimeframe !== 'all') {
+      const now = new Date().getTime();
+      const oneDay = 24 * 60 * 60 * 1000;
+      list = list.filter(j => {
+        if (!j.scraped_at) return false;
+        const scrapedTime = new Date(j.scraped_at).getTime();
+        const diff = now - scrapedTime;
+        if (scrapedTimeframe === 'today') {
+          return diff <= oneDay;
+        } else if (scrapedTimeframe === 'week') {
+          return diff <= 7 * oneDay;
+        } else if (scrapedTimeframe === 'month') {
+          return diff <= 30 * oneDay;
+        }
+        return true;
+      });
+    }
+
+    // Sort by scraped_at if available
+    return [...list].sort((a, b) => {
+      const dateA = a.scraped_at ? new Date(a.scraped_at).getTime() : 0;
+      const dateB = b.scraped_at ? new Date(b.scraped_at).getTime() : 0;
+      if (sortBy === 'newest') {
+        return dateB - dateA;
+      } else {
+        return dateA - dateB;
+      }
+    });
+  };
+
+  const formatScrapedDate = (dateStr: string) => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString(undefined, { 
+        month: 'short', 
+        day: 'numeric', 
+        hour: 'numeric', 
+        minute: '2-digit' 
+      });
+    } catch (e) {
+      return dateStr;
+    }
   };
 
   return (
@@ -538,6 +835,33 @@ export default function Dashboard() {
                     : 'Idle'}
             </span>
           </div>
+
+          {/* Stale Check Status */}
+          {staleCheckStatus.status === 'running' && (
+            <div className="flex items-center space-x-2 bg-indigo-950/40 border border-indigo-900/60 rounded-full px-3 py-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-indigo-400"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+              </span>
+              <span className="text-xs text-indigo-300">
+                Checking Closed: {staleCheckStatus.progress}% ({staleCheckStatus.completed}/{staleCheckStatus.total})
+              </span>
+            </div>
+          )}
+
+          {/* Stale Check button */}
+          <button
+            onClick={triggerStaleCheck}
+            disabled={staleCheckStatus.status === 'running'}
+            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${
+              staleCheckStatus.status === 'running'
+                ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
+            }`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${staleCheckStatus.status === 'running' ? 'animate-spin' : ''}`} />
+            Check Closed Jobs
+          </button>
 
           {/* Manual Run button */}
           <button
@@ -736,6 +1060,61 @@ export default function Dashboard() {
                   </span>
                 </div>
               )}
+              
+              {/* Sort By Dropdown */}
+              <div className="relative shrink-0">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Sliders className="w-4 h-4 text-violet-400" />
+                </span>
+                <select
+                  value={sortBy}
+                  onChange={e => setSortBy(e.target.value as 'newest' | 'oldest')}
+                  className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[150px]"
+                >
+                  <option value="newest">Newest Scrape</option>
+                  <option value="oldest">Oldest Scrape</option>
+                </select>
+                <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
+                  <ChevronRight className="w-4 h-4 rotate-90" />
+                </span>
+              </div>
+
+              {/* Show Active Only Toggle */}
+              {activeTab === 'approved' && (
+                <button
+                  type="button"
+                  onClick={() => setShowActiveOnly(prev => !prev)}
+                  className={`inline-flex items-center px-4 py-2 border rounded-xl text-sm font-semibold transition-colors shrink-0 shadow-inner ${
+                    showActiveOnly 
+                      ? 'bg-violet-950/40 border-violet-850 text-violet-300' 
+                      : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Sliders className="w-4 h-4 mr-2 text-violet-400" />
+                  {showActiveOnly ? 'Active Only' : 'Include Closed'}
+                </button>
+              )}
+
+              {/* Scraped Timeframe Filter */}
+              <div className="relative shrink-0">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Sliders className="w-4 h-4 text-violet-400" />
+                </span>
+                <select
+                  value={scrapedTimeframe}
+                  onChange={e => setScrapedTimeframe(e.target.value as 'all' | 'today' | 'week' | 'month')}
+                  className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[170px]"
+                >
+                  <option value="all">All Scrape Times</option>
+                  <option value="today">Scraped Today (24h)</option>
+                  <option value="week">Scraped Last 7 Days</option>
+                  <option value="month">Scraped Last 30 Days</option>
+                </select>
+                <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
+                  <ChevronRight className="w-4 h-4 rotate-90" />
+                </span>
+              </div>
+
               <div className="relative flex-1">
                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                   <Search className="w-4 h-4" />
@@ -1198,34 +1577,65 @@ export default function Dashboard() {
                       {/* Top Job Headers */}
                       <div>
                         <div className="flex items-start justify-between">
-                          <div>
-                            <h3 className="text-base font-bold text-white group-hover:text-violet-400 transition-colors">
-                              {job.job_title}
-                            </h3>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center space-x-1.5 mr-2">
+                              <h3 className="text-base font-bold text-white group-hover:text-violet-400 transition-colors truncate">
+                                {job.job_title}
+                              </h3>
+                              <CopyButton text={job.job_title} />
+                            </div>
                             <p className="text-xs font-semibold text-slate-400 mt-0.5">{job.company_name}</p>
                           </div>
                           
-                          {/* Label Badge */}
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            activeTab === 'approved'
-                              ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
-                              : activeTab === 'rejected'
-                              ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
-                              : 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
-                          }`}>
-                            {job.strongest_label}
-                          </span>
+                          <div className="flex flex-col items-end space-y-1.5 shrink-0">
+                            {/* Label Badge */}
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              activeTab === 'approved'
+                                ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
+                                : activeTab === 'rejected'
+                                ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
+                                : 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
+                            }`}>
+                              {job.strongest_label}
+                            </span>
+                            
+                            {/* Stale Badge */}
+                            {job.stale && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-rose-950/80 text-rose-300 border border-rose-850 animate-pulse">
+                                Closed / Stale
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Location / Req ID details */}
-                        <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40">
+                        <div className="mt-3 grid grid-cols-3 gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40">
                           <div>
-                            <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Location</span>
-                            <span className="mt-0.5 block truncate text-slate-300 font-medium">{job.location_work_type}</span>
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Location</span>
+                              <CopyButton text={job.location_work_type} />
+                            </div>
+                            <span className="mt-0.5 block truncate text-slate-300 font-medium" title={job.location_work_type}>
+                              {job.location_work_type}
+                            </span>
                           </div>
                           <div>
-                            <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Requirement ID</span>
-                            <span className="mt-0.5 block truncate text-slate-300 font-mono font-medium">{job.requirement_id || 'N/A'}</span>
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Requirement ID</span>
+                              {job.requirement_id && <CopyButton text={job.requirement_id} />}
+                            </div>
+                            <span className="mt-0.5 block truncate text-slate-300 font-mono font-medium" title={job.requirement_id}>
+                              {job.requirement_id || 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Scraped At</span>
+                              {job.scraped_at && <CopyButton text={job.scraped_at} />}
+                            </div>
+                            <span className="mt-0.5 block truncate text-slate-300 font-medium" title={job.scraped_at}>
+                              {job.scraped_at ? formatScrapedDate(job.scraped_at) : 'N/A'}
+                            </span>
                           </div>
                         </div>
 
@@ -1355,6 +1765,15 @@ export default function Dashboard() {
                               Approve Override
                             </button>
                           )}
+
+                          {/* Delete/Archive Button */}
+                          <button
+                            onClick={() => deleteJob(job.job_url)}
+                            className="inline-flex items-center p-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 rounded-xl text-xs font-semibold border border-rose-800/40 transition-colors shrink-0"
+                            title="Delete / Archive job posting"
+                          >
+                            <XCircle className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
 
@@ -1394,57 +1813,315 @@ export default function Dashboard() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="p-6 overflow-y-auto space-y-5 flex-1 select-text bg-slate-900">
               
-              {/* Left Column: Edit Fields */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 pb-1.5 border-b border-slate-800">
-                  Override Metadata
-                </h4>
+              {/* Job Title */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-400">
+                    Job Title <span className="text-red-500">*</span>
+                  </label>
+                  <CopyButton text={editTitle} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Role title"
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                />
+              </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="block text-[10px] font-bold uppercase text-slate-500">Job Title</label>
-                    <input
-                      type="text"
-                      value={editTitle}
-                      onChange={e => setEditTitle(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
-                    />
-                  </div>
+              {/* Requirement ID */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-400">
+                    Requirement ID <span className="text-red-500">*</span>
+                  </label>
+                  <CopyButton text={editReqId} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g., REQ-12345"
+                  value={editReqId}
+                  onChange={e => setEditReqId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 font-mono"
+                />
+              </div>
 
-                  <div className="space-y-1.5">
-                    <label className="block text-[10px] font-bold uppercase text-slate-500">Company Name</label>
-                    <input
-                      type="text"
-                      value={editCompany}
-                      onChange={e => setEditCompany(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
-                    />
-                  </div>
+              {/* URL for Original Posting */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-400">
+                    URL for Original Posting <span className="text-red-500">*</span>
+                  </label>
+                  <CopyButton text={editUrl} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="https://careers.example.com/job/123"
+                  value={editUrl}
+                  onChange={e => setEditUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                />
+              </div>
 
-                  <div className="space-y-1.5">
-                    <label className="block text-[10px] font-bold uppercase text-slate-500">Requirement ID</label>
-                    <input
-                      type="text"
-                      value={editReqId}
-                      onChange={e => setEditReqId(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 font-mono"
-                    />
-                  </div>
+              {/* Company Name */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-400">
+                    Company Name <span className="text-red-500">*</span>
+                  </label>
+                  <CopyButton text={editCompany} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Company name"
+                  value={editCompany}
+                  onChange={e => setEditCompany(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                />
+              </div>
 
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="block text-[10px] font-bold uppercase text-slate-500">Location + Work Type</label>
-                    <input
-                      type="text"
-                      value={editLocation}
-                      onChange={e => setEditLocation(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
-                    />
+              {/* Location + Work Type */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-400">
+                    Location + Work Type <span className="text-red-500">*</span>
+                  </label>
+                  <CopyButton text={editLocation} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g., Dallas, TX — Hybrid"
+                  value={editLocation}
+                  onChange={e => setEditLocation(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                />
+              </div>
+
+              {/* Cloud, Seniority, Source Row */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                {/* Cloud Dropdown */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-400">Cloud</label>
+                    <CopyButton text={editCloud} />
                   </div>
+                  <select
+                    value={editCloud}
+                    onChange={e => setEditCloud(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer"
+                  >
+                    <option value="Not specified">Not specified</option>
+                    <option value="AWS">AWS</option>
+                    <option value="GCP">GCP</option>
+                    <option value="Azure">Azure</option>
+                    <option value="Multiple">Multiple</option>
+                    <option value="Other">Other</option>
+                  </select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 pt-2">
+                {/* Seniority Dropdown */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-400">Seniority</label>
+                    <CopyButton text={editSeniority} />
+                  </div>
+                  <select
+                    value={editSeniority}
+                    onChange={e => setEditSeniority(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer"
+                  >
+                    <option value="Not specified">Not specified</option>
+                    <option value="Junior">Junior</option>
+                    <option value="Mid">Mid</option>
+                    <option value="Senior">Senior</option>
+                    <option value="Lead">Lead</option>
+                    <option value="Staff">Staff</option>
+                    <option value="Principal">Principal</option>
+                    <option value="Manager/Director">Manager/Director</option>
+                  </select>
+                </div>
+
+                {/* Source Dropdown */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-400">Source</label>
+                    <CopyButton text={editSource} />
+                  </div>
+                  <select
+                    value={editSource}
+                    onChange={e => setEditSource(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer"
+                  >
+                    <option value="Not specified">Not specified</option>
+                    <option value="Yahoo Sourced">Yahoo Sourced</option>
+                    <option value="ATS Direct">ATS Direct</option>
+                    <option value="Manual Sourced">Manual Sourced</option>
+                    <option value="Lever">Lever</option>
+                    <option value="Greenhouse">Greenhouse</option>
+                    <option value="Ashby">Ashby</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Job Description with Toolbar */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-400">
+                    Job Description <span className="text-red-500">*</span>
+                  </label>
+                  <CopyButton text={editDesc} />
+                </div>
+                
+                {/* Editor Container */}
+                <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950 flex flex-col focus-within:border-violet-600/70 transition-colors">
+                  
+                  {/* Toolbar */}
+                  <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-900 border-b border-slate-800">
+                    <button
+                      type="button"
+                      onClick={handleUndo}
+                      disabled={historyIndex <= 0}
+                      className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
+                      title="Undo"
+                    >
+                      <Undo className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRedo}
+                      disabled={historyIndex >= descHistory.length - 1}
+                      className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
+                      title="Redo"
+                    >
+                      <Redo className="w-4 h-4" />
+                    </button>
+                    <div className="w-px h-4 bg-slate-800 mx-1" />
+                    
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('bold')}
+                      className="p-1.5 text-slate-400 hover:text-white font-bold rounded transition-colors"
+                      title="Bold"
+                    >
+                      <Bold className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('italic')}
+                      className="p-1.5 text-slate-400 hover:text-white italic rounded transition-colors"
+                      title="Italic"
+                    >
+                      <Italic className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('underline')}
+                      className="p-1.5 text-slate-400 hover:text-white underline rounded transition-colors"
+                      title="Underline"
+                    >
+                      <Underline className="w-4 h-4" />
+                    </button>
+                    <div className="w-px h-4 bg-slate-800 mx-1" />
+                    
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('bullet')}
+                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                      title="Bullet List"
+                    >
+                      <List className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('number')}
+                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                      title="Numbered List"
+                    >
+                      <ListOrdered className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('link')}
+                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                      title="Insert Link"
+                    >
+                      <Link2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToolbarClick('clear')}
+                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                      title="Clear Formatting"
+                    >
+                      <Type className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  {/* Textarea */}
+                  <textarea
+                    id="job-desc-textarea"
+                    rows={8}
+                    placeholder="Paste full job description here..."
+                    value={editDesc}
+                    onChange={e => setEditDesc(e.target.value)}
+                    onBlur={e => updateDescWithHistory(e.target.value)}
+                    className="w-full bg-transparent px-4 py-3 text-sm text-slate-300 focus:outline-none resize-y placeholder-slate-700 min-h-[180px] leading-relaxed"
+                  />
+                  
+                  {/* Status Bar */}
+                  <div className="px-4 py-1.5 bg-slate-900 border-t border-slate-800 text-[10px] text-slate-500 font-mono">
+                    p
+                  </div>
+                </div>
+              </div>
+
+              {/* Optional details and review payload Accordion */}
+              <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/20">
+                <button
+                  type="button"
+                  onClick={() => setIsPayloadExpanded(!isPayloadExpanded)}
+                  className="w-full px-4 py-3 flex items-center justify-between text-xs font-bold text-slate-400 hover:bg-slate-850 hover:text-slate-200 transition-all bg-slate-900/30"
+                >
+                  <span className="flex items-center">
+                    <ChevronRight className={`w-4 h-4 mr-2 transition-transform duration-200 ${isPayloadExpanded ? 'rotate-90 text-violet-400' : 'text-slate-500'}`} />
+                    Optional details and review payload
+                  </span>
+                </button>
+                
+                {isPayloadExpanded && (
+                  <div className="p-4 border-t border-slate-850 space-y-4 bg-slate-950/40 animate-in fade-in duration-200">
+                    <div>
+                      <div className="flex items-center justify-between pb-1">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                          DECISION PAYLOAD
+                        </h4>
+                        <CopyButton text={editPayload} />
+                      </div>
+                      <p className="text-[11px] text-slate-500 mb-2 leading-relaxed">
+                        Optional: paste the master classifier payload (apply_decision, labels, rationale, etc.). If it says APPLY, MAAS will trust it unless a real duplicate or policy conflict exists.
+                      </p>
+                      <textarea
+                        rows={8}
+                        value={editPayload}
+                        onChange={e => setEditPayload(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-600/70 font-mono leading-relaxed placeholder-slate-700"
+                        placeholder='{ "apply_decision": "APPLY", "strongest_label": "...", ... }'
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Override Decision Section */}
+              <div className="border border-slate-800/80 rounded-2xl p-4 bg-slate-950/20 space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 pb-1.5 border-b border-slate-850">
+                  Manual Decision Override
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="block text-[10px] font-bold uppercase text-slate-500">Apply Decision</label>
                     <select
@@ -1470,7 +2147,7 @@ export default function Dashboard() {
                     </select>
                   </div>
 
-                  <div className="space-y-1.5 col-span-2">
+                  <div className="space-y-1.5 md:col-span-2">
                     <div className="flex justify-between items-center text-[10px] font-bold uppercase text-slate-500">
                       <span>Confidence Score</span>
                       <span className="text-violet-400 font-bold">{editScore}%</span>
@@ -1494,29 +2171,17 @@ export default function Dashboard() {
                       />
                     </div>
                   </div>
-                </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold uppercase text-slate-500">Override Rationale</label>
-                  <textarea
-                    rows={4}
-                    value={editRationale}
-                    onChange={e => setEditRationale(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-600"
-                    placeholder="Write details explaining the manual approval or classification adjustments..."
-                  />
-                </div>
-              </div>
-
-              {/* Right Column: Original Job Description details */}
-              <div className="space-y-4 h-full flex flex-col">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 pb-1.5 border-b border-slate-800">
-                  Job Description Description
-                </h4>
-                <div className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl p-4 overflow-y-auto max-h-[350px] lg:max-h-[500px]">
-                  <pre className="text-xs text-slate-300 font-sans whitespace-pre-wrap leading-relaxed select-text">
-                    {editDesc}
-                  </pre>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="block text-[10px] font-bold uppercase text-slate-500">Override Rationale</label>
+                    <textarea
+                      rows={3}
+                      value={editRationale}
+                      onChange={e => setEditRationale(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                      placeholder="Write details explaining the manual approval or classification adjustments..."
+                    />
+                  </div>
                 </div>
               </div>
 

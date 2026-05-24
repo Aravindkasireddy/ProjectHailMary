@@ -38,6 +38,164 @@ scraper_state = {
     "last_metrics": {},
 }
 
+# Global stale check status
+stale_check_state = {
+    "status": "idle",
+    "progress": 0,
+    "total": 0,
+    "completed": 0,
+    "stale_found": 0,
+}
+
+def check_url_stale(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        if r.status_code == 404:
+            return True
+            
+        final_url = r.url.lower()
+        parsed_final = urllib.parse.urlparse(final_url)
+        path = parsed_final.path
+        
+        if "greenhouse.io" in parsed_final.netloc:
+            if "error=true" in final_url or "/jobs/" not in path:
+                return True
+        elif "lever.co" in parsed_final.netloc:
+            path_parts = [p for p in path.split('/') if p]
+            if len(path_parts) < 2:
+                return True
+            if "jobs at" in r.text.lower() or "current openings" in r.text.lower():
+                return True
+        elif "ashbyhq.com" in parsed_final.netloc:
+            path_parts = [p for p in path.split('/') if p]
+            if len(path_parts) <= 1:
+                return True
+                
+        text_lower = r.text.lower()
+        closed_keywords = [
+            "this job is no longer available",
+            "posting has closed",
+            "job is closed",
+            "no longer accepting applications",
+            "position has been filled",
+            "job posting was not found"
+        ]
+        if any(kw in text_lower for kw in closed_keywords):
+            return True
+    except Exception:
+        pass
+    return False
+
+def stale_check_worker():
+    global stale_check_state
+    stale_check_state["status"] = "running"
+    stale_check_state["progress"] = 0
+    stale_check_state["total"] = 0
+    stale_check_state["completed"] = 0
+    stale_check_state["stale_found"] = 0
+    
+    try:
+        if not os.path.exists(APPROVED_PATH):
+            stale_check_state["status"] = "idle"
+            return
+            
+        with open(APPROVED_PATH, 'r') as f:
+            approved_jobs = json.load(f)
+            
+        stale_check_state["total"] = len(approved_jobs)
+        if not approved_jobs:
+            stale_check_state["status"] = "idle"
+            return
+            
+        updated_jobs = []
+        for idx, job in enumerate(approved_jobs):
+            url = job.get("job_url")
+            is_stale = False
+            if url:
+                is_stale = check_url_stale(url)
+            
+            if is_stale:
+                job["stale"] = True
+                stale_check_state["stale_found"] += 1
+            else:
+                job["stale"] = False
+                
+            updated_jobs.append(job)
+            stale_check_state["completed"] = idx + 1
+            stale_check_state["progress"] = int((idx + 1) / len(approved_jobs) * 100)
+            time.sleep(1)
+            
+        with open(APPROVED_PATH, 'w') as f:
+            json.dump(updated_jobs, f, indent=2)
+            
+    except Exception as e:
+        print(f"Error in stale check worker: {e}")
+    finally:
+        stale_check_state["status"] = "idle"
+
+def archive_job_on_disk(url):
+    if not url:
+        return False, "Missing job_url"
+        
+    approved = []
+    if os.path.exists(APPROVED_PATH):
+        try:
+            with open(APPROVED_PATH, 'r') as f:
+                approved = json.load(f)
+        except Exception:
+            pass
+            
+    failed = []
+    if os.path.exists(FAILED_PATH):
+        try:
+            with open(FAILED_PATH, 'r') as f:
+                failed = json.load(f)
+        except Exception:
+            pass
+            
+    active = []
+    if os.path.exists(ACTIVE_PATH):
+        try:
+            with open(ACTIVE_PATH, 'r') as f:
+                active = json.load(f)
+        except Exception:
+            pass
+            
+    found = False
+    
+    for j in approved:
+        if j.get("job_url") == url:
+            j["archived"] = True
+            found = True
+            
+    for j in failed:
+        if j.get("job_url") == url:
+            j["archived"] = True
+            found = True
+            
+    for j in active:
+        if j.get("job_url") == url:
+            j["archived"] = True
+            found = True
+            
+    if not found:
+        return False, "Job not found in any database."
+        
+    try:
+        with open(APPROVED_PATH, 'w') as f:
+            json.dump(approved, f, indent=2)
+        with open(FAILED_PATH, 'w') as f:
+            json.dump(failed, f, indent=2)
+        with open(ACTIVE_PATH, 'w') as f:
+            json.dump(active, f, indent=2)
+        return True, "Job successfully archived."
+    except Exception as e:
+        return False, f"Failed to save changes: {str(e)}"
+
 def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
@@ -465,6 +623,11 @@ def override_job_on_disk(updated_job):
         target_job = {}
         
     # Update fields
+    decision = updated_job.get("apply_decision", "APPLY")
+    red_flags = updated_job.get("red_flags", [])
+    if decision == "APPLY":
+        red_flags = []
+        
     target_job.update({
         "job_url": url,
         "job_title": updated_job.get("job_title", target_job.get("job_title", "Unknown Title")),
@@ -472,30 +635,54 @@ def override_job_on_disk(updated_job):
         "requirement_id": updated_job.get("requirement_id", target_job.get("requirement_id", "Unknown")),
         "location_work_type": updated_job.get("location_work_type", target_job.get("location_work_type", "Remote")),
         "job_description": updated_job.get("job_description", target_job.get("job_description", "")),
-        "red_flags": [],  # Clear red flags
-        "apply_decision": "APPLY",
-        "strongest_label": updated_job.get("strongest_label", "DevOps Engineer"),
-        "confidence_score": 100,
-        "rationale": updated_job.get("rationale", "Manually approved override via dashboard."),
-        "apply_decision_payload": {
-            "apply_decision": "APPLY",
-            "strongest_label": updated_job.get("strongest_label", "DevOps Engineer"),
-            "red_flags": [],
-            "confidence_score": 100,
-            "rationale": updated_job.get("rationale", "Manually approved override via dashboard.")
-        }
+        "red_flags": red_flags,
+        "apply_decision": decision,
+        "strongest_label": updated_job.get("strongest_label", target_job.get("strongest_label", "DevOps Engineer")),
+        "confidence_score": updated_job.get("confidence_score", target_job.get("confidence_score", 100)),
+        "rationale": updated_job.get("rationale", target_job.get("rationale", "Manually modified override via dashboard.")),
+        "cloud": updated_job.get("cloud", target_job.get("cloud", "Not specified")),
+        "seniority": updated_job.get("seniority", target_job.get("seniority", "Not specified")),
+        "source": updated_job.get("source", target_job.get("source", "Not specified")),
     })
+
+    # If the user passed apply_decision_payload, use it. Otherwise, construct it.
+    passed_payload = updated_job.get("apply_decision_payload")
+    if passed_payload:
+        target_job["apply_decision_payload"] = passed_payload
+    else:
+        target_job["apply_decision_payload"] = {
+            "apply_decision": decision,
+            "strongest_label": target_job["strongest_label"],
+            "red_flags": red_flags,
+            "confidence_score": target_job["confidence_score"],
+            "rationale": target_job["rationale"],
+            "cloud": {
+                "is_cloud_role": target_job["cloud"] != "Not specified",
+                "primary_cloud": target_job["cloud"] if target_job["cloud"] != "Not specified" else "",
+                "cloud_providers": [target_job["cloud"]] if target_job["cloud"] != "Not specified" else []
+            }
+        }
     
-    # Save approved
+    # Save to appropriate list
     approved = [j for j in approved if j.get("job_url") != url]
-    approved.append(target_job)
+    failed = [j for j in failed if j.get("job_url") != url]
+    active = [j for j in active if j.get("job_url") != url]
     
+    if decision == "APPLY":
+        approved.append(target_job)
+        msg = "Job successfully approved and saved."
+    else:
+        failed.append(target_job)
+        msg = "Job successfully rejected and saved."
+        
     try:
         with open(APPROVED_PATH, 'w') as f:
             json.dump(approved, f, indent=2)
         with open(FAILED_PATH, 'w') as f:
             json.dump(failed, f, indent=2)
-        return True, "Job successfully approved and saved."
+        with open(ACTIVE_PATH, 'w') as f:
+            json.dump(active, f, indent=2)
+        return True, msg
     except Exception as e:
         return False, f"Failed to save changes: {str(e)}"
 
@@ -1079,6 +1266,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(scraper_state).encode('utf-8'))
             return
 
+        # API: Get stale check status
+        elif parsed_url.path == "/api/stale-status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps(stale_check_state).encode('utf-8'))
+            return
+
         # Serve Frontend index.html
         elif parsed_url.path == "/" or parsed_url.path == "/index.html":
             self.send_response(200)
@@ -1242,6 +1438,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 res = {"success": True, "message": "Scraper started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
+            return
+
+        # API: Trigger stale job check
+        elif parsed_url.path == "/api/check-stale":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            global stale_check_state
+            if stale_check_state["status"] == "running":
+                res = {"success": False, "message": "Stale job check is already running."}
+            else:
+                threading.Thread(target=stale_check_worker).start()
+                res = {"success": True, "message": "Stale job check started in background."}
+                
+            self.wfile.write(json.dumps(res).encode('utf-8'))
+            return
+
+        # API: Archive / delete job
+        elif parsed_url.path == "/api/delete":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            url = payload.get("job_url")
+            if not url:
+                self.wfile.write(json.dumps({"success": False, "message": "Missing job_url"}).encode('utf-8'))
+                return
+                
+            success, msg = archive_job_on_disk(url)
+            self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
             return
             
         else:

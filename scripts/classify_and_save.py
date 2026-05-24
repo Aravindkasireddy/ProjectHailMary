@@ -2,10 +2,50 @@ import json
 import os
 import sys
 import time
+import hashlib
 from pathlib import Path
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 import google.generativeai as genai
+
+def compute_description_hash(description):
+    if not description:
+        return ""
+    normalized = "".join(description.lower().split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+def load_known_hashes(workspace_path):
+    approved_hashes = {}
+    failed_hashes = {}
+    
+    approved_path = workspace_path / "approved_jobs.json"
+    if approved_path.exists():
+        try:
+            jobs = json.loads(approved_path.read_text(encoding="utf-8"))
+            for j in jobs:
+                h = j.get("description_hash")
+                if not h and j.get("job_description"):
+                    h = compute_description_hash(j["job_description"])
+                if h:
+                    approved_hashes[h] = j
+        except Exception as e:
+            print(f"Error loading approved hashes: {e}")
+            
+    failed_path = workspace_path / "failed_candidate_jobs.json"
+    if failed_path.exists():
+        try:
+            jobs = json.loads(failed_path.read_text(encoding="utf-8"))
+            for j in jobs:
+                h = j.get("description_hash")
+                if not h and j.get("job_description"):
+                    h = compute_description_hash(j["job_description"])
+                if h:
+                    failed_hashes[h] = j
+        except Exception as e:
+            print(f"Error loading failed hashes: {e}")
+            
+    return approved_hashes, failed_hashes
+
 
 _scripts_dir = Path(__file__).resolve().parent
 _repo_root = _scripts_dir.parent
@@ -824,6 +864,7 @@ def main():
         jobs = json.load(f)
         
     classifications = get_job_classifications()
+    approved_hashes, failed_hashes = load_known_hashes(WORKSPACE)
     
     # Build URL to static classification index mapping using candidate_jobs.json
     url_to_idx = {}
@@ -849,6 +890,33 @@ def main():
         cls = None
         if cls_idx:
             cls = classifications.get(cls_idx)
+            
+        h = job.get("description_hash")
+        if not cls and h:
+            if h in approved_hashes:
+                print(f"  Cache HIT (Approved) for '{job.get('job_title')}'. Reusing classification.", flush=True)
+                matched = approved_hashes[h]
+                cls = {
+                    "apply_decision": matched.get("apply_decision", "APPLY"),
+                    "strongest_label": matched.get("strongest_label", ""),
+                    "confidence_score": matched.get("confidence_score", 100),
+                    "red_flags": matched.get("red_flags", []),
+                    "rationale": matched.get("rationale", ""),
+                    "payload": matched.get("apply_decision_payload", {})
+                }
+                if "requirement_id" in matched:
+                    cls["req_id_override"] = matched["requirement_id"]
+            elif h in failed_hashes:
+                print(f"  Cache HIT (Failed) for '{job.get('job_title')}'. Reusing rejection.", flush=True)
+                matched = failed_hashes[h]
+                cls = {
+                    "apply_decision": "DO_NOT_APPLY",
+                    "strongest_label": matched.get("strongest_label", ""),
+                    "confidence_score": matched.get("confidence_score", 100),
+                    "red_flags": matched.get("red_flags", ["Previously rejected"]),
+                    "rationale": matched.get("rationale", "Previously rejected cache hit."),
+                    "payload": matched.get("apply_decision_payload", {})
+                }
             
         if not cls:
             # Try LLM-driven classification if API key is present
