@@ -54,6 +54,8 @@ interface Config {
     country_phrase?: string;
     include_remote_primary_boards?: boolean;
     merge_previous_scrape?: boolean;
+    send_digest_only?: boolean;
+    max_digest_items?: number;
   };
 }
 
@@ -178,6 +180,7 @@ export default function Dashboard() {
   const [schedulerHour, setSchedulerHour] = useState(8);
   const [schedulerMinute, setSchedulerMinute] = useState(0);
   const [schedulerEnabled, setSchedulerEnabled] = useState(true);
+  const [sendDigestOnly, setSendDigestOnly] = useState(true);
 
   // General Loading & Notification UI States
   const [loading, setLoading] = useState(false);
@@ -206,6 +209,7 @@ export default function Dashboard() {
         setSchedulerHour(configData.scheduler?.run_at_hour ?? 8);
         setSchedulerMinute(configData.scheduler?.run_at_minute ?? 0);
         setSchedulerEnabled(configData.scheduler?.enabled ?? true);
+        setSendDigestOnly(configData.search?.send_digest_only ?? true);
       }
 
       // Check Notion status
@@ -325,13 +329,18 @@ export default function Dashboard() {
   // Save Settings Config
   const saveSettings = async () => {
     const updatedConfig: Config = {
+      ...config,
       target_titles: titlesInput.split('\n').map(t => t.trim()).filter(t => t),
       scheduler: {
         enabled: schedulerEnabled,
         run_at_hour: Number(schedulerHour),
         run_at_minute: Number(schedulerMinute)
       },
-      webhook_url: webhookUrlInput.trim()
+      webhook_url: webhookUrlInput.trim(),
+      search: {
+        ...(config.search || {}),
+        send_digest_only: sendDigestOnly
+      }
     };
 
     try {
@@ -1047,7 +1056,7 @@ export default function Dashboard() {
               </div>
 
               {/* Webhook URLs */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
                   Discord Notification Webhook
                 </label>
@@ -1067,6 +1076,27 @@ export default function Dashboard() {
                     {testingWebhook ? 'Testing...' : 'Test Webhook'}
                   </button>
                 </div>
+                
+                {/* Webhook Delivery Preference Toggle */}
+                <div className="bg-slate-950/40 border border-slate-850 p-3 rounded-xl flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold text-slate-300">Delivery Preference</span>
+                    <p className="text-[11px] text-slate-500">
+                      Consolidated digest groups all new approved jobs into a single summary card instead of individual alerts.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sendDigestOnly}
+                      onChange={e => setSendDigestOnly(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="relative w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-600 peer-checked:after:bg-white"></div>
+                    <span className="ms-2 text-xs font-semibold text-slate-300">Digest</span>
+                  </label>
+                </div>
+                
                 <p className="text-xs text-slate-500">Sends alerts when new approved jobs are synced to Notion.</p>
               </div>
 

@@ -10,10 +10,12 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, quote_plus
 from playwright.sync_api import sync_playwright
+from dotenv import load_dotenv
 
 from jobsearch_paths import workspace_root
 
 WORKSPACE = workspace_root()
+load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
 CONFIG_PATH = WORKSPACE / "config.json"
 SCRAPED_OUTPUT = WORKSPACE / "scraped_jobs.json"
 
@@ -819,6 +821,145 @@ def build_yahoo_queries(title, search_cfg):
     return core
 
 
+def expand_target_titles_with_gemini(target_titles, api_key):
+    """
+    Expand target titles using Gemini 2.5 Flash, falling back to a static mapping if it fails or key is missing.
+    """
+    STATIC_SYNONYM_FALLBACK = {
+        "DevOps Engineer": ["DevOps", "Site Reliability Engineer", "SRE"],
+        "Cloud Automation Engineer": ["Cloud Infrastructure Engineer", "Automation Engineer", "Cloud Engineer"],
+        "Platform Engineer": ["Platform Engineering", "Infrastructure Engineer", "DevOps Engineer"],
+        "Cloud Infrastructure Engineer": ["Cloud Engineer", "Infrastructure Engineer", "DevOps"],
+        "Cloud Security Engineer": ["Security Engineer", "DevSecOps", "Cloud SecOps"],
+        "DevSecOps": ["DevSecOps Engineer", "Security Engineer", "DevOps Security"],
+        "Site Reliability Engineer": ["SRE", "Reliability Engineer", "DevOps Engineer"],
+        "CI/CD Engineer": ["Release Engineer", "Build Engineer", "DevOps CI/CD"],
+        "Systems Engineer": ["System Engineer", "Linux Systems Engineer", "Operations Engineer"],
+        "Cloud Network Engineer": ["Network Engineer", "Cloud Network Administrator"],
+        "Data Platform Engineer": ["Data Infrastructure Engineer", "Data Engineer", "Data Ops"],
+        "Machine Learning Engineer": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Infrastructure"],
+        "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"]
+    }
+    
+    if not api_key:
+        log("No Gemini API key found for query expansion. Falling back to static synonym mapping.")
+        return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        prompt = f"""
+You are an expert technical recruiter and sourcing agent.
+Given the following list of target job titles:
+{json.dumps(target_titles)}
+
+Generate 2-3 highly relevant, search-friendly synonyms, abbreviations, or closely related titles for each target title.
+These will be used for searching job boards, so choose terms commonly used in job listings.
+Avoid overly generic terms that would cause search query bloat or return irrelevant results.
+
+Return ONLY a JSON object mapping each original title to a list of its 2-3 synonyms/abbreviations.
+Conform exactly to this structure:
+{{
+  "Title 1": ["Synonym A", "Synonym B"],
+  "Title 2": ["Synonym C", "Synonym D"]
+}}
+"""
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        expanded = json.loads(text)
+        
+        result = {}
+        for title in target_titles:
+            syns = expanded.get(title, expanded.get(title.strip(), []))
+            if isinstance(syns, list):
+                clean_syns = [str(s).strip() for s in syns if s][:3]
+                result[title] = clean_syns
+            else:
+                result[title] = STATIC_SYNONYM_FALLBACK.get(title, [])
+        log(f"Successfully generated query expansions with Gemini for {len(result)} titles.")
+        return result
+    except Exception as e:
+        log(f"Gemini query expansion failed: {e}. Falling back to static synonym mapping.")
+        return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
+
+
+def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_urls):
+    """
+    Search Yahoo and scrape jobs for a given keyword/title.
+    Returns a list of newly scraped job dictionaries and count of unique URLs found.
+    """
+    queries = build_yahoo_queries(keyword, search_cfg)
+    keyword_scraped_jobs = []
+    urls_found_for_keyword = 0
+    
+    for query in queries:
+        log(f"Searching: {query}")
+        urls = search_yahoo(query)
+        time.sleep(2)
+
+        for href in urls:
+            nu = normalize_job_url(href)
+            if not nu:
+                continue
+            if nu in found_urls:
+                continue
+            found_urls.add(nu)
+            urls_found_for_keyword += 1
+
+            if dry_run:
+                dry_urls.append({"job_url": href, "query": query, "title_keyword": keyword})
+                continue
+
+            domain = urlparse(href).netloc.lower()
+            job_data = None
+            try:
+                if 'greenhouse.io' in domain:
+                    job_data = scrape_greenhouse(href)
+                elif 'lever.co' in domain:
+                    job_data = scrape_lever(href)
+                elif 'myworkdayjobs.com' in domain:
+                    job_data = scrape_workday(href)
+                elif 'ashbyhq.com' in domain:
+                    job_data = scrape_ashby(href)
+                elif 'workable.com' in domain:
+                    job_data = scrape_workable(href)
+                elif 'smartrecruiters.com' in domain:
+                    job_data = scrape_smartrecruiters(href)
+                elif 'weworkremotely.com' in domain:
+                    job_data = scrape_weworkremotely(href)
+                elif 'remote.co' in domain:
+                    job_data = scrape_remoteco(href)
+                elif 'linkedin.com' in domain:
+                    job_data = scrape_linkedin(href)
+                elif 'workatastartup.com' in domain:
+                    job_data = scrape_yc(href)
+            except Exception as e:
+                log(f"Scraper error for {href}: {e}")
+
+            if job_data and job_data.get("job_description"):
+                if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
+                    log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
+                    keyword_scraped_jobs.append(job_data)
+                else:
+                    log(f"Discarded (No Requirement ID): {href}")
+            else:
+                if job_data:
+                    log(f"Discarded (No JD text or inactive): {href}")
+                    
+    return keyword_scraped_jobs, urls_found_for_keyword
+
+
 def main(dry_run=False):
     target_titles = []
     config_data = {}
@@ -866,57 +1007,32 @@ def main(dry_run=False):
     if dry_run:
         log("DRY RUN: collecting URLs only (no per-job page scrape).")
 
+    yield_threshold = search_cfg.get("yield_threshold", 2)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    
+    # Generate synonym expansion mapping using Gemini (with fallback)
+    synonyms_map = expand_target_titles_with_gemini(target_titles, api_key)
+
     for title in target_titles:
-        queries = build_yahoo_queries(title, search_cfg)
-        for query in queries:
-            log(f"Searching: {query}")
-            urls = search_yahoo(query)
-            time.sleep(2)
+        log(f"Processing target title: '{title}'")
+        new_jobs, urls_found = search_and_scrape_for_keyword(title, search_cfg, found_urls, dry_run, dry_urls)
+        scraped_jobs.extend(new_jobs)
 
-            for href in urls:
-                nu = normalize_job_url(href)
-                if not nu:
-                    continue
-                if nu in found_urls:
-                    continue
-                found_urls.add(nu)
+        # Track search yield
+        current_yield = len(new_jobs) if not dry_run else urls_found
 
-                if dry_run:
-                    dry_urls.append({"job_url": href, "query": query, "title_keyword": title})
-                    continue
-
-                domain = urlparse(href).netloc.lower()
-                job_data = None
-                if 'greenhouse.io' in domain:
-                    job_data = scrape_greenhouse(href)
-                elif 'lever.co' in domain:
-                    job_data = scrape_lever(href)
-                elif 'myworkdayjobs.com' in domain:
-                    job_data = scrape_workday(href)
-                elif 'ashbyhq.com' in domain:
-                    job_data = scrape_ashby(href)
-                elif 'workable.com' in domain:
-                    job_data = scrape_workable(href)
-                elif 'smartrecruiters.com' in domain:
-                    job_data = scrape_smartrecruiters(href)
-                elif 'weworkremotely.com' in domain:
-                    job_data = scrape_weworkremotely(href)
-                elif 'remote.co' in domain:
-                    job_data = scrape_remoteco(href)
-                elif 'linkedin.com' in domain:
-                    job_data = scrape_linkedin(href)
-                elif 'workatastartup.com' in domain:
-                    job_data = scrape_yc(href)
-
-                if job_data and job_data.get("job_description"):
-                    if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
-                        log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
-                        scraped_jobs.append(job_data)
-                    else:
-                        log(f"Discarded (No Requirement ID): {href}")
-                else:
-                    if job_data:
-                        log(f"Discarded (No JD text or inactive): {href}")
+        if current_yield < yield_threshold:
+            syns = synonyms_map.get(title, [])
+            if syns:
+                log(f"Yield of {current_yield} for '{title}' is below threshold of {yield_threshold}. Triggering query expansion with synonyms: {syns}")
+                for synonym in syns:
+                    log(f"Executing expanded search for synonym: '{synonym}' (original: '{title}')")
+                    syn_jobs, syn_urls_found = search_and_scrape_for_keyword(synonym, search_cfg, found_urls, dry_run, dry_urls)
+                    scraped_jobs.extend(syn_jobs)
+            else:
+                log(f"Yield of {current_yield} for '{title}' is below threshold, but no synonyms are available.")
+        else:
+            log(f"Yield of {current_yield} for '{title}' met or exceeded threshold of {yield_threshold}. No expansion needed.")
 
     if dry_run:
         out_path = WORKSPACE / "dry_run_urls.json"

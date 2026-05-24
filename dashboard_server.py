@@ -72,6 +72,8 @@ def load_config():
             "country_phrase": "United States",
             "include_remote_primary_boards": True,
             "merge_previous_scrape": True,
+            "send_digest_only": True,
+            "max_digest_items": 10,
         },
     }
 
@@ -758,6 +760,74 @@ def send_webhook_alert(job, page_id, custom_msg=None):
         print(f"Error sending webhook notification: {e}")
         return False
 
+def send_daily_digest_alert(synced_jobs, total_synced_count):
+    cfg = load_config()
+    webhook_url = effective_webhook_url(cfg)
+    if not webhook_url:
+        return False
+        
+    try:
+        search_cfg = cfg.get("search") or {}
+        max_items = search_cfg.get("max_digest_items", 10)
+        
+        # Build Discord Embed
+        if "discord.com" in webhook_url:
+            fields = []
+            for job, page_id in synced_jobs[:max_items]:
+                notion_url = f"https://notion.so/{page_id.replace('-', '')}" if page_id else ""
+                job_title = job.get('job_title', 'Unknown Title')
+                company = job.get('company_name', 'Unknown Company')
+                role = job.get('strongest_label', 'Unknown Role')
+                loc = job.get('location_work_type', 'Remote')
+                conf = job.get('confidence_score')
+                if conf is not None:
+                    if conf <= 1.0:
+                        conf = int(conf * 100)
+                    else:
+                        conf = int(conf)
+                    conf_str = f" ({conf}% Match)"
+                else:
+                    conf_str = ""
+                    
+                fields.append({
+                    "name": f"💼 {job_title} @ {company}",
+                    "value": f"🏷️ **Role**: {role}{conf_str}\n"
+                             f"📍 **Location**: {loc}\n"
+                             f"🔗 [Career Site]({job.get('job_url')}) | [Notion Page]({notion_url})\n"
+                             f"📝 **Rationale**: {job.get('rationale', 'No rationale provided.')[:150]}..."
+                })
+                
+            overflow = total_synced_count - len(fields)
+            desc = f"Successfully synced **{total_synced_count}** new approved jobs to Notion in this sourcing run!"
+            if overflow > 0:
+                desc += f"\n*(Showing top {max_items} jobs. {overflow} more synced to Notion)*"
+                
+            payload = {
+                "embeds": [{
+                    "title": "💼 MAAS Job Sourcing Run Digest",
+                    "color": 3447003, # Dark Slate / Blue
+                    "description": desc,
+                    "fields": fields,
+                    "timestamp": datetime.utcnow().isoformat()
+                }]
+            }
+        else:
+            # Plain text fallback (Slack or other text webhook)
+            lines = [f"💼 **MAAS Job Sourcing Run Digest**", f"Successfully synced *{total_synced_count}* new approved jobs to Notion!"]
+            for job, page_id in synced_jobs[:max_items]:
+                notion_url = f"https://notion.so/{page_id.replace('-', '')}" if page_id else ""
+                lines.append(f"• *{job.get('job_title')}* at *{job.get('company_name')}* ({job.get('location_work_type', 'Remote')}) - <{notion_url}|Notion Page> | <{job.get('job_url')}|Apply>")
+            overflow = total_synced_count - len(synced_jobs[:max_items])
+            if overflow > 0:
+                lines.append(f"_...and {overflow} more jobs synced to Notion._")
+            payload = {"text": "\n".join(lines)}
+            
+        r = requests.post(webhook_url, json=payload, timeout=15)
+        return r.status_code in [200, 204]
+    except Exception as e:
+        print(f"Error sending daily digest webhook: {e}")
+        return False
+
 def _append_pipeline_log(message):
     log_dir = os.path.join(WORKSPACE_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -846,9 +916,15 @@ def scraper_worker():
         db_id = os.getenv("NOTION_DATABASE_ID")
         if token and db_id and os.path.exists(APPROVED_PATH):
             try:
+                cfg = load_config()
+                search_cfg = cfg.get("search") or {}
+                send_digest_only = search_cfg.get("send_digest_only", True)
+                
                 with open(APPROVED_PATH, 'r') as f:
                     app_jobs = json.load(f)
                 synced_jobs = load_synced_jobs()
+                
+                newly_synced = []
                 for job in app_jobs:
                     url = job.get("job_url")
                     if url and url not in synced_jobs:
@@ -856,7 +932,12 @@ def scraper_worker():
                         success, page_id, _ = sync_job_to_notion(job, token, db_id)
                         if success:
                             mark_job_synced(url, page_id)
-                            send_webhook_alert(job, page_id)
+                            newly_synced.append((job, page_id))
+                            if not send_digest_only:
+                                send_webhook_alert(job, page_id)
+                                
+                if send_digest_only and newly_synced:
+                    send_daily_digest_alert(newly_synced, len(newly_synced))
             except Exception as e:
                 print(f"Error auto-syncing approved jobs: {e}")
                 
