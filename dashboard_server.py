@@ -13,6 +13,7 @@ import requests
 
 from jobsearch_paths import workspace_root
 from jobsearch_webhook import effective_webhook_url, public_config_for_api
+from notion_sqlite_mirror import upsert_notion_job_report
 
 # Load env variables from repo root
 WORKSPACE_DIR = str(workspace_root())
@@ -643,10 +644,25 @@ def check_job_exists_in_notion(job, token, database_id):
             
     return False, None
 
+
+def _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate):
+    try:
+        upsert_notion_job_report(
+            job,
+            page_id,
+            database_id,
+            was_duplicate=was_duplicate,
+            workspace=WORKSPACE_DIR,
+        )
+    except Exception as e:
+        print(f"SQLite Notion mirror warning: {e}")
+
+
 def sync_job_to_notion(job, token, database_id):
     # Check duplicate first
     exists, page_id = check_job_exists_in_notion(job, token, database_id)
     if exists:
+        _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=True)
         return True, page_id, None
 
     url = "https://api.notion.com/v1/pages"
@@ -669,6 +685,7 @@ def sync_job_to_notion(job, token, database_id):
     if response.status_code == 200:
         data = response.json()
         page_id = data.get("id")
+        _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False)
         return True, page_id, None
     else:
         # Fallback formatting
@@ -685,6 +702,7 @@ def sync_job_to_notion(job, token, database_id):
         if response.status_code == 200:
             data = response.json()
             page_id = data.get("id")
+            _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False)
             return True, page_id, None
         else:
             return False, None, response.text

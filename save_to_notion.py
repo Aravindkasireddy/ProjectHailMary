@@ -172,6 +172,18 @@ def save_job_to_notion(job):
     exists, page_id = check_job_exists(job)
     if exists:
         print(f"Job '{job.get('job_title')}' at '{job.get('company_name')}' already exists in Notion (Page ID: {page_id}). Skipping.")
+        try:
+            from notion_sqlite_mirror import upsert_notion_job_report
+
+            upsert_notion_job_report(
+                job,
+                page_id,
+                DATABASE_ID,
+                was_duplicate=True,
+                workspace=ROOT,
+            )
+        except Exception as e:
+            print(f"SQLite mirror warning: {e}")
         return True
 
     url = "https://api.notion.com/v1/pages"
@@ -188,6 +200,16 @@ def save_job_to_notion(job):
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code == 200:
         print(f"Successfully saved '{job.get('job_title')}' at '{job.get('company_name')}' to Notion.")
+        try:
+            from notion_sqlite_mirror import upsert_notion_job_report
+
+            page_id = response.json().get("id")
+            if page_id:
+                upsert_notion_job_report(
+                    job, page_id, DATABASE_ID, was_duplicate=False, workspace=ROOT
+                )
+        except Exception as e:
+            print(f"SQLite mirror warning: {e}")
         return True
     else:
         # If it failed because of select/multi_select property type mismatches,
@@ -210,6 +232,16 @@ def save_job_to_notion(job):
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code == 200:
             print(f"Successfully saved '{job.get('job_title')}' (using text fallback) to Notion.")
+            try:
+                from notion_sqlite_mirror import upsert_notion_job_report
+
+                page_id = response.json().get("id")
+                if page_id:
+                    upsert_notion_job_report(
+                        job, page_id, DATABASE_ID, was_duplicate=False, workspace=ROOT
+                    )
+            except Exception as e:
+                print(f"SQLite mirror warning: {e}")
             return True
         else:
             print(f"Error: Failed to save to Notion (Status {response.status_code}): {response.text}")

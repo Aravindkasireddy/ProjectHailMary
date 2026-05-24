@@ -8,6 +8,9 @@
 logs/
 *.log
 
+# Local SQLite mirror of Notion-synced jobs (created at runtime)
+/data/
+
 # Python
 __pycache__/
 *.py[cod]

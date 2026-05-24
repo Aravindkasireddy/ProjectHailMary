@@ -14,6 +14,19 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 | `Job_classifier_prompt.txt` | Large classifier instructions (policy blocks can be rebuilt from `policy_config.json`) |
 | `config.json` | Target titles, scheduler, **search** tuning, optional `webhook_url` |
 | `policy_config.json` | Salary / experience / visa / clearance knobs for prompt rebuild |
+| `notion_sqlite_mirror.py` | Writes **`data/notion_job_reports.db`** whenever a job is successfully synced to Notion (same core fields as the Notion row) |
+
+## Notion + local SQLite mirror
+
+Every successful Notion sync from `dashboard_server.py` (manual **Sync**, scheduler auto-sync, or “already in Notion” duplicate hit) **upserts** a row into:
+
+`data/notion_job_reports.db` → table **`notion_job_reports`**
+
+The DB file is gitignored; it is created automatically. Inspect locally:
+
+```bash
+sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_id, synced_at FROM notion_job_reports ORDER BY synced_at DESC LIMIT 10;"
+```
 
 ## Quick start
 
