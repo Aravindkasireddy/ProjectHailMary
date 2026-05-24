@@ -1,0 +1,1165 @@
+import os
+import sys
+import json
+import re
+import urllib.parse
+import subprocess
+import threading
+import time
+from datetime import datetime, date
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from dotenv import load_dotenv
+import requests
+
+from jobsearch_paths import workspace_root
+from jobsearch_webhook import effective_webhook_url, public_config_for_api
+
+# Load env variables from repo root
+WORKSPACE_DIR = str(workspace_root())
+load_dotenv(dotenv_path=os.path.join(WORKSPACE_DIR, ".env"))
+
+PORT = 8080
+CONFIG_PATH = os.path.join(WORKSPACE_DIR, "config.json")
+POLICY_CONFIG_PATH = os.path.join(WORKSPACE_DIR, "policy_config.json")
+APPROVED_PATH = os.path.join(WORKSPACE_DIR, "approved_jobs.json")
+FAILED_PATH = os.path.join(WORKSPACE_DIR, "failed_candidate_jobs.json")
+ACTIVE_PATH = os.path.join(WORKSPACE_DIR, "active_candidate_jobs.json")
+SYNCED_PATH = os.path.join(WORKSPACE_DIR, "synced_jobs.json")
+
+# Global scraper status
+scraper_state = {
+    "status": "idle",
+    "message": "Scraper is ready.",
+    "last_run": None,
+    "last_error": None,
+    "last_metrics": {},
+}
+
+def load_config():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading config.json: {e}")
+    # Default config
+    return {
+        "target_titles": [
+            "DevOps Engineer",
+            "Cloud Automation Engineer",
+            "Platform Engineer",
+            "Cloud Infrastructure Engineer",
+            "Cloud Security Engineer",
+            "DevSecOps",
+            "Site Reliability Engineer",
+            "CI/CD Engineer",
+            "Systems Engineer",
+            "Cloud Network Engineer",
+            "Data Platform Engineer",
+            "Machine Learning Engineer",
+            "AI Platform Engineer"
+        ],
+        "scheduler": {
+            "enabled": True,
+            "run_at_hour": 8,
+            "run_at_minute": 0
+        },
+        "webhook_url": "",
+        "search": {
+            "country_phrase": "United States",
+            "include_remote_primary_boards": True,
+            "merge_previous_scrape": True,
+        },
+    }
+
+def save_config(cfg):
+    try:
+        cfg = dict(cfg)
+        if os.environ.get("JOBSEARCH_WEBHOOK_URL", "").strip():
+            cfg.pop("webhook_url", None)
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(cfg, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving config.json: {e}")
+        return False
+
+def load_policy_config():
+    if os.path.exists(POLICY_CONFIG_PATH):
+        try:
+            with open(POLICY_CONFIG_PATH, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading policy_config.json: {e}")
+    return {
+        "max_experience_years": 8,
+        "min_salary_annual": 80000,
+        "min_salary_hourly": 50,
+        "enforce_visa_sponsorship": True,
+        "enforce_no_clearance": True,
+        "custom_red_flag_keywords": []
+    }
+
+def save_policy_config(cfg):
+    try:
+        with open(POLICY_CONFIG_PATH, 'w') as f:
+            json.dump(cfg, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving policy_config.json: {e}")
+        return False
+
+def rebuild_classifier_prompt(config):
+    prompt_path = os.path.join(WORKSPACE_DIR, "Job_classifier_prompt.txt")
+    if not os.path.exists(prompt_path):
+        return False, "Job_classifier_prompt.txt not found"
+    try:
+        backup_path = prompt_path + ".bak"
+        with open(prompt_path, 'r') as f:
+            content = f.read()
+        with open(backup_path, 'w') as f:
+            f.write(content)
+        max_exp = int(config.get("max_experience_years", 8))
+        min_sal = int(config.get("min_salary_annual", 80000))
+        min_sal_hr = int(config.get("min_salary_hourly", 50))
+        enforce_visa = bool(config.get("enforce_visa_sponsorship", True))
+        enforce_clearance = bool(config.get("enforce_no_clearance", True))
+        custom_red_flags = config.get("custom_red_flag_keywords", [])
+        
+        visa_rules = ""
+        if enforce_visa:
+            visa_rules = """- no visa sponsorship / not eligible for sponsorship / unable to sponsor visas / does not sponsor work authorization
+- cannot sponsor H1B / cannot provide visa sponsorship now or in the future
+- not eligible for immigration sponsorship / this role is not eligible for sponsorship
+- must be authorized to work in the US without sponsorship / must have permanent work authorization
+- no future sponsorship available / without sponsorship now or in the future / work authorization required without sponsorship / no current or future sponsorship"""
+        clearance_rules = ""
+        if enforce_clearance:
+            clearance_rules = """- active security clearance / government clearance / secret clearance / top secret clearance / TS/SCI
+- ITAR / International Traffic in Arms Regulations / export control / export-controlled / U.S. export regulations"""
+        custom_rules_str = ""
+        if custom_red_flags:
+            custom_rules_str = "\n".join([f"- {kw}" for kw in custom_red_flags if kw.strip()])
+        min_sal_k = f"{min_sal // 1000}k" if min_sal >= 1000 else str(min_sal)
+        
+        allowed_max_non_sre = max_exp - 2 if max_exp > 2 else 1
+        allowed_max_sre = max_exp - 1 if max_exp > 1 else 1
+        allowed_non_sre_ranges = " / ".join([f"{i} / {i}+" for i in range(3, allowed_max_non_sre + 1)])
+        allowed_sre_ranges = " / ".join([f"{i} / {i}+" for i in range(5, allowed_max_sre + 1)]) if allowed_max_sre >= 5 else "5 / 5+"
+        
+        new_red_flags_block = f"""## RED FLAG RULES
+
+Hard rule: if any item below is present, you MUST add the matching red flag and MUST set `apply_decision = DO_NOT_APPLY`.
+
+### Work authorization restriction
+- US citizenship only / must be US citizen / US citizens only
+{visa_rules}
+{clearance_rules}
+- must be U.S. person / U.S. persons only / as defined by 8 U.S.C. 1324b(a)(3)
+{custom_rules_str}
+- If any of these appear: add red_flag: "Work authorization restriction"
+
+### Experience requirement violation
+- any requirement ≥{max_exp} years
+- ranges where upper bound ≥{max_exp}
+- no experience mentioned
+- treat written numbers the same as digits: three, four, five, six, seven, eight, nine, ten
+- treat plus phrasing the same as numeric plus: 3+, 4+, 5+, 6+, 7+, three plus, five plus, seven plus
+Allowed experience ranges (non-SRE): {allowed_non_sre_ranges or "3 / 3+"}
+ranges where maximum ≤{allowed_max_non_sre}
+Allowed experience ranges (SRE): {allowed_sre_ranges}
+ranges where maximum ≤{allowed_max_sre}
+- If above the allowed cap: add red_flag: "Experience requirement violation"
+
+### Seniority / title violation
+- Manager / Director / Principal / Architect / Lead
+- Senior and Staff are allowed only when total experience requirement is ≤{max_exp - 1} years
+- If experience >{max_exp - 1} years: treat it as R3
+- If the title itself violates this rule: add red_flag: "Seniority / title violation"
+
+### Out of scope
+- Pure QA
+- Pure development
+- EDI
+- Desktop support
+- Data science
+- If present: add red_flag: "Out of scope"
+
+### Salary rule
+- Salaried full-time: minimum salary < ${min_sal_k} → DO_NOT_APPLY
+- Hourly: ≤ ${min_sal_hr}/hr → DO_NOT_APPLY
+- If salary is not listed, do not trigger
+
+If red_flags is non-empty:
+MUST set apply_decision = DO_NOT_APPLY
+
+--------------------------------------------------
+APPLICATION DECISION
+--------------------------------------------------
+
+If red_flags is non-empty:
+MUST set apply_decision = DO_NOT_APPLY
+
+Return APPLY when the role belongs to the engineering domains above.
+
+Return DO_NOT_APPLY when the role belongs to:
+
+sales
+marketing
+finance
+HR
+business operations
+pure project management
+pure scrum master / delivery coordination without hands-on engineering scope
+
+--------------------------------------------------
+---
+"""
+        start_marker = "## RED FLAG RULES"
+        end_marker = "## DATABASE ENGINEER RULE"
+        start_idx = content.find(start_marker)
+        end_idx = content.find(end_marker)
+        if start_idx == -1 or end_idx == -1:
+            return False, "Could not find red flag rule boundaries in prompt file"
+        new_content = content[:start_idx] + new_red_flags_block + content[end_idx:]
+        with open(prompt_path, 'w') as f:
+            f.write(new_content)
+        return True, "Classifier prompt rebuilt successfully!"
+    except Exception as e:
+        return False, f"Rebuild failed: {str(e)}"
+
+def load_synced_jobs():
+    if os.path.exists(SYNCED_PATH):
+        try:
+            with open(SYNCED_PATH, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def mark_job_synced(url, page_id):
+    synced = load_synced_jobs()
+    synced[url] = {
+        "page_id": page_id,
+        "synced_at": datetime.utcnow().isoformat()
+    }
+    try:
+        with open(SYNCED_PATH, 'w') as f:
+            json.dump(synced, f, indent=2)
+    except Exception as e:
+        print(f"Error saving synced jobs: {e}")
+
+def load_all_jobs():
+    jobs = []
+    approved_urls = set()
+    synced_jobs = load_synced_jobs()
+    
+    # Load approved jobs
+    if os.path.exists(APPROVED_PATH):
+        try:
+            with open(APPROVED_PATH, 'r') as f:
+                app_jobs = json.load(f)
+                for j in app_jobs:
+                    url = j.get('job_url')
+                    j['status'] = 'approved'
+                    j['synced'] = url in synced_jobs
+                    j['synced_data'] = synced_jobs.get(url)
+                    j['source_file'] = 'approved_jobs.json'
+                    if url:
+                        approved_urls.add(url)
+                    jobs.append(j)
+        except Exception as e:
+            print(f"Error reading approved jobs: {e}")
+
+    # Load active candidates
+    if os.path.exists(ACTIVE_PATH):
+        try:
+            with open(ACTIVE_PATH, 'r') as f:
+                act_jobs = json.load(f)
+                for j in act_jobs:
+                    url = j.get('job_url')
+                    if not url or url in approved_urls:
+                        continue
+                    
+                    # If not approved, it was rejected during classification
+                    j['status'] = 'rejected'
+                    j['synced'] = url in synced_jobs
+                    j['synced_data'] = synced_jobs.get(url)
+                    j['source_file'] = 'active_candidate_jobs.json'
+                    
+                    # Fill in defaults if classify_and_save.py didn't write them
+                    if 'apply_decision' not in j:
+                        j['apply_decision'] = 'DO_NOT_APPLY'
+                    if 'strongest_label' not in j:
+                        j['strongest_label'] = 'OutOfScope'
+                    if 'confidence_score' not in j:
+                        j['confidence_score'] = 0
+                    if 'rationale' not in j:
+                        j['rationale'] = 'Rejected by classification logic (OutOfScope).'
+                    jobs.append(j)
+        except Exception as e:
+            print(f"Error reading active candidates: {e}")
+
+    # Load failed candidate jobs (failed pre-screen)
+    if os.path.exists(FAILED_PATH):
+        try:
+            with open(FAILED_PATH, 'r') as f:
+                fail_jobs = json.load(f)
+                for j in fail_jobs:
+                    url = j.get('job_url')
+                    if not url:
+                        continue
+                    if any(x.get('job_url') == url for x in jobs):
+                        continue
+                    j['status'] = 'rejected'
+                    j['synced'] = url in synced_jobs
+                    j['synced_data'] = synced_jobs.get(url)
+                    j['source_file'] = 'failed_candidate_jobs.json'
+                    j['apply_decision'] = 'DO_NOT_APPLY'
+                    j['strongest_label'] = 'OutOfScope'
+                    j['confidence_score'] = 100
+                    j['rationale'] = f"Failed pre-screen regex checks. Red flags: {', '.join(j.get('red_flags', []))}"
+                    jobs.append(j)
+        except Exception as e:
+            print(f"Error reading failed candidates: {e}")
+
+    return jobs
+
+def calculate_analytics():
+    jobs = load_all_jobs()
+    total_jobs = len(jobs)
+    
+    approved_count = 0
+    rejected_count = 0
+    pending_count = 0
+    
+    labels_distribution = {}
+    sources_distribution = {}
+    rejection_reasons = {
+        "Work authorization restriction": 0,
+        "Experience requirement violation": 0,
+        "Seniority / title violation": 0,
+        "Out of scope": 0,
+        "Salary rule": 0,
+        "Manual Disapproval": 0,
+        "Other / Pre-screen fail": 0
+    }
+    
+    for j in jobs:
+        decision = j.get("apply_decision")
+        red_flags = j.get("red_flags", [])
+        
+        if decision == 'APPLY' and not red_flags:
+            approved_count += 1
+            lbl = j.get("strongest_label", "DevOps Engineer")
+            labels_distribution[lbl] = labels_distribution.get(lbl, 0) + 1
+        elif decision == 'DO_NOT_APPLY' or red_flags:
+            rejected_count += 1
+            if red_flags:
+                for rf in red_flags:
+                    rejection_reasons[rf] = rejection_reasons.get(rf, 0) + 1
+            else:
+                rejection_reasons["Other / Pre-screen fail"] += 1
+        else:
+            pending_count += 1
+            
+        url = j.get("job_url", "")
+        if url:
+            domain = urllib.parse.urlparse(url).netloc
+            if "greenhouse.io" in domain:
+                src = "Greenhouse"
+            elif "lever.co" in domain:
+                src = "Lever"
+            elif "myworkdayjobs.com" in domain:
+                src = "Workday"
+            elif "ashbyhq.com" in domain:
+                src = "Ashby"
+            elif "workable.com" in domain:
+                src = "Workable"
+            elif "smartrecruiters.com" in domain:
+                src = "SmartRecruiters"
+            elif "weworkremotely.com" in domain:
+                src = "We Work Remotely"
+            elif "remote.co" in domain:
+                src = "Remote.co"
+            elif "linkedin.com" in domain:
+                src = "LinkedIn"
+            elif "workatastartup.com" in domain or "ycombinator.com" in domain:
+                src = "Y Combinator"
+            else:
+                src = domain or "Other"
+            sources_distribution[src] = sources_distribution.get(src, 0) + 1
+            
+    approval_rate = round((approved_count / total_jobs * 100), 1) if total_jobs > 0 else 0
+    
+    return {
+        "total_sourced": total_jobs,
+        "approved": approved_count,
+        "rejected": rejected_count,
+        "pending": pending_count,
+        "approval_rate": approval_rate,
+        "labels_distribution": labels_distribution,
+        "sources_distribution": sources_distribution,
+        "rejection_reasons": rejection_reasons
+    }
+
+def override_job_on_disk(updated_job):
+    url = updated_job.get("job_url")
+    if not url:
+        return False, "Missing job_url"
+        
+    approved = []
+    if os.path.exists(APPROVED_PATH):
+        try:
+            with open(APPROVED_PATH, 'r') as f:
+                approved = json.load(f)
+        except Exception:
+            pass
+            
+    failed = []
+    if os.path.exists(FAILED_PATH):
+        try:
+            with open(FAILED_PATH, 'r') as f:
+                failed = json.load(f)
+        except Exception:
+            pass
+            
+    active = []
+    if os.path.exists(ACTIVE_PATH):
+        try:
+            with open(ACTIVE_PATH, 'r') as f:
+                active = json.load(f)
+        except Exception:
+            pass
+            
+    # Find the job
+    target_job = None
+    
+    # 1. Look in approved
+    for j in approved:
+        if j.get("job_url") == url:
+            target_job = j
+            break
+            
+    # 2. Look in failed (remove if overridden to approved)
+    if not target_job:
+        for j in failed:
+            if j.get("job_url") == url:
+                target_job = j
+                failed = [x for x in failed if x.get("job_url") != url]
+                break
+                
+    # 3. Look in active
+    if not target_job:
+        for j in active:
+            if j.get("job_url") == url:
+                target_job = j
+                break
+                
+    if not target_job:
+        target_job = {}
+        
+    # Update fields
+    target_job.update({
+        "job_url": url,
+        "job_title": updated_job.get("job_title", target_job.get("job_title", "Unknown Title")),
+        "company_name": updated_job.get("company_name", target_job.get("company_name", "Unknown")),
+        "requirement_id": updated_job.get("requirement_id", target_job.get("requirement_id", "Unknown")),
+        "location_work_type": updated_job.get("location_work_type", target_job.get("location_work_type", "Remote")),
+        "job_description": updated_job.get("job_description", target_job.get("job_description", "")),
+        "red_flags": [],  # Clear red flags
+        "apply_decision": "APPLY",
+        "strongest_label": updated_job.get("strongest_label", "DevOps Engineer"),
+        "confidence_score": 100,
+        "rationale": updated_job.get("rationale", "Manually approved override via dashboard."),
+        "apply_decision_payload": {
+            "apply_decision": "APPLY",
+            "strongest_label": updated_job.get("strongest_label", "DevOps Engineer"),
+            "red_flags": [],
+            "confidence_score": 100,
+            "rationale": updated_job.get("rationale", "Manually approved override via dashboard.")
+        }
+    })
+    
+    # Save approved
+    approved = [j for j in approved if j.get("job_url") != url]
+    approved.append(target_job)
+    
+    try:
+        with open(APPROVED_PATH, 'w') as f:
+            json.dump(approved, f, indent=2)
+        with open(FAILED_PATH, 'w') as f:
+            json.dump(failed, f, indent=2)
+        return True, "Job successfully approved and saved."
+    except Exception as e:
+        return False, f"Failed to save changes: {str(e)}"
+
+# Notion Sync Engine
+def clean_text_for_notion(text, limit=2000):
+    if not text:
+        return ""
+    if len(text) > limit:
+        return text[:limit-3] + "..."
+    return text
+
+def build_notion_properties(job):
+    # Ensure correct confidence score formatting for percentage field (95% -> 0.95)
+    score = float(job.get("confidence_score", 0))
+    if score > 1.0:
+        score = score / 100.0
+        
+    props = {
+        "Job Title": {
+            "title": [{"text": {"content": job.get("job_title", "Unknown Title")}}]
+        },
+        "Requirement ID": {
+            "rich_text": [{"text": {"content": job.get("requirement_id", "Unknown")}}]
+        },
+        "Job URL": {
+            "url": job.get("job_url", "")
+        },
+        "Company Name": {
+            "rich_text": [{"text": {"content": job.get("company_name", "Unknown")}}]
+        },
+        "Location + Work Type": {
+            "rich_text": [{"text": {"content": job.get("location_work_type", "Remote")}}]
+        },
+        "Job Description": {
+            "rich_text": [{"text": {"content": clean_text_for_notion(job.get("job_description", ""))}}]
+        },
+        "Apply Decision": {
+            "select": {"name": job.get("apply_decision", "APPLY")}
+        },
+        "Strongest Label": {
+            "rich_text": [{"text": {"content": job.get("strongest_label", "OutOfScope")}}]
+        },
+        "Confidence Score": {
+            "number": score
+        },
+        "Rationale": {
+            "rich_text": [{"text": {"content": clean_text_for_notion(job.get("rationale", ""))}}]
+        },
+        "Apply Decision Payload": {
+            "rich_text": [{"text": {"content": clean_text_for_notion(json.dumps(job.get("apply_decision_payload", {}), indent=2), limit=2000)}}]
+        },
+        "Date Added": {
+            "date": {"start": datetime.utcnow().strftime("%Y-%m-%d")}
+        }
+    }
+
+    # Format Red Flags
+    red_flags = job.get("red_flags", [])
+    if isinstance(red_flags, str):
+        red_flags = [red_flags] if red_flags else []
+    
+    props["Red Flags"] = {
+        "multi_select": [{"name": flag[:100]} for flag in red_flags if flag]
+    }
+
+    return props
+
+def build_page_children(job_description):
+    children = []
+    if not job_description:
+        return children
+
+    paragraphs = job_description.split("\n")
+    current_block = ""
+    
+    for p in paragraphs:
+        p = p.strip()
+        if not p:
+            continue
+        if len(current_block) + len(p) + 2 > 2000:
+            children.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": current_block}}]
+                }
+            })
+            current_block = p
+        else:
+            if current_block:
+                current_block += "\n" + p
+            else:
+                current_block = p
+                
+    if current_block:
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": current_block}}]
+            }
+        })
+        
+    return children[:100]
+
+def check_job_exists_in_notion(job, token, database_id):
+    """Check if the job already exists in the Notion database by URL or Req ID."""
+    db_url = f"https://api.notion.com/v1/databases/{database_id}/query"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    
+    # 1. Check by Job URL
+    job_url = job.get("job_url")
+    if job_url:
+        payload = {
+            "filter": {
+                "property": "Job URL",
+                "url": {
+                    "equals": job_url
+                }
+            }
+        }
+        try:
+            r = requests.post(db_url, headers=headers, json=payload, timeout=10)
+            if r.status_code == 200 and r.json().get("results"):
+                return True, r.json()["results"][0]["id"]
+        except Exception as e:
+            print(f"Warning: URL duplicate check error: {e}")
+            
+    # 2. Check by Requirement ID
+    req_id = job.get("requirement_id")
+    if req_id and req_id != "Unknown":
+        payload = {
+            "filter": {
+                "property": "Requirement ID",
+                "rich_text": {
+                    "equals": req_id
+                }
+            }
+        }
+        try:
+            r = requests.post(db_url, headers=headers, json=payload, timeout=10)
+            if r.status_code == 200 and r.json().get("results"):
+                return True, r.json()["results"][0]["id"]
+        except Exception as e:
+            print(f"Warning: Req ID duplicate check error: {e}")
+            
+    return False, None
+
+def sync_job_to_notion(job, token, database_id):
+    # Check duplicate first
+    exists, page_id = check_job_exists_in_notion(job, token, database_id)
+    if exists:
+        return True, page_id, None
+
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    
+    properties = build_notion_properties(job)
+    children = build_page_children(job.get("job_description", ""))
+    
+    payload = {
+        "parent": {"database_id": database_id},
+        "properties": properties,
+        "children": children
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        page_id = data.get("id")
+        return True, page_id, None
+    else:
+        # Fallback formatting
+        print(f"Notion sync warning: {response.text}. Retrying with text fallback...")
+        properties["Apply Decision"] = {
+            "rich_text": [{"text": {"content": job.get("apply_decision", "APPLY")}}]
+        }
+        properties["Red Flags"] = {
+            "rich_text": [{"text": {"content": ", ".join(job.get("red_flags", []))}}]
+        }
+        payload["properties"] = properties
+        
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            page_id = data.get("id")
+            return True, page_id, None
+        else:
+            return False, None, response.text
+
+# Webhook Notification Dispatcher
+def send_webhook_alert(job, page_id, custom_msg=None):
+    cfg = load_config()
+    webhook_url = effective_webhook_url(cfg)
+    if not webhook_url:
+        return False
+        
+    try:
+        notion_url = f"https://notion.so/{page_id.replace('-', '')}" if page_id else ""
+        
+        if custom_msg:
+            payload = {"text": custom_msg}
+        else:
+            # Styled markdown notification (Slack/Discord compatible)
+            payload = {
+                "text": f"🎉 **New Job Saved to Notion!**\n"
+                        f"🏢 **Company**: {job.get('company_name')}\n"
+                        f"💼 **Title**: {job.get('job_title')}\n"
+                        f"🏷️ **Role**: {job.get('strongest_label')}\n"
+                        f"📍 **Location**: {job.get('location_work_type', 'Remote')}\n"
+                        f"🆔 **Req ID**: {job.get('requirement_id', 'Unknown')}\n"
+                        f"🔗 **Links**: [Career Site]({job.get('job_url')}) | [Notion Database Page]({notion_url})\n"
+                        f"📝 **Rationale**: {job.get('rationale', 'No rationale provided.')}"
+            }
+            
+            # If it's a Discord webhook, we can optionally format as embeds
+            if "discord.com" in webhook_url:
+                payload = {
+                    "embeds": [{
+                        "title": "🎉 New Job Synced to Notion!",
+                        "color": 6512369, # Indigo
+                        "fields": [
+                            {"name": "Company", "value": job.get('company_name', 'Unknown'), "inline": True},
+                            {"name": "Title", "value": job.get('job_title', 'Unknown'), "inline": True},
+                            {"name": "Role Type", "value": job.get('strongest_label', 'Unknown'), "inline": True},
+                            {"name": "Req ID", "value": job.get('requirement_id', 'Unknown'), "inline": True},
+                            {"name": "Location", "value": job.get('location_work_type', 'Remote'), "inline": True},
+                            {"name": "Notion Link", "value": f"[View Page]({notion_url})" if notion_url else "N/A", "inline": True}
+                        ],
+                        "description": f"**Rationale**: {job.get('rationale', 'No rationale')}\n\n[Apply Directly on Career Site]({job.get('job_url')})"
+                    }]
+                }
+                
+        r = requests.post(webhook_url, json=payload, timeout=10)
+        return r.status_code in [200, 204]
+    except Exception as e:
+        print(f"Error sending webhook notification: {e}")
+        return False
+
+def _append_pipeline_log(message):
+    log_dir = os.path.join(WORKSPACE_DIR, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    path = os.path.join(log_dir, "pipeline.log")
+    ts = datetime.utcnow().isoformat()
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] {message}\n")
+
+
+# Scraper worker thread
+def scraper_worker():
+    global scraper_state
+    scraper_state["status"] = "running"
+    scraper_state["message"] = "Starting search query sourcing..."
+    scraper_state["last_error"] = None
+    scraper_state["last_metrics"] = {}
+
+    def run_step(cmd, label):
+        _append_pipeline_log(f"START {label}: {' '.join(cmd)}")
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=WORKSPACE_DIR)
+        tail_out = (p.stdout or "")[-12000:]
+        tail_err = (p.stderr or "")[-8000:]
+        _append_pipeline_log(f"END {label} rc={p.returncode}\n--- stdout ---\n{tail_out}\n--- stderr ---\n{tail_err}")
+        return p
+
+    try:
+        p1 = run_step([sys.executable, "find_and_scrape_jobs.py"], "find_and_scrape_jobs")
+        if p1.returncode != 0:
+            scraper_state["status"] = "failed"
+            err = (p1.stderr or p1.stdout or "").strip() or "Unknown error"
+            scraper_state["message"] = f"Sourcing script failed: {err[:500]}"
+            scraper_state["last_error"] = err[:4000]
+            return
+
+        scraper_state["message"] = "Running validation and filtering..."
+        filter_script = os.path.join(WORKSPACE_DIR, "scripts", "scrape_and_filter_candidates.py")
+        p2 = run_step([sys.executable, filter_script], "scrape_and_filter_candidates")
+        if p2.returncode != 0:
+            scraper_state["status"] = "failed"
+            err = (p2.stderr or p2.stdout or "").strip() or "Unknown error"
+            scraper_state["message"] = f"Filter script failed: {err[:500]}"
+            scraper_state["last_error"] = err[:4000]
+            return
+
+        scraper_state["message"] = "Applying policy classification..."
+        classify_script = os.path.join(WORKSPACE_DIR, "scripts", "classify_and_save.py")
+        p3 = run_step([sys.executable, classify_script], "classify_and_save")
+        if p3.returncode != 0:
+            scraper_state["status"] = "failed"
+            err = (p3.stderr or p3.stdout or "").strip() or "Unknown error"
+            scraper_state["message"] = f"Classifier failed: {err[:500]}"
+            scraper_state["last_error"] = err[:4000]
+            return
+
+        metrics = {}
+        try:
+            sj = os.path.join(WORKSPACE_DIR, "scraped_jobs.json")
+            if os.path.exists(sj):
+                with open(sj, encoding="utf-8") as f:
+                    metrics["scraped_jobs_count"] = len(json.load(f))
+        except Exception:
+            pass
+        try:
+            if os.path.exists(APPROVED_PATH):
+                with open(APPROVED_PATH, encoding="utf-8") as f:
+                    metrics["approved_jobs_count"] = len(json.load(f))
+        except Exception:
+            pass
+        try:
+            if os.path.exists(ACTIVE_PATH):
+                with open(ACTIVE_PATH, encoding="utf-8") as f:
+                    metrics["active_candidates_count"] = len(json.load(f))
+        except Exception:
+            pass
+        try:
+            if os.path.exists(FAILED_PATH):
+                with open(FAILED_PATH, encoding="utf-8") as f:
+                    metrics["failed_candidates_count"] = len(json.load(f))
+        except Exception:
+            pass
+        scraper_state["last_metrics"] = metrics
+
+        # Load the newly approved jobs and auto-sync them if cron triggered
+        # For auto runs, we sync them and send webhook notifications
+        token = os.getenv("NOTION_TOKEN")
+        db_id = os.getenv("NOTION_DATABASE_ID")
+        if token and db_id and os.path.exists(APPROVED_PATH):
+            try:
+                with open(APPROVED_PATH, 'r') as f:
+                    app_jobs = json.load(f)
+                synced_jobs = load_synced_jobs()
+                for job in app_jobs:
+                    url = job.get("job_url")
+                    if url and url not in synced_jobs:
+                        # Auto sync
+                        success, page_id, _ = sync_job_to_notion(job, token, db_id)
+                        if success:
+                            mark_job_synced(url, page_id)
+                            send_webhook_alert(job, page_id)
+            except Exception as e:
+                print(f"Error auto-syncing approved jobs: {e}")
+                
+        scraper_state["status"] = "completed"
+        scraper_state["message"] = "Job sourcing and validation complete!"
+        scraper_state["last_run"] = datetime.utcnow().isoformat()
+    except Exception as e:
+        scraper_state["status"] = "failed"
+        scraper_state["message"] = f"Scraper execution error: {str(e)}"
+        scraper_state["last_error"] = str(e)[:4000]
+
+# Background Scheduler Loop
+def scheduler_loop():
+    print("Background scheduler thread started.")
+    last_triggered_date = None
+    
+    while True:
+        cfg = load_config()
+        sched_cfg = cfg.get("scheduler", {})
+        
+        if sched_cfg.get("enabled", False):
+            now = datetime.now()
+            today = date.today()
+            
+            target_hour = sched_cfg.get("run_at_hour", 8)
+            target_minute = sched_cfg.get("run_at_minute", 0)
+            
+            # Check if it matches target hour and minute, and hasn't run today yet
+            if now.hour == target_hour and now.minute == target_minute and last_triggered_date != today:
+                print(f"[{now.isoformat()}] Scheduled trigger: Starting daily job sourcing scraper...")
+                last_triggered_date = today
+                
+                # Trigger scraper run if not already running
+                global scraper_state
+                if scraper_state["status"] != "running":
+                    threading.Thread(target=scraper_worker).start()
+                    
+        # Sleep for 30 seconds before checking again
+        time.sleep(30)
+
+# HTTP Handler
+class DashboardHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+    def send_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_cors_headers()
+        self.end_headers()
+
+    def do_GET(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        
+        # API: Get all jobs
+        if parsed_url.path == "/api/jobs":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            jobs = load_all_jobs()
+            self.wfile.write(json.dumps(jobs).encode('utf-8'))
+            return
+            
+        # API: Get settings config
+        elif parsed_url.path == "/api/config":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            cfg = load_config()
+            self.wfile.write(json.dumps(public_config_for_api(cfg)).encode('utf-8'))
+            return
+
+        # API: Get policy config
+        elif parsed_url.path == "/api/policy":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            cfg = load_policy_config()
+            self.wfile.write(json.dumps(cfg).encode('utf-8'))
+            return
+
+        # API: Get analytics metrics
+        elif parsed_url.path == "/api/analytics":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            data = calculate_analytics()
+            self.wfile.write(json.dumps(data).encode('utf-8'))
+            return
+            
+        # API: Test Notion database connection
+        elif parsed_url.path == "/api/test-notion":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            token = os.getenv("NOTION_TOKEN")
+            db_id = os.getenv("NOTION_DATABASE_ID")
+            
+            if not token or not db_id:
+                res = {"success": False, "message": "NOTION_TOKEN or NOTION_DATABASE_ID missing in environment."}
+            else:
+                url = f"https://api.notion.com/v1/databases/{db_id}"
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Notion-Version": "2022-06-28"
+                }
+                try:
+                    r = requests.get(url, headers=headers, timeout=10)
+                    if r.status_code == 200:
+                        res = {"success": True, "message": "Successfully connected to Notion!", "db_name": r.json().get("title", [{}])[0].get("plain_text", "MAAS Database")}
+                    else:
+                        res = {"success": False, "message": f"Connection failed (Status {r.status_code}): {r.text}"}
+                except Exception as e:
+                    res = {"success": False, "message": f"Network error: {str(e)}"}
+            
+            self.wfile.write(json.dumps(res).encode('utf-8'))
+            return
+            
+        # API: Check scraper status
+        elif parsed_url.path == "/api/scraper-status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps(scraper_state).encode('utf-8'))
+            return
+
+        # Serve Frontend index.html
+        elif parsed_url.path == "/" or parsed_url.path == "/index.html":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            
+            html_path = os.path.join(WORKSPACE_DIR, "index.html")
+            if os.path.exists(html_path):
+                with open(html_path, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.wfile.write(b"<h1>Dashboard index.html not found!</h1>")
+            return
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+
+    def do_POST(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length).decode('utf-8')
+        
+        try:
+            payload = json.loads(post_data) if post_data else {}
+        except Exception:
+            payload = {}
+
+        # API: Save settings config
+        if parsed_url.path == "/api/config":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            success = save_config(payload)
+            self.wfile.write(json.dumps({"success": success, "message": "Settings saved successfully!" if success else "Failed to save settings."}).encode('utf-8'))
+            return
+
+        # API: Save policy config
+        elif parsed_url.path == "/api/policy":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            success = save_policy_config(payload)
+            if success:
+                rebuild_success, msg = rebuild_classifier_prompt(payload)
+                if rebuild_success:
+                    self.wfile.write(json.dumps({"success": True, "message": "Policy saved and classifier prompt rebuilt successfully!"}).encode('utf-8'))
+                else:
+                    self.wfile.write(json.dumps({"success": False, "message": f"Policy saved, but prompt rebuild failed: {msg}"}).encode('utf-8'))
+            else:
+                self.wfile.write(json.dumps({"success": False, "message": "Failed to save policy configuration."}).encode('utf-8'))
+            return
+
+        # API: Test Webhook Connection
+        elif parsed_url.path == "/api/test-webhook":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+
+            cfg = load_config()
+            test_url = (payload.get("webhook_url") or "").strip() or effective_webhook_url(cfg)
+            if not test_url:
+                self.wfile.write(json.dumps({"success": False, "message": "No Webhook URL provided (form or JOBSEARCH_WEBHOOK_URL / config)."}).encode('utf-8'))
+                return
+
+            try:
+                if "discord.com" in test_url:
+                    wh_payload = {
+                        "embeds": [{
+                            "title": "MAAS Job Agent Webhook Test",
+                            "description": "Successful connection test.",
+                            "color": 6512369,
+                        }]
+                    }
+                else:
+                    wh_payload = {"text": "🔔 **MAAS Job Agent Webhook Connection Test**: Successful alert! 🎉"}
+                r = requests.post(test_url, json=wh_payload, timeout=10)
+                success = r.status_code in [200, 204]
+            except Exception as e:
+                success = False
+                err = str(e)
+                self.wfile.write(json.dumps({"success": False, "message": f"Failed to dispatch webhook: {err}"}).encode('utf-8'))
+                return
+
+            if success:
+                self.wfile.write(json.dumps({"success": True, "message": "Test alert sent successfully! Check your Slack/Discord channel."}).encode('utf-8'))
+            else:
+                self.wfile.write(json.dumps({"success": False, "message": "Failed to dispatch webhook alert. Double check your Webhook URL."}).encode('utf-8'))
+            return
+
+        # API: Override approval
+        elif parsed_url.path == "/api/override":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            success, msg = override_job_on_disk(payload)
+            self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
+            return
+            
+        # API: Sync job to Notion
+        elif parsed_url.path == "/api/sync":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            url = payload.get("job_url")
+            if not url:
+                self.wfile.write(json.dumps({"success": False, "message": "Missing job_url"}).encode('utf-8'))
+                return
+                
+            # Find the job
+            all_jobs = load_all_jobs()
+            target_job = None
+            for j in all_jobs:
+                if j.get("job_url") == url:
+                    target_job = j
+                    break
+                    
+            if not target_job:
+                self.wfile.write(json.dumps({"success": False, "message": "Job not found."}).encode('utf-8'))
+                return
+                
+            token = os.getenv("NOTION_TOKEN")
+            db_id = os.getenv("NOTION_DATABASE_ID")
+            
+            if not token or not db_id:
+                self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
+                return
+                
+            success, page_id, error_msg = sync_job_to_notion(target_job, token, db_id)
+            if success:
+                mark_job_synced(url, page_id)
+                # Dispatch Webhook alert!
+                send_webhook_alert(target_job, page_id)
+                self.wfile.write(json.dumps({"success": True, "message": "Successfully synced to Notion!", "page_id": page_id}).encode('utf-8'))
+            else:
+                self.wfile.write(json.dumps({"success": False, "message": f"Notion Sync failed: {error_msg}"}).encode('utf-8'))
+            return
+
+        # API: Trigger scraping run
+        elif parsed_url.path == "/api/scrape":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            global scraper_state
+            if scraper_state["status"] == "running":
+                res = {"success": False, "message": "Scraper is already running."}
+            else:
+                threading.Thread(target=scraper_worker).start()
+                res = {"success": True, "message": "Scraper started in background."}
+                
+            self.wfile.write(json.dumps(res).encode('utf-8'))
+            return
+            
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+
+def main():
+    # Start background scheduler thread
+    sched_thread = threading.Thread(target=scheduler_loop, daemon=True)
+    sched_thread.start()
+    
+    server = HTTPServer(('0.0.0.0', PORT), DashboardHandler)
+    print(f"MAAS Job Sourcing Agent Dashboard running at: http://localhost:{PORT}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping dashboard server...")
+        server.server_close()
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,1618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MAAS Job Sourcing & Validation Dashboard</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* Modern CSS Reset & Variable Tokens */
+        :root {
+            --bg-base: #0b0f19;
+            --bg-surface: #151b2c;
+            --bg-surface-hover: #1e263d;
+            --bg-glass: rgba(21, 27, 44, 0.7);
+            
+            --color-primary: #6366f1; /* Indigo */
+            --color-primary-glow: rgba(99, 102, 241, 0.15);
+            --color-primary-hover: #4f46e5;
+            
+            --color-success: #10b981; /* Emerald */
+            --color-success-glow: rgba(16, 185, 129, 0.15);
+            
+            --color-warning: #f59e0b; /* Amber */
+            --color-warning-glow: rgba(245, 158, 11, 0.15);
+            
+            --color-danger: #f43f5e; /* Rose */
+            --color-danger-glow: rgba(244, 63, 94, 0.15);
+            
+            --color-info: #06b6d4; /* Cyan */
+            --color-info-glow: rgba(6, 182, 212, 0.15);
+            
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-dark: #64748b;
+            
+            --border-color: rgba(255, 255, 255, 0.06);
+            --border-hover: rgba(255, 255, 255, 0.12);
+            --border-glow: rgba(99, 102, 241, 0.3);
+            
+            --font-display: 'Outfit', sans-serif;
+            --font-body: 'Inter', sans-serif;
+            
+            --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --radius-lg: 16px;
+            --radius-md: 10px;
+            --radius-sm: 6px;
+            
+            --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+            --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.25);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            font-family: var(--font-body);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.08) 0px, transparent 50%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            padding-bottom: 60px;
+        }
+
+        /* Top navigation and status bar */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(11, 15, 25, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-title-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-glow {
+            width: 38px;
+            height: 38px;
+            border-radius: var(--radius-sm);
+            background: linear-gradient(135deg, var(--color-primary), var(--color-info));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: 700;
+            font-size: 1.2rem;
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+            animation: pulse-glow 3s infinite alternate;
+        }
+
+        .header-title {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, var(--text-main), #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .notion-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--bg-surface);
+            padding: 8px 16px;
+            border-radius: 30px;
+            border: 1px solid var(--border-color);
+            font-size: 0.85rem;
+            font-weight: 500;
+            box-shadow: var(--shadow-sm);
+            transition: var(--transition-smooth);
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-checking {
+            background-color: var(--color-warning);
+            box-shadow: 0 0 10px var(--color-warning);
+            animation: blink 1.2s infinite;
+        }
+
+        .status-connected {
+            background-color: var(--color-success);
+            box-shadow: 0 0 10px var(--color-success);
+        }
+
+        .status-disconnected {
+            background-color: var(--color-danger);
+            box-shadow: 0 0 10px var(--color-danger);
+        }
+
+        /* Container Layout */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 40px;
+        }
+
+        /* Stats Overview Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin-bottom: 35px;
+        }
+
+        .stat-card {
+            background: var(--bg-glass);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            padding: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: var(--shadow-md);
+            transition: var(--transition-smooth);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+        }
+
+        .stat-card.total::before { background-color: var(--color-primary); }
+        .stat-card.approved::before { background-color: var(--color-success); }
+        .stat-card.rejected::before { background-color: var(--color-danger); }
+        .stat-card.synced::before { background-color: var(--color-info); }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--border-hover);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .stat-info h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 5px;
+        }
+
+        .stat-val {
+            font-family: var(--font-display);
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+        }
+
+        .stat-card.total .stat-icon { background: var(--color-primary-glow); color: var(--color-primary); }
+        .stat-card.approved .stat-icon { background: var(--color-success-glow); color: var(--color-success); }
+        .stat-card.rejected .stat-icon { background: var(--color-danger-glow); color: var(--color-danger); }
+        .stat-card.synced .stat-icon { background: var(--color-info-glow); color: var(--color-info); }
+
+        /* Toolbar and filters */
+        .toolbar {
+            background: var(--bg-surface);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            padding: 20px 24px;
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            box-shadow: var(--shadow-md);
+        }
+
+        .search-filter-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-grow: 1;
+            max-width: 800px;
+        }
+
+        .search-wrapper {
+            position: relative;
+            flex-grow: 1;
+        }
+
+        .search-wrapper i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+        }
+
+        .search-input {
+            width: 100%;
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 12px 16px 12px 46px;
+            color: var(--text-main);
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            outline: none;
+            transition: var(--transition-smooth);
+        }
+
+        .search-input:focus {
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+        }
+
+        .select-filter {
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 12px 20px;
+            color: var(--text-main);
+            font-family: var(--font-body);
+            font-size: 0.95rem;
+            outline: none;
+            cursor: pointer;
+            transition: var(--transition-smooth);
+            min-width: 160px;
+        }
+
+        .select-filter:focus {
+            border-color: var(--color-primary);
+        }
+
+        .actions-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-surface-hover);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 12px 20px;
+            border-radius: var(--radius-md);
+            font-family: var(--font-display);
+            font-weight: 500;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: var(--transition-smooth);
+            outline: none;
+        }
+
+        .btn:hover {
+            background: var(--bg-surface);
+            border-color: var(--border-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+            border: none;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--color-primary-hover), #4338ca);
+            box-shadow: var(--shadow-glow);
+        }
+
+        .btn-success {
+            background: var(--color-success);
+            border: none;
+        }
+        
+        .btn-success:hover {
+            background: #059669;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Scraper Status Panel inside Toolbar */
+        .scraper-badge {
+            font-size: 0.85rem;
+            padding: 6px 12px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.02);
+        }
+
+        /* Jobs Grid & Cards */
+        .jobs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 25px;
+        }
+
+        .job-card {
+            background: var(--bg-glass);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-shadow: var(--shadow-sm);
+            transition: var(--transition-smooth);
+            position: relative;
+            backdrop-filter: blur(10px);
+        }
+
+        .job-card:hover {
+            transform: translateY(-6px);
+            border-color: var(--border-hover);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .job-card.is-approved {
+            border-left: 4px solid var(--color-success);
+        }
+
+        .job-card.is-rejected {
+            border-left: 4px solid var(--color-danger);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+            gap: 10px;
+        }
+
+        .company-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .company-name {
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+        }
+
+        .req-id-badge {
+            background: rgba(255, 255, 255, 0.05);
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: var(--text-dark);
+            border: 1px solid var(--border-color);
+        }
+
+        .score-badge {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 0.85rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .score-high { background: var(--color-success-glow); color: var(--color-success); }
+        .score-medium { background: var(--color-warning-glow); color: var(--color-warning); }
+        .score-low { background: var(--color-danger-glow); color: var(--color-danger); }
+
+        .job-title {
+            font-family: var(--font-display);
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+
+        .job-location {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .label-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .pill {
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 30px;
+            border: 1px solid var(--border-color);
+        }
+
+        .pill.label-primary { background: rgba(99, 102, 241, 0.08); color: var(--color-primary); border-color: rgba(99,102,241,0.2); }
+        .pill.label-danger { background: rgba(244, 63, 94, 0.08); color: var(--color-danger); border-color: rgba(244,63,94,0.2); }
+        .pill.label-synced { background: rgba(6, 182, 212, 0.08); color: var(--color-info); border-color: rgba(6,182,212,0.2); }
+
+        .card-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-top: 18px;
+            border-top: 1px solid var(--border-color);
+            margin-top: auto;
+        }
+
+        .card-notion-indicator {
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .indicator-synced { color: var(--color-info); }
+        .indicator-unsynced { color: var(--text-dark); }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(11, 15, 25, 0.6);
+            backdrop-filter: blur(8px);
+            z-index: 200;
+            display: flex;
+            justify-content: flex-end; /* Slide in from right */
+            opacity: 0;
+            pointer-events: none;
+            transition: var(--transition-smooth);
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-pane {
+            width: 100%;
+            max-width: 700px;
+            height: 100%;
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border-color);
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            transition: var(--transition-smooth);
+            padding: 30px;
+            overflow-y: auto;
+        }
+
+        .modal-overlay.active .modal-pane {
+            transform: translateX(0);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: var(--transition-smooth);
+        }
+
+        .close-btn:hover {
+            color: var(--text-main);
+            transform: rotate(90deg);
+        }
+
+        .modal-title-grp h2 {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 5px;
+        }
+
+        .section-title {
+            font-family: var(--font-display);
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modal-content-section {
+            margin-bottom: 25px;
+        }
+
+        .red-flag-alert {
+            background: var(--color-danger-glow);
+            border: 1px solid rgba(244, 63, 94, 0.2);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            color: var(--color-danger);
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+
+        .red-flag-alert ul {
+            padding-left: 20px;
+            margin-top: 8px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group.full-width {
+            grid-column: span 2;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            width: 100%;
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+            color: var(--text-main);
+            font-family: var(--font-body);
+            font-size: 0.9rem;
+            outline: none;
+            transition: var(--transition-smooth);
+        }
+
+        .form-input:focus {
+            border-color: var(--color-primary);
+        }
+
+        .description-box {
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            font-size: 0.85rem;
+            max-height: 250px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: var(--text-muted);
+            font-family: var(--font-body);
+        }
+
+        /* Override Panel UI */
+        .override-section {
+            background: rgba(255,255,255,0.01);
+            border: 1px dashed var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin-top: 25px;
+        }
+
+        /* Settings Tags UI styling */
+        .settings-tags-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 10px;
+            min-height: 100px;
+            margin-bottom: 10px;
+        }
+
+        .settings-tag {
+            background: var(--color-primary-glow);
+            color: var(--text-main);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .settings-tag i {
+            cursor: pointer;
+            color: var(--text-muted);
+            transition: var(--transition-smooth);
+        }
+
+        .settings-tag i:hover {
+            color: var(--color-danger);
+        }
+
+        /* Toggle switch */
+        .toggle-switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-base);
+            border: 1px solid var(--border-color);
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-muted);
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--color-primary);
+            border-color: var(--color-primary-hover);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(24px);
+            background-color: var(--text-main);
+        }
+
+        /* Animation keyframes */
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 10px rgba(99, 102, 241, 0.4); }
+            100% { box-shadow: 0 0 22px rgba(99, 102, 241, 0.7); }
+        }
+
+        @keyframes blink {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .fa-spin {
+            animation: spin 1s linear infinite;
+        }
+
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-base);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-surface-hover);
+            border-radius: var(--radius-sm);
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--color-primary-glow);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Nav header -->
+    <header>
+        <div class="header-title-container">
+            <div class="logo-glow"><i class="fa-solid fa-brain"></i></div>
+            <h1 class="header-title">MAAS Job Sourcing Dashboard</h1>
+        </div>
+        <div class="header-actions">
+            <button class="btn" id="btn-settings" title="Configuration & Webhooks Settings"><i class="fa-solid fa-gear"></i> Settings</button>
+            <div class="notion-status" id="notion-status-pill">
+                <span class="status-indicator status-checking" id="notion-indicator"></span>
+                <span id="notion-status-text">Notion Checking...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="container">
+        
+        <!-- Metrics Stats Grid -->
+        <section class="stats-grid">
+            <div class="stat-card total">
+                <div class="stat-info">
+                    <h3>Total Scraped</h3>
+                    <div class="stat-val" id="stat-total">0</div>
+                </div>
+                <div class="stat-icon"><i class="fa-solid fa-database"></i></div>
+            </div>
+            
+            <div class="stat-card approved">
+                <div class="stat-info">
+                    <h3>Approved (APPLY)</h3>
+                    <div class="stat-val" id="stat-approved">0</div>
+                </div>
+                <div class="stat-icon"><i class="fa-solid fa-circle-check"></i></div>
+            </div>
+            
+            <div class="stat-card rejected">
+                <div class="stat-info">
+                    <h3>Filtered (SKIP)</h3>
+                    <div class="stat-val" id="stat-rejected">0</div>
+                </div>
+                <div class="stat-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            </div>
+            
+            <div class="stat-card synced">
+                <div class="stat-info">
+                    <h3>Synced to Notion</h3>
+                    <div class="stat-val" id="stat-synced">0</div>
+                </div>
+                <div class="stat-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+            </div>
+        </section>
+
+        <!-- Toolbar controls -->
+        <section class="toolbar">
+            <div class="search-filter-group">
+                <div class="search-wrapper">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="search-input" class="search-input" placeholder="Search by job title, company, or requirement ID...">
+                </div>
+                <select id="status-filter" class="select-filter">
+                    <option value="all">All Jobs</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Filtered / Rejected</option>
+                    <option value="synced">Synced to Notion</option>
+                    <option value="unsynced">Unsynced Approved</option>
+                </select>
+            </div>
+            
+            <div class="actions-group">
+                <div class="scraper-badge" id="scraper-badge-el" style="display: none;">
+                    <i class="fa-solid fa-circle-notch fa-spin text-primary"></i>
+                    <span id="scraper-badge-msg">Running...</span>
+                </div>
+                <button class="btn" id="btn-test-notion" title="Check connection to Notion API"><i class="fa-solid fa-plug"></i> Test Notion</button>
+                <button class="btn btn-primary" id="btn-run-scraper"><i class="fa-solid fa-rotate"></i> Run Job Sourcing Agent</button>
+            </div>
+        </section>
+
+        <!-- Jobs Listing Grid -->
+        <section>
+            <div class="jobs-grid" id="jobs-container">
+                <!-- Cards will render here -->
+                <div style="grid-column: span 3; text-align: center; padding: 40px; color: var(--text-muted);">
+                    <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; margin-bottom: 15px;"></i>
+                    <p>Loading jobs database...</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Side Detail Modal Overlay -->
+    <div class="modal-overlay" id="detail-modal">
+        <div class="modal-pane">
+            <div class="modal-header">
+                <div class="modal-title-grp">
+                    <h2 id="modal-title">Job Title</h2>
+                    <span class="company-name" id="modal-company">Company Name</span>
+                </div>
+                <button class="close-btn" id="btn-close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <!-- Red Flags Panel if present -->
+            <div class="red-flag-alert" id="modal-flags-container" style="display: none;">
+                <strong><i class="fa-solid fa-circle-exclamation"></i> Red Flags Triggered:</strong>
+                <ul id="modal-flags-list"></ul>
+            </div>
+
+            <!-- Job Edit Fields -->
+            <div class="modal-content-section">
+                <div class="section-title"><i class="fa-solid fa-pen-to-square"></i> Job Details Verification</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="edit-title">Title</label>
+                        <input type="text" id="edit-title" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-company">Company</label>
+                        <input type="text" id="edit-company" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-req-id">Requirement ID</label>
+                        <input type="text" id="edit-req-id" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-location">Location + Work Type</label>
+                        <input type="text" id="edit-location" class="form-input">
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="edit-url">Careers Page URL</label>
+                        <input type="text" id="edit-url" class="form-input">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Classification Logic Metadata -->
+            <div class="modal-content-section" id="modal-classification-section">
+                <div class="section-title"><i class="fa-solid fa-diagram-project"></i> MAAS Classifier Output</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Strongest Policy Label</label>
+                        <select id="edit-label" class="form-input">
+                            <option value="Database Engineer">Database Engineer</option>
+                            <option value="Cloud Database Engineer">Cloud Database Engineer</option>
+                            <option value="DevOps Engineer">DevOps Engineer</option>
+                            <option value="Site Reliability Engineer (SRE)">Site Reliability Engineer (SRE)</option>
+                            <option value="Platform Engineering">Platform Engineering</option>
+                            <option value="Cloud Infrastructure Engineer">Cloud Infrastructure Engineer</option>
+                            <option value="Cloud Automation Engineer">Cloud Automation Engineer</option>
+                            <option value="Continuous Integration (CI/CD)">Continuous Integration (CI/CD)</option>
+                            <option value="Data Platform Engineer">Data Platform Engineer</option>
+                            <option value="OutOfScope">OutOfScope</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Confidence Score</label>
+                        <input type="number" id="edit-confidence" class="form-input" min="0" max="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Deciding Rationale</label>
+                        <textarea id="edit-rationale" class="form-input" style="height: 80px; resize: vertical;"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Full Job Description -->
+            <div class="modal-content-section">
+                <div class="section-title"><i class="fa-solid fa-file-lines"></i> Scraped Job Description</div>
+                <div class="description-box" id="modal-description"></div>
+            </div>
+
+            <!-- Action Controls inside Modal -->
+            <div style="display: flex; gap: 15px; margin-top: 30px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                <button class="btn" id="btn-modal-save"><i class="fa-solid fa-floppy-disk"></i> Save Details</button>
+                <button class="btn btn-success" id="btn-modal-sync"><i class="fa-solid fa-cloud-arrow-up"></i> Sync to Notion</button>
+            </div>
+
+            <!-- Override Block -->
+            <div class="override-section" id="modal-override-box" style="display: none;">
+                <div class="section-title" style="color: var(--color-warning);"><i class="fa-solid fa-user-shield"></i> Override Rejection Gate</div>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 15px;">This job was rejected by the automated filters/policy. You can manually override the filter, categorize it, and save it to the approved list.</p>
+                <div style="display: flex; justify-content: flex-end;">
+                    <button class="btn btn-primary" id="btn-modal-override" style="background: var(--color-warning); color: #000; font-weight: 600;"><i class="fa-solid fa-unlock-keyhole"></i> Manual Approve Override</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configuration Settings Modal Overlay -->
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-pane" style="max-width: 600px;">
+            <div class="modal-header">
+                <div class="modal-title-grp">
+                    <h2>Dashboard Settings</h2>
+                    <span class="company-name">Configure job targets, automation scheduling, and webhook alerts</span>
+                </div>
+                <button class="close-btn" id="btn-close-settings-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <!-- settings form contents -->
+            <div class="modal-content-section">
+                <div class="section-title"><i class="fa-solid fa-tags"></i> Target Job Titles Sourced</div>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">The scraper targets these titles. Click 'X' to remove a title, or type below to add a new one.</p>
+                <div class="settings-tags-list" id="settings-tags-list"></div>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="add-tag-input" class="form-input" placeholder="e.g. Platform Automation Engineer..." style="flex-grow: 1;">
+                    <button class="btn" id="btn-add-tag"><i class="fa-solid fa-plus"></i> Add Title</button>
+                </div>
+            </div>
+
+            <div class="modal-content-section" style="border-top: 1px solid var(--border-color); padding-top: 20px;">
+                <div class="section-title"><i class="fa-solid fa-clock"></i> Background Daily Scheduler (Cron)</div>
+                <div class="toggle-switch-container">
+                    <span style="font-size: 0.9rem; color: var(--text-main);">Enable Daily Sourcing Run</span>
+                    <label class="switch">
+                        <input type="checkbox" id="settings-sched-enabled">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="form-grid" id="sched-time-options" style="margin-top: 10px;">
+                    <div class="form-group">
+                        <label for="settings-sched-hour">Run At Hour (0-23)</label>
+                        <input type="number" id="settings-sched-hour" class="form-input" min="0" max="23" value="8">
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-sched-minute">Run At Minute (0-59)</label>
+                        <input type="number" id="settings-sched-minute" class="form-input" min="0" max="59" value="0">
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-content-section" style="border-top: 1px solid var(--border-color); padding-top: 20px;">
+                <div class="section-title"><i class="fa-solid fa-bell"></i> Slack / Discord Notification Webhook</div>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">Post styled alerts to your Slack/Discord when a new job is approved and synced to Notion.</p>
+                <div class="form-group">
+                    <label for="settings-webhook-url">Webhook URL</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="settings-webhook-url" class="form-input" placeholder="https://discord.com/api/webhooks/... or Slack webhook URL" style="flex-grow: 1;">
+                        <button class="btn" id="btn-test-webhook" title="Dispatch test alert message"><i class="fa-solid fa-paper-plane"></i> Test Alert</button>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 15px; margin-top: 30px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                <button class="btn btn-primary" id="btn-settings-save"><i class="fa-solid fa-floppy-disk"></i> Save Configuration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripting Frontend Logic -->
+    <script>
+        let allJobs = [];
+        let selectedJob = null;
+        let scraperTimer = null;
+        let activeConfig = { target_titles: [], scheduler: { enabled: true, run_at_hour: 8, run_at_minute: 0 }, webhook_url: "" };
+
+        // Fetch all jobs from backend
+        async function fetchJobs() {
+            try {
+                const response = await fetch('/api/jobs');
+                allJobs = await response.json();
+                renderStats();
+                renderJobsGrid();
+            } catch (error) {
+                console.error("Error fetching jobs:", error);
+                document.getElementById('jobs-container').innerHTML = `
+                    <div style="grid-column: span 3; text-align: center; padding: 40px; color: var(--color-danger);">
+                        <i class="fa-solid fa-triangle-exclamation" style="font-size: 2.5rem; margin-bottom: 15px;"></i>
+                        <h3>Failed to connect to Local API</h3>
+                        <p>Verify that <code>dashboard_server.py</code> is currently running in your shell.</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Check Notion API connection status
+        async function checkNotionConnection() {
+            const ind = document.getElementById('notion-indicator');
+            const txt = document.getElementById('notion-status-text');
+            
+            ind.className = 'status-indicator status-checking';
+            txt.innerText = 'Checking Notion connection...';
+
+            try {
+                const response = await fetch('/api/test-notion');
+                const data = await response.json();
+                
+                if (data.success) {
+                    ind.className = 'status-indicator status-connected';
+                    txt.innerText = `Connected: ${data.db_name}`;
+                } else {
+                    ind.className = 'status-indicator status-disconnected';
+                    txt.innerText = 'Notion Disconnected (404)';
+                    txt.title = data.message;
+                }
+            } catch (error) {
+                ind.className = 'status-indicator status-disconnected';
+                txt.innerText = 'Server Offline';
+            }
+        }
+
+        // Fetch Config JSON Settings
+        async function fetchConfig() {
+            try {
+                const response = await fetch('/api/config');
+                activeConfig = await response.json();
+            } catch (e) {
+                console.error("Failed to load config:", e);
+            }
+        }
+
+        // Save Config to Server
+        async function saveConfigToServer() {
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(activeConfig)
+                });
+                const res = await response.json();
+                if (res.success) {
+                    alert("Settings saved successfully!");
+                    closeSettingsModal();
+                } else {
+                    alert(`Error saving config: ${res.message}`);
+                }
+            } catch (err) {
+                alert(`Network error saving settings: ${err.message}`);
+            }
+        }
+
+        // Dispatch Test Webhook
+        async function testWebhook() {
+            const urlInput = document.getElementById('settings-webhook-url').value.trim();
+            if (!urlInput) {
+                alert("Please enter a Webhook URL first.");
+                return;
+            }
+            
+            const btn = document.getElementById('btn-test-webhook');
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...';
+            btn.classList.add('btn-disabled');
+
+            try {
+                const response = await fetch('/api/test-webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ webhook_url: urlInput })
+                });
+                const res = await response.json();
+                alert(res.message);
+            } catch (e) {
+                alert(`Failed to test webhook: ${e.message}`);
+            } finally {
+                btn.innerHTML = orig;
+                btn.classList.remove('btn-disabled');
+            }
+        }
+
+        // Render Stats overview counters
+        function renderStats() {
+            const total = allJobs.length;
+            const approved = allJobs.filter(j => j.status === 'approved').length;
+            const rejected = allJobs.filter(j => j.status === 'rejected').length;
+            const synced = allJobs.filter(j => j.synced).length;
+
+            document.getElementById('stat-total').innerText = total;
+            document.getElementById('stat-approved').innerText = approved;
+            document.getElementById('stat-rejected').innerText = rejected;
+            document.getElementById('stat-synced').innerText = synced;
+        }
+
+        // Render Cards Grid
+        function renderJobsGrid() {
+            const query = document.getElementById('search-input').value.toLowerCase().trim();
+            const filter = document.getElementById('status-filter').value;
+            const container = document.getElementById('jobs-container');
+
+            // Apply search & status filter
+            const filteredJobs = allJobs.filter(job => {
+                const title = (job.job_title || '').toLowerCase();
+                const company = (job.company_name || '').toLowerCase();
+                const reqId = (job.requirement_id || '').toLowerCase();
+                
+                const matchesSearch = title.includes(query) || company.includes(query) || reqId.includes(query);
+                
+                if (!matchesSearch) return false;
+
+                if (filter === 'all') return true;
+                if (filter === 'approved') return job.status === 'approved';
+                if (filter === 'rejected') return job.status === 'rejected';
+                if (filter === 'synced') return job.synced === true;
+                if (filter === 'unsynced') return job.status === 'approved' && !job.synced;
+                
+                return true;
+            });
+
+            if (filteredJobs.length === 0) {
+                container.innerHTML = `
+                    <div style="grid-column: span 3; text-align: center; padding: 60px; color: var(--text-muted);">
+                        <i class="fa-solid fa-folder-open" style="font-size: 2.5rem; margin-bottom: 15px;"></i>
+                        <p>No job listings match your search criteria.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = filteredJobs.map(job => {
+                const score = job.confidence_score || 0;
+                let scoreClass = 'score-low';
+                if (score >= 85) scoreClass = 'score-high';
+                else if (score >= 60) scoreClass = 'score-medium';
+
+                const isApproved = job.status === 'approved';
+                const cardClass = isApproved ? 'is-approved' : 'is-rejected';
+
+                const pillLabel = job.strongest_label || 'OutOfScope';
+                const isSynced = job.synced;
+
+                return `
+                    <div class="job-card ${cardClass}">
+                        <div>
+                            <div class="card-header">
+                                <div class="company-meta">
+                                    <span class="company-name">${escapeHTML(job.company_name)}</span>
+                                    <span class="req-id-badge">${escapeHTML(job.requirement_id)}</span>
+                                </div>
+                                <span class="score-badge ${scoreClass}">
+                                    <i class="fa-solid fa-chart-simple"></i> ${score}%
+                                </span>
+                            </div>
+                            
+                            <h3 class="job-title">${escapeHTML(job.job_title)}</h3>
+                            <div class="job-location">
+                                <i class="fa-solid fa-location-dot"></i> ${escapeHTML(job.location_work_type || 'Remote')}
+                            </div>
+                            
+                            <div class="label-pills">
+                                <span class="pill ${isApproved ? 'label-primary' : 'label-danger'}">${escapeHTML(pillLabel)}</span>
+                                ${isSynced ? '<span class="pill label-synced"><i class="fa-solid fa-cloud-check"></i> Synced</span>' : ''}
+                            </div>
+                        </div>
+                        
+                        <div class="card-footer">
+                            <span class="card-notion-indicator ${isSynced ? 'indicator-synced' : 'indicator-unsynced'}">
+                                <i class="fa-solid ${isSynced ? 'fa-cloud-arrow-up' : 'fa-circle-question'}"></i>
+                                ${isSynced ? 'Synced to Notion' : 'Not Synced'}
+                            </span>
+                            
+                            <button class="btn" style="padding: 8px 14px; font-size: 0.85rem;" onclick="openDetailModal('${encodeURIComponent(job.job_url)}')">
+                                Inspect Details <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Open inspection modal
+        function openDetailModal(encodedUrl) {
+            const url = decodeURIComponent(encodedUrl);
+            selectedJob = allJobs.find(j => j.job_url === url);
+            if (!selectedJob) return;
+
+            // Fill text fields
+            document.getElementById('modal-title').innerText = selectedJob.job_title;
+            document.getElementById('modal-company').innerText = selectedJob.company_name;
+            document.getElementById('modal-description').innerText = selectedJob.job_description;
+
+            // Fill Form elements
+            document.getElementById('edit-title').value = selectedJob.job_title;
+            document.getElementById('edit-company').value = selectedJob.company_name;
+            document.getElementById('edit-req-id').value = selectedJob.requirement_id;
+            document.getElementById('edit-location').value = selectedJob.location_work_type || 'Remote';
+            document.getElementById('edit-url').value = selectedJob.job_url;
+            
+            document.getElementById('edit-label').value = selectedJob.strongest_label || 'OutOfScope';
+            document.getElementById('edit-confidence').value = selectedJob.confidence_score || 0;
+            document.getElementById('edit-rationale').value = selectedJob.rationale || '';
+
+            // Handle Red Flags
+            const flagsContainer = document.getElementById('modal-flags-container');
+            const flagsList = document.getElementById('modal-flags-list');
+            if (selectedJob.red_flags && selectedJob.red_flags.length > 0) {
+                flagsContainer.style.display = 'block';
+                flagsList.innerHTML = selectedJob.red_flags.map(f => `<li>${escapeHTML(f)}</li>`).join('');
+            } else {
+                flagsContainer.style.display = 'none';
+            }
+
+            // Sync Buttons and Override configuration
+            const syncBtn = document.getElementById('btn-modal-sync');
+            const overrideBox = document.getElementById('modal-override-box');
+            const classificationSection = document.getElementById('modal-classification-section');
+
+            if (selectedJob.status === 'approved') {
+                syncBtn.className = 'btn btn-success';
+                overrideBox.style.display = 'none';
+                classificationSection.style.display = 'block';
+            } else {
+                syncBtn.className = 'btn btn-success btn-disabled';
+                overrideBox.style.display = 'block';
+                classificationSection.style.display = 'none';
+            }
+
+            if (selectedJob.synced) {
+                syncBtn.innerText = 'Synced (Push Again)';
+            } else {
+                syncBtn.innerText = 'Sync to Notion';
+            }
+
+            // Open overlay
+            document.getElementById('detail-modal').classList.add('active');
+        }
+
+        // Close Modal
+        function closeModal() {
+            document.getElementById('detail-modal').classList.remove('active');
+            selectedJob = null;
+        }
+
+        // Save Details Form changes locally to server
+        async function saveJobDetails(statusOverride = null) {
+            if (!selectedJob) return;
+
+            const payload = {
+                job_url: selectedJob.job_url, // URL acts as primary key
+                job_title: document.getElementById('edit-title').value,
+                company_name: document.getElementById('edit-company').value,
+                requirement_id: document.getElementById('edit-req-id').value,
+                location_work_type: document.getElementById('edit-location').value,
+                strongest_label: document.getElementById('edit-label').value,
+                confidence_score: parseInt(document.getElementById('edit-confidence').value) || 100,
+                rationale: document.getElementById('edit-rationale').value,
+                job_description: document.getElementById('edit-title').value
+            };
+
+            if (statusOverride) {
+                payload.status = statusOverride;
+                payload.strongest_label = payload.strongest_label === 'OutOfScope' ? 'DevOps Engineer' : payload.strongest_label;
+            }
+
+            try {
+                const response = await fetch('/api/override', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const res = await response.json();
+                if (res.success) {
+                    alert("Changes saved successfully!");
+                    await fetchJobs();
+                    openDetailModal(encodeURIComponent(payload.job_url));
+                } else {
+                    alert(`Error: ${res.message}`);
+                }
+            } catch (err) {
+                alert(`Error saving to server: ${err.message}`);
+            }
+        }
+
+        // Override a rejected job to approved status
+        function triggerOverride() {
+            if (!selectedJob) return;
+            
+            const labelInput = document.getElementById('edit-label');
+            if (labelInput.value === 'OutOfScope') {
+                labelInput.value = 'DevOps Engineer';
+            }
+            
+            const ratInput = document.getElementById('edit-rationale');
+            if (!ratInput.value.trim() || ratInput.value.includes('Failed pre-screen')) {
+                ratInput.value = 'Manually reviewed and approved override via dashboard.';
+            }
+
+            saveJobDetails('approved');
+        }
+
+        // Push approved job to Notion
+        async function syncToNotion() {
+            if (!selectedJob) return;
+            if (selectedJob.status !== 'approved') {
+                alert("Only Approved (APPLY) jobs can be synced to Notion. Run a manual override first.");
+                return;
+            }
+
+            const syncBtn = document.getElementById('btn-modal-sync');
+            const origText = syncBtn.innerHTML;
+            
+            syncBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing...';
+            syncBtn.classList.add('btn-disabled');
+
+            try {
+                const response = await fetch('/api/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ job_url: selectedJob.job_url })
+                });
+                const res = await response.json();
+                if (res.success) {
+                    alert("Job synced successfully to Notion!");
+                    await fetchJobs();
+                    closeModal();
+                } else {
+                    alert(`Sync failed: ${res.message}`);
+                }
+            } catch (err) {
+                alert(`Network error syncing: ${err.message}`);
+            } finally {
+                syncBtn.innerHTML = origText;
+                syncBtn.classList.remove('btn-disabled');
+            }
+        }
+
+        // Settings Modal Handlers
+        async function openSettingsModal() {
+            await fetchConfig();
+            
+            // Populate Inputs
+            document.getElementById('settings-sched-enabled').checked = activeConfig.scheduler.enabled;
+            document.getElementById('settings-sched-hour').value = activeConfig.scheduler.run_at_hour;
+            document.getElementById('settings-sched-minute').value = activeConfig.scheduler.run_at_minute;
+            document.getElementById('settings-webhook-url').value = activeConfig.webhook_url || '';
+            
+            renderConfigTitles();
+            
+            document.getElementById('settings-modal').classList.add('active');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.remove('active');
+        }
+
+        function renderConfigTitles() {
+            const list = document.getElementById('settings-tags-list');
+            if (activeConfig.target_titles.length === 0) {
+                list.innerHTML = '<p style="color: var(--text-dark); font-size: 0.85rem; padding: 10px;">No titles configured.</p>';
+                return;
+            }
+            list.innerHTML = activeConfig.target_titles.map((title, index) => `
+                <span class="settings-tag">
+                    ${escapeHTML(title)}
+                    <i class="fa-solid fa-xmark" onclick="removeConfigTitle(${index})"></i>
+                </span>
+            `).join('');
+        }
+
+        function removeConfigTitle(index) {
+            activeConfig.target_titles.splice(index, 1);
+            renderConfigTitles();
+        }
+
+        function addConfigTitle() {
+            const input = document.getElementById('add-tag-input');
+            const val = input.value.trim();
+            if (val && !activeConfig.target_titles.includes(val)) {
+                activeConfig.target_titles.push(val);
+                input.value = '';
+                renderConfigTitles();
+            }
+        }
+
+        async function saveSettings() {
+            activeConfig.scheduler.enabled = document.getElementById('settings-sched-enabled').checked;
+            activeConfig.scheduler.run_at_hour = parseInt(document.getElementById('settings-sched-hour').value) || 8;
+            activeConfig.scheduler.run_at_minute = parseInt(document.getElementById('settings-sched-minute').value) || 0;
+            activeConfig.webhook_url = document.getElementById('settings-webhook-url').value.trim();
+
+            await saveConfigToServer();
+        }
+
+        // Trigger scraper run
+        async function runScraper() {
+            const btn = document.getElementById('btn-run-scraper');
+            const badge = document.getElementById('scraper-badge-el');
+            const msg = document.getElementById('scraper-badge-msg');
+
+            btn.classList.add('btn-disabled');
+            badge.style.display = 'flex';
+            msg.innerText = 'Starting scraper...';
+
+            try {
+                const response = await fetch('/api/scrape', { method: 'POST' });
+                const res = await response.json();
+                
+                if (res.success) {
+                    startPollingScraper();
+                } else {
+                    alert(`Failed to start: ${res.message}`);
+                    btn.classList.remove('btn-disabled');
+                    badge.style.display = 'none';
+                }
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+                btn.classList.remove('btn-disabled');
+                badge.style.display = 'none';
+            }
+        }
+
+        // Poll scraper status in background
+        function startPollingScraper() {
+            if (scraperTimer) clearInterval(scraperTimer);
+            
+            const btn = document.getElementById('btn-run-scraper');
+            const badge = document.getElementById('scraper-badge-el');
+            const msg = document.getElementById('scraper-badge-msg');
+
+            scraperTimer = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/scraper-status');
+                    const state = await response.json();
+                    
+                    if (state.status === 'running') {
+                        badge.style.display = 'flex';
+                        msg.innerText = state.message;
+                        btn.classList.add('btn-disabled');
+                    } else {
+                        clearInterval(scraperTimer);
+                        scraperTimer = null;
+                        
+                        badge.style.display = 'none';
+                        btn.classList.remove('btn-disabled');
+                        
+                        if (state.status === 'completed') {
+                            alert("Sourcing, filtering, and classification completed successfully!");
+                        } else if (state.status === 'failed') {
+                            alert(`Sourcing failed: ${state.message}`);
+                        }
+                        
+                        await fetchJobs();
+                    }
+                } catch (err) {
+                    console.error("Error polling status:", err);
+                }
+            }, 2000);
+        }
+
+        // Helper to prevent XSS injection
+        function escapeHTML(str) {
+            if (!str) return '';
+            return str.replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            );
+        }
+
+        // Event Listeners Setup
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchJobs();
+            checkNotionConnection();
+
+            // Filters
+            document.getElementById('search-input').addEventListener('input', renderJobsGrid);
+            document.getElementById('status-filter').addEventListener('change', renderJobsGrid);
+            
+            // Buttons
+            document.getElementById('btn-test-notion').addEventListener('click', checkNotionConnection);
+            document.getElementById('btn-run-scraper').addEventListener('click', runScraper);
+            
+            // Modal close
+            document.getElementById('btn-close-modal').addEventListener('click', closeModal);
+            document.getElementById('detail-modal').addEventListener('click', (e) => {
+                if (e.target.id === 'detail-modal') closeModal();
+            });
+
+            // Modal actions
+            document.getElementById('btn-modal-save').addEventListener('click', () => saveJobDetails());
+            document.getElementById('btn-modal-override').addEventListener('click', triggerOverride);
+            document.getElementById('btn-modal-sync').addEventListener('click', syncToNotion);
+
+            // Settings gear & modal actions
+            document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+            document.getElementById('btn-close-settings-modal').addEventListener('click', closeSettingsModal);
+            document.getElementById('settings-modal').addEventListener('click', (e) => {
+                if (e.target.id === 'settings-modal') closeSettingsModal();
+            });
+            document.getElementById('btn-add-tag').addEventListener('click', addConfigTitle);
+            document.getElementById('add-tag-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') addConfigTitle();
+            });
+            document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);
+            document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
+
+            // Initialize status checks on startup
+            const scraperCheckTimer = setInterval(async () => {
+                try {
+                    const r = await fetch('/api/scraper-status');
+                    const state = await r.json();
+                    if (state.status === 'running') {
+                        startPollingScraper();
+                        clearInterval(scraperCheckTimer);
+                    }
+                } catch (e) {}
+            }, 3000);
+        });
+    </script>
+</body>
+</html>

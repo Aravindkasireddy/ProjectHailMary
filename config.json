@@ -1,0 +1,28 @@
+{
+  "target_titles": [
+    "DevOps Engineer",
+    "Cloud Automation Engineer",
+    "Platform Engineer",
+    "Cloud Infrastructure Engineer",
+    "Cloud Security Engineer",
+    "DevSecOps",
+    "Site Reliability Engineer",
+    "CI/CD Engineer",
+    "Systems Engineer",
+    "Cloud Network Engineer",
+    "Data Platform Engineer",
+    "Machine Learning Engineer",
+    "AI Platform Engineer"
+  ],
+  "scheduler": {
+    "enabled": true,
+    "run_at_hour": 8,
+    "run_at_minute": 0
+  },
+  "search": {
+    "country_phrase": "United States",
+    "include_remote_primary_boards": true,
+    "merge_previous_scrape": true
+  },
+  "webhook_url": "https://discord.com/api/webhooks/1507879247065125025/dyQvwHb_k2M1v8WNcaeiCBUa7s8gxJ7dCGt55EJyHOzpxGh_cvea589BvH2ABI9m4B9A"
+}
