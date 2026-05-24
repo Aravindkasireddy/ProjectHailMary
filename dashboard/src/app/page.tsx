@@ -1172,144 +1172,255 @@ export default function Dashboard() {
         </section>
 
         {/* Tab Content Panels */}
-        <section className="flex-1 flex flex-col">
-          {activeTab === 'analytics' ? (
+        <section className="flex-1 flex flex-col">          {activeTab === 'analytics' ? (
             <div className="space-y-6">
               {analyticsLoading || !analyticsData ? (
                 <div className="flex-1 flex flex-col items-center justify-center p-12 text-center border border-slate-800 rounded-2xl bg-slate-900/10">
                   <RefreshCw className="w-10 h-10 text-violet-500 animate-spin mb-3" />
                   <p className="text-sm text-slate-400 font-medium">Computing sourcing metrics & analytics...</p>
                 </div>
-              ) : (
-                <div className="space-y-6 animate-in fade-in duration-300">
+              ) : (() => {
+                const getSourceGradient = (srcName: string) => {
+                  const s = srcName.toLowerCase();
+                  if (s.includes('greenhouse')) return 'from-emerald-400 to-teal-500';
+                  if (s.includes('lever')) return 'from-orange-400 to-amber-500';
+                  if (s.includes('ashby')) return 'from-violet-400 to-fuchsia-500';
+                  if (s.includes('workable')) return 'from-blue-400 to-indigo-500';
+                  if (s.includes('remotely') || s.includes('remote.co') || s.includes('remote')) return 'from-rose-400 to-pink-500';
+                  if (s.includes('linkedin')) return 'from-sky-400 to-blue-500';
+                  if (s.includes('y combinator') || s.includes('workatastartup')) return 'from-yellow-400 to-orange-500';
+                  return 'from-indigo-400 to-violet-500';
+                };
+                const getSourceDotColor = (srcName: string) => {
+                  const s = srcName.toLowerCase();
+                  if (s.includes('greenhouse')) return 'bg-emerald-400';
+                  if (s.includes('lever')) return 'bg-orange-400';
+                  if (s.includes('ashby')) return 'bg-violet-400';
+                  if (s.includes('workable')) return 'bg-blue-400';
+                  if (s.includes('remotely') || s.includes('remote.co') || s.includes('remote')) return 'bg-rose-400';
+                  if (s.includes('linkedin')) return 'bg-sky-400';
+                  if (s.includes('y combinator') || s.includes('workatastartup')) return 'bg-yellow-400';
+                  return 'bg-indigo-400';
+                };
+                return (
+                  <div className="space-y-6 animate-in fade-in duration-300">
 
-                  {/* Cards Row */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-slate-900/30 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                      <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Total Sourced</p>
-                      <h3 className="text-2xl font-extrabold text-white mt-1">{analyticsData.total_sourced}</h3>
-                      <p className="text-[10px] text-slate-500 mt-1">Jobs parsed by platform</p>
-                    </div>
-                    <div className="bg-slate-900/30 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                      <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Approved Jobs</p>
-                      <h3 className="text-2xl font-extrabold text-emerald-400 mt-1">{analyticsData.approved}</h3>
-                      <p className="text-[10px] text-slate-500 mt-1">Passed all policy filters</p>
-                    </div>
-                    <div className="bg-slate-900/30 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                      <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Rejected Jobs</p>
-                      <h3 className="text-2xl font-extrabold text-rose-400 mt-1">{analyticsData.rejected}</h3>
-                      <p className="text-[10px] text-slate-500 mt-1">Failed experience/auth checks</p>
-                    </div>
-                    <div className="bg-slate-900/30 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                      <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Approval Rate</p>
-                      <h3 className="text-2xl font-extrabold text-violet-400 mt-1">{analyticsData.approval_rate}%</h3>
-                      <p className="text-[10px] text-slate-500 mt-1">Sourcing qualification yield</p>
-                    </div>
-                  </div>
-
-                  {/* Charts Grid */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-                    {/* Role Labels Distribution */}
-                    <div className="bg-slate-900/30 border border-slate-800 p-6 rounded-3xl shadow-xl space-y-4">
-                      <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
-                        <Briefcase className="w-5 h-5 text-violet-400" />
-                        <h3 className="text-sm font-bold text-white">Approved Job Labels Distribution</h3>
+                    {/* Cards Row */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-5 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:border-slate-700/80 transition-all duration-300 group">
+                        <div className="flex justify-between items-start">
+                          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Total Sourced</p>
+                          <Database className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+                        </div>
+                        <h3 className="text-3xl font-extrabold text-white mt-2 tracking-tight">{analyticsData.total_sourced}</h3>
+                        <p className="text-[10px] text-slate-500 mt-1">Jobs scanned across platforms</p>
                       </div>
-                      <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-2">
-                        {Object.entries(analyticsData.labels_distribution).length === 0 ? (
-                          <p className="text-xs text-slate-500 text-center py-6">No approved jobs available for distribution.</p>
-                        ) : (
-                          Object.entries(analyticsData.labels_distribution)
-                            .sort((a, b) => b[1] - a[1])
-                            .map(([label, count]) => {
-                              const pct = analyticsData.approved > 0 ? (count / analyticsData.approved * 100).toFixed(1) : 0;
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-emerald-950/60 p-5 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:border-emerald-800/50 transition-all duration-300 group">
+                        <div className="flex justify-between items-start">
+                          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Approved Jobs</p>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 group-hover:text-emerald-300 transition-colors" />
+                        </div>
+                        <h3 className="text-3xl font-extrabold text-emerald-400 mt-2 tracking-tight">{analyticsData.approved}</h3>
+                        <p className="text-[10px] text-slate-500 mt-1">Passed automated pre-screening</p>
+                      </div>
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-rose-950/60 p-5 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:border-rose-800/50 transition-all duration-300 group">
+                        <div className="flex justify-between items-start">
+                          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Rejected Jobs</p>
+                          <XCircle className="w-4 h-4 text-rose-400 group-hover:text-rose-300 transition-colors" />
+                        </div>
+                        <h3 className="text-3xl font-extrabold text-rose-400 mt-2 tracking-tight">{analyticsData.rejected}</h3>
+                        <p className="text-[10px] text-slate-500 mt-1">Failed experience/auth constraints</p>
+                      </div>
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-violet-950/60 p-5 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:border-violet-800/50 transition-all duration-300 group">
+                        <div className="flex justify-between items-start">
+                          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Approval Rate</p>
+                          <BarChart3 className="w-4 h-4 text-violet-400 group-hover:text-violet-300 transition-colors" />
+                        </div>
+                        <h3 className="text-3xl font-extrabold text-violet-400 mt-2 tracking-tight">{analyticsData.approval_rate}%</h3>
+                        <p className="text-[10px] text-slate-500 mt-1">Sourcing qualification yield</p>
+                      </div>
+                    </div>
+
+                    {/* Charts Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                      {/* Role Labels Distribution */}
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-3xl shadow-xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                          <div className="flex items-center space-x-2">
+                            <Briefcase className="w-5 h-5 text-violet-400" />
+                            <h3 className="text-sm font-bold text-white">Approved Job Labels Distribution</h3>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-mono bg-slate-850 px-2 py-0.5 rounded-md">
+                            By Title
+                          </span>
+                        </div>
+                        <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                          {Object.entries(analyticsData.labels_distribution).length === 0 ? (
+                            <p className="text-xs text-slate-500 text-center py-12">No approved jobs available for distribution.</p>
+                          ) : (
+                            Object.entries(analyticsData.labels_distribution)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([label, count]) => {
+                                const pct = analyticsData.approved > 0 ? (count / analyticsData.approved * 100).toFixed(1) : 0;
+                                return (
+                                  <div key={label} className="space-y-1.5 group">
+                                    <div className="flex justify-between text-xs font-semibold">
+                                      <span className="text-slate-300 group-hover:text-white transition-colors">{label}</span>
+                                      <span className="text-slate-400 font-mono">{count} jobs ({pct}%)</span>
+                                    </div>
+                                    <div className="h-2.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800/60 p-[1px]">
+                                      <div className="h-full bg-gradient-to-r from-violet-500 via-indigo-500 to-sky-400 rounded-full transition-all duration-1000" style={{ width: `${pct}%` }} />
+                                    </div>
+                                  </div>
+                                );
+                              })
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Scraper Sources Distribution */}
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-3xl shadow-xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                          <div className="flex items-center space-x-2">
+                            <Database className="w-5 h-5 text-indigo-400" />
+                            <h3 className="text-sm font-bold text-white">Scraper Sourcing Yield</h3>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-mono bg-slate-850 px-2 py-0.5 rounded-md">
+                            By Platform
+                          </span>
+                        </div>
+
+                        <div className="flex items-end justify-between h-56 pt-8 pb-3 px-6 gap-3 bg-slate-950/50 rounded-2xl border border-slate-800/50 relative overflow-hidden">
+                          {/* Grid Background Lines */}
+                          <div className="absolute inset-0 flex flex-col justify-between pointer-events-none p-6 pb-12 opacity-10">
+                            <div className="border-b border-dashed border-slate-400 w-full" />
+                            <div className="border-b border-dashed border-slate-400 w-full" />
+                            <div className="border-b border-dashed border-slate-400 w-full" />
+                          </div>
+
+                          {Object.entries(analyticsData.sources_distribution).length === 0 ? (
+                            <p className="text-xs text-slate-500 text-center w-full py-20 z-10">No sourced listings available.</p>
+                          ) : (
+                            Object.entries(analyticsData.sources_distribution).map(([src, count]) => {
+                              const maxVal = Math.max(...(Object.values(analyticsData.sources_distribution) as number[]));
+                              const heightPct = maxVal > 0 ? (count / maxVal * 100) : 0;
+                              const pctOfTotal = analyticsData.total_sourced > 0 ? (count / analyticsData.total_sourced * 100).toFixed(1) : 0;
+                              const grad = getSourceGradient(src);
                               return (
-                                <div key={label} className="space-y-1">
-                                  <div className="flex justify-between text-xs font-medium">
-                                    <span className="text-slate-300">{label}</span>
-                                    <span className="text-slate-400">{count} jobs ({pct}%)</span>
+                                <div key={src} className="flex-1 flex flex-col items-center group relative h-full justify-end z-10">
+                                  {/* Custom Tooltip */}
+                                  <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 border border-slate-700 text-slate-100 text-[10px] font-bold py-1.5 px-2.5 rounded-lg shadow-xl pointer-events-none z-25 whitespace-nowrap flex flex-col items-center gap-0.5">
+                                    <span className="text-white">{src}</span>
+                                    <span className="text-violet-400 font-mono">{count} jobs ({pctOfTotal}%)</span>
                                   </div>
-                                  <div className="h-2 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800/40">
-                                    <div className="h-full bg-gradient-to-r from-violet-600 to-indigo-600 rounded-full" style={{ width: `${pct}%` }} />
-                                  </div>
+                                  <div 
+                                    className={`w-full bg-gradient-to-t ${grad} rounded-t-md hover:brightness-110 shadow-lg shadow-black/20 group-hover:-translate-y-1 transition-all duration-500 ease-out`} 
+                                    style={{ height: `${Math.max(heightPct, 6)}%` }}
+                                  />
+                                  <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-2 truncate w-full text-center group-hover:text-white transition-colors">
+                                    {src.replace("We Work Remotely", "WWR").split(' ')[0]}
+                                  </span>
                                 </div>
                               );
                             })
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Scraper Sources Distribution */}
-                    <div className="bg-slate-900/30 border border-slate-800 p-6 rounded-3xl shadow-xl space-y-4">
-                      <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
-                        <Database className="w-5 h-5 text-violet-400" />
-                        <h3 className="text-sm font-bold text-white">Scraper Sources Yield</h3>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="flex items-end justify-between h-48 pt-6 pb-2 px-4 gap-2 bg-slate-950/40 rounded-2xl border border-slate-800/40">
-                        {Object.entries(analyticsData.sources_distribution).length === 0 ? (
-                          <p className="text-xs text-slate-500 text-center w-full py-16">No sourced listings available.</p>
-                        ) : (
-                          Object.entries(analyticsData.sources_distribution).map(([src, count]) => {
-                            const maxVal = Math.max(...(Object.values(analyticsData.sources_distribution) as number[]));
-                            const heightPct = maxVal > 0 ? (count / maxVal * 100) : 0;
-                            return (
-                              <div key={src} className="flex-1 flex flex-col items-center group relative h-full justify-end">
-                                <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 border border-slate-700 text-slate-100 text-[10px] font-bold py-1 px-2 rounded shadow-xl pointer-events-none z-10 whitespace-nowrap">
-                                  {count} jobs
+                      {/* Sourcing Channel Mix Breakdown Table */}
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-3xl shadow-xl space-y-4 lg:col-span-2">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                          <div className="flex items-center space-x-2">
+                            <BarChart3 className="w-5 h-5 text-emerald-400" />
+                            <h3 className="text-sm font-bold text-white">Sourcing Mix & Performance Details</h3>
+                          </div>
+                          <span className="text-[10px] text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full font-semibold">
+                            Active Sourcing Channels
+                          </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs text-slate-300">
+                            <thead>
+                              <tr className="border-b border-slate-850 text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                                <th className="py-3 px-4">Sourcing Channel</th>
+                                <th className="py-3 px-4 text-right">Job Count</th>
+                                <th className="py-3 px-4 text-right">Percentage Mix</th>
+                                <th className="py-3 px-4 text-center">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-850">
+                              {Object.entries(analyticsData.sources_distribution)
+                                .sort((a, b) => b[1] - a[1])
+                                .map(([src, count]) => {
+                                  const pct = analyticsData.total_sourced > 0 ? (count / analyticsData.total_sourced * 100).toFixed(1) : 0;
+                                  const dot = getSourceDotColor(src);
+                                  return (
+                                    <tr key={src} className="hover:bg-slate-800/10 transition-colors group">
+                                      <td className="py-3 px-4 flex items-center space-x-2 font-medium text-slate-300 group-hover:text-white transition-colors">
+                                        <span className={`w-2.5 h-2.5 rounded-full ${dot} shadow-sm shadow-black`} />
+                                        <span>{src}</span>
+                                      </td>
+                                      <td className="py-3 px-4 text-right font-semibold text-white font-mono">{count}</td>
+                                      <td className="py-3 px-4 text-right">
+                                        <div className="flex items-center justify-end space-x-3">
+                                          <span className="text-slate-300 font-medium font-mono">{pct}%</span>
+                                          <div className="w-16 h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800/40">
+                                            <div className={`h-full ${dot} rounded-full`} style={{ width: `${pct}%` }} />
+                                          </div>
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-4 text-center">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-900/30">
+                                          Operational
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Rejection Reasons */}
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-3xl shadow-xl space-y-4 lg:col-span-2">
+                        <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
+                          <AlertTriangle className="w-5 h-5 text-rose-400" />
+                          <h3 className="text-sm font-bold text-white">Rejection Policy Failures Breakdown</h3>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {Object.entries(analyticsData.rejection_reasons)
+                            .filter(([, count]) => count > 0)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([reason, count]) => {
+                              const maxVal = Math.max(...(Object.values(analyticsData.rejection_reasons) as number[]));
+                              const pct = maxVal > 0 ? (count / maxVal * 100).toFixed(1) : 0;
+                              return (
+                                <div key={reason} className="bg-slate-950/40 border border-slate-850 p-4 rounded-2xl space-y-2.5 hover:border-slate-800 transition-colors">
+                                  <div className="flex justify-between text-xs font-semibold">
+                                    <span className="text-slate-300 truncate max-w-[200px]" title={reason}>{reason}</span>
+                                    <span className="text-rose-400 font-bold font-mono">{count} flags ({pct}%)</span>
+                                  </div>
+                                  <div className="h-2 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-900">
+                                    <div className="h-full bg-gradient-to-r from-rose-600 to-pink-500 rounded-full" style={{ width: `${pct}%` }} />
+                                  </div>
                                 </div>
-                                <div 
-                                  className="w-full bg-gradient-to-t from-violet-600 to-indigo-500 rounded-t-lg group-hover:from-violet-500 group-hover:to-indigo-400 transition-all duration-500" 
-                                  style={{ height: `${Math.max(heightPct, 5)}%` }}
-                                />
-                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-2 truncate w-full text-center">
-                                  {src.split(' ')[0]}
-                                </span>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
+                              );
+                            })}
 
-                    {/* Rejection Reasons */}
-                    <div className="bg-slate-900/30 border border-slate-800 p-6 rounded-3xl shadow-xl space-y-4 lg:col-span-2">
-                      <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
-                        <AlertTriangle className="w-5 h-5 text-rose-400" />
-                        <h3 className="text-sm font-bold text-white">Rejection Policy Failures Breakdown</h3>
+                          {Object.values(analyticsData.rejection_reasons).every(v => v === 0) && (
+                            <p className="text-xs text-slate-500 text-center py-12 w-full col-span-2">No rejected jobs logged yet.</p>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {Object.entries(analyticsData.rejection_reasons)
-                          .filter(([, count]) => count > 0)
-                          .sort((a, b) => b[1] - a[1])
-                          .map(([reason, count]) => {
-                            const maxVal = Math.max(...(Object.values(analyticsData.rejection_reasons) as number[]));
-                            const pct = maxVal > 0 ? (count / maxVal * 100).toFixed(1) : 0;
-                            return (
-                              <div key={reason} className="bg-slate-950/30 border border-slate-800/40 p-3 rounded-xl space-y-2">
-                                <div className="flex justify-between text-xs font-semibold">
-                                  <span className="text-slate-300 truncate max-w-[220px]">{reason}</span>
-                                  <span className="text-rose-400 font-bold">{count} flags ({pct}%)</span>
-                                </div>
-                                <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden">
-                                  <div className="h-full bg-rose-600 rounded-full" style={{ width: `${pct}%` }} />
-                                </div>
-                              </div>
-                            );
-                          })}
-
-                        {Object.values(analyticsData.rejection_reasons).every(v => v === 0) && (
-                          <p className="text-xs text-slate-500 text-center py-6 w-full col-span-2">No rejected jobs logged yet.</p>
-                        )}
-                      </div>
                     </div>
 
                   </div>
-
-                </div>
-              )}
+                );
+              })()}
             </div>
           ) : activeTab === 'policy' ? (
             <div className="bg-slate-900/20 backdrop-blur-md border border-slate-800 p-6 rounded-2xl space-y-6 max-w-3xl shadow-xl">

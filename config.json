@@ -56,6 +56,16 @@
       "wealthfront",
       "spotify",
       "lever"
+    ],
+    "ashby": [
+      "notion",
+      "supabase",
+      "clerk",
+      "linear",
+      "railway",
+      "neon",
+      "gitbook",
+      "harness"
     ]
   },
   "webhook_url": "https://discord.com/api/webhooks/1507879247065125025/dyQvwHb_k2M1v8WNcaeiCBUa7s8gxJ7dCGt55EJyHOzpxGh_cvea589BvH2ABI9m4B9A"

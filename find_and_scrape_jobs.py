@@ -1543,6 +1543,213 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
     return discovered
 
 
+def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct Ashby company board APIs...")
+    discovered = []
+    matched_count = 0
+    
+    ashby_companies = companies_cfg.get("ashby", [])
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    for company in ashby_companies:
+        url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
+        try:
+            log(f"Querying Ashby API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Ashby API for {company} returned status code {r.status_code}")
+                continue
+                
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Ashby board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("title", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                location = job.get("location")
+                location = location.strip() if location else ""
+                
+                is_remote = job.get("isRemote") or False
+                
+                workplace_type = job.get("workplaceType")
+                workplace_type = workplace_type.strip() if workplace_type else ""
+                
+                loc_str = location
+                if is_remote or workplace_type.lower() == "remote":
+                    if "remote" not in loc_str.lower():
+                        loc_str = f"{loc_str} (Remote)" if loc_str else "Remote"
+                
+                if not is_us_location(loc_str):
+                    continue
+                
+                job_url = job.get("jobUrl")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Ashby '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Ashby API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                desc_plain = job.get("descriptionPlain")
+                desc_html = job.get("descriptionHtml")
+                
+                if desc_plain:
+                    jd_text = desc_plain.strip()
+                elif desc_html:
+                    jd_text = clean_text(desc_html).strip()
+                else:
+                    jd_text = ""
+                
+                if not jd_text:
+                    continue
+                    
+                req_id = str(job.get("id"))
+                comp_name = company.title()
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": loc_str,
+                    "description_hash": desc_hash,
+                    "scraped_at": datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            log(f"Error querying Ashby board '{company}': {e}")
+            
+    log(f"Ashby API Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct Workable Global Search API...")
+    discovered = []
+    matched_count = 0
+    import urllib.parse
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    for title_query in target_titles:
+        encoded_query = urllib.parse.quote(title_query)
+        url = f"https://jobs.workable.com/api/v1/jobs?query={encoded_query}"
+        
+        try:
+            log(f"Querying Workable Global Search for: '{title_query}'")
+            r = http_get(url, headers=headers, timeout=15, attempts=2)
+            if r.status_code != 200:
+                log(f"Workable API for query '{title_query}' returned status code {r.status_code}")
+                continue
+                
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Workable search '{title_query}': Found {len(jobs)} total jobs on first page")
+            
+            for job in jobs:
+                title = job.get("title", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                location_dict = job.get("location", {}) or {}
+                location_parts = []
+                city = location_dict.get("city")
+                subregion = location_dict.get("subregion")
+                country = location_dict.get("countryName")
+                if city:
+                    location_parts.append(city)
+                if subregion:
+                    location_parts.append(subregion)
+                if country:
+                    location_parts.append(country)
+                
+                loc_str = ", ".join(location_parts)
+                workplace = job.get("workplace", "")
+                if workplace:
+                    if workplace.lower() not in loc_str.lower():
+                        loc_str = f"{loc_str} ({workplace.title()})" if loc_str else workplace.title()
+                
+                if not is_us_location(loc_str):
+                    continue
+                
+                job_url = job.get("url")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Workable: '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Workable Global Search: {title_query}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                desc_html = job.get("description") or ""
+                reqs_html = job.get("requirementsSection") or ""
+                benefits_html = job.get("benefitsSection") or ""
+                
+                full_html = f"{desc_html}\n\n{reqs_html}\n\n{benefits_html}"
+                jd_text = clean_text(full_html).strip()
+                
+                if not jd_text:
+                    continue
+                    
+                req_id = str(job.get("id"))
+                company_dict = job.get("company") or {}
+                comp_name = (company_dict.get("title") or "Unknown Workable Company").strip()
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": loc_str,
+                    "description_hash": desc_hash,
+                    "scraped_at": datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            log(f"Error querying Workable Global Search for '{title_query}': {e}")
+            
+    log(f"Workable Global Search Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
 def main(dry_run=False):
     target_titles = []
     config_data = {}
@@ -1601,6 +1808,16 @@ def main(dry_run=False):
     target_companies = config_data.get("target_companies", {})
     api_jobs = fetch_company_board_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
     scraped_jobs.extend(api_jobs)
+
+    # 2b. Fetch from Ashby Boards API
+    log("Starting direct Ashby Boards API sourcing...")
+    ashby_jobs = fetch_ashby_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(ashby_jobs)
+
+    # 2c. Fetch from Workable Global Search API
+    log("Starting direct Workable Global Search API sourcing...")
+    workable_jobs = fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(workable_jobs)
 
     log("Starting Yahoo search for US job postings (remote / hybrid / onsite)...")
     if dry_run:
