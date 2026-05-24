@@ -1154,6 +1154,395 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
 
 
 
+def is_us_location(location_str):
+    if not location_str:
+        return False
+    loc_lower = location_str.lower()
+    
+    # Negative indicators - exclude if matched and no positive US indicators are present
+    negative_indicators = [
+        "europe", "uk", "london", "india", "germany", "france", "canada", "latam", 
+        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil", 
+        "spain", "poland", "ukraine", "philippines", "ireland", "tokyo", "japan",
+        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne", 
+        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo", 
+        "amsterdam", "krakow", "mexico", "sweden", "stockholm", "zurich"
+    ]
+    has_negative = any(ni in loc_lower for ni in negative_indicators)
+    
+    # Positive indicators
+    us_indicators = ["united states", "us", "u.s.", "usa", "u.s.a", "remote - us", "remote us", "remote, us", "america"]
+    has_positive = any(ind in loc_lower for ind in us_indicators)
+    
+    if has_positive:
+        return True
+        
+    # Check major US cities
+    us_cities = [
+        "san francisco", "sf", "seattle", "new york", "nyc", "austin", "chicago", "boston", 
+        "denver", "los angeles", "la", "atlanta", "dallas", "houston", "miami", "philadelphia", 
+        "phoenix", "san diego", "san jose", "sunnyvale", "mountain view", "palo alto", "redmond", 
+        "bellevue", "oakland", "detroit", "minneapolis", "portland", "salt lake city", "pittsburgh", 
+        "washington", "arlington", "boulder", "cambridge", "raleigh", "durham", "charlotte", 
+        "nashville", "salt lake", "las vegas", "orlando", "tampa", "tempe", "culver city",
+        "menlo park", "cupertino", "santa clara", "redwood city", "irvine", "berkeley"
+    ]
+    if any(city in loc_lower for city in us_cities):
+        if not has_negative:
+            return True
+            
+    # Check words for "us" or "usa"
+    words = re.findall(r'\b[a-z]+\b', loc_lower)
+    if "us" in words or "usa" in words or "america" in words:
+        return True
+        
+    # State postal codes
+    us_states = {
+        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
+        "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+        "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy"
+    }
+    for word in words:
+        if word in us_states:
+            if word in ["in", "or", "me", "la", "ma", "co"]:
+                match = re.search(r'\b,\s*' + word + r'\b', loc_lower)
+                if match:
+                    return True
+            else:
+                return True
+                
+    # If no negative indicators and it has "remote", "anywhere", "worldwide", let's allow it
+    if not has_negative and any(term in loc_lower for term in ["remote", "anywhere", "worldwide"]):
+        return True
+        
+    return False
+
+
+def is_target_job(job_title, target_titles):
+    jt = job_title.lower()
+    for t in target_titles:
+        t_lower = t.lower()
+        if t_lower in jt:
+            return True
+        parts = t_lower.split()
+        if len(parts) > 1 and all(p in jt for p in parts):
+            return True
+    return False
+
+
+def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
+    log("Fetching direct RSS feeds from WeWorkRemotely and Remote.co...")
+    discovered = []
+    matched_count = 0
+    
+    feeds = {
+        "WeWorkRemotely - All": "https://weworkremotely.com/remote-jobs.rss",
+        "WeWorkRemotely - DevOps/SysAdmin": "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+        "Remote.co": "https://remote.co/feed/?post_type=job_listing"
+    }
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*"
+    }
+    
+    for feed_name, url in feeds.items():
+        try:
+            log(f"Fetching RSS feed: {feed_name}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Failed to fetch RSS feed {feed_name}: status code {r.status_code}")
+                continue
+            
+            soup = BeautifulSoup(r.content, "xml")
+            items = soup.find_all("item")
+            log(f"Found {len(items)} items in RSS feed: {feed_name}")
+            
+            for item in items:
+                title_elem = item.find("title")
+                link_elem = item.find("link")
+                desc_elem = item.find("description")
+                
+                if not title_elem or not link_elem:
+                    continue
+                
+                raw_title = title_elem.text.strip()
+                job_url = link_elem.text.strip()
+                
+                if not is_target_job(raw_title, target_titles):
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] RSS {feed_name}: '{raw_title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"RSS: {feed_name}",
+                        "title_keyword": raw_title
+                    })
+                    continue
+                
+                raw_desc = desc_elem.text if desc_elem else ""
+                jd_text = clean_text(raw_desc).strip()
+                
+                company_name = "Unknown"
+                job_title = raw_title
+                
+                if "weworkremotely" in job_url.lower():
+                    if ":" in raw_title:
+                        parts = raw_title.split(":", 1)
+                        company_name = parts[0].strip()
+                        job_title = parts[1].strip()
+                elif "remote.co" in job_url.lower():
+                    if " - " in raw_title:
+                        title_parts = raw_title.split(" - ")
+                        if len(title_parts) >= 2:
+                            p0 = title_parts[0].strip()
+                            p1 = title_parts[1].strip()
+                            if not any(w in p0.lower() for w in ["engineer", "developer", "architect", "lead", "manager", "senior", "junior", "remote"]):
+                                company_name = p0
+                                job_title = p1
+                    if company_name == "Unknown":
+                        company_name = "Remote.co"
+                
+                # Geographic gating
+                desc_lower = jd_text.lower()
+                exclude_keywords = [
+                    "europe only", "uk only", "canada only", "asia only", "latam only", 
+                    "eu only", "apac only", "emea only", "germany only", "france only", 
+                    "outside us", "outside the us", "outside the united states"
+                ]
+                if any(kw in desc_lower for kw in exclude_keywords):
+                    continue
+                
+                location = "Remote"
+                if "weworkremotely" in job_url.lower():
+                    hq_match = re.search(r'Headquarters:\s*([^\n<]+)', raw_desc, re.IGNORECASE)
+                    if hq_match:
+                        hq_loc = hq_match.group(1).strip()
+                        location = f"{hq_loc} (Remote)"
+                        if not is_us_location(hq_loc) and not any(ind in desc_lower for ind in ["united states", "us", "u.s.", "usa"]):
+                            if "worldwide" not in desc_lower and "anywhere" not in desc_lower:
+                                continue
+                
+                parsed_url = urlparse(job_url)
+                path_parts = [p for p in parsed_url.path.split('/') if p]
+                req_id = path_parts[-1] if path_parts else "Unknown"
+                if "remote.co" in job_url.lower():
+                    uuid_match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', req_id)
+                    if uuid_match:
+                        req_id = uuid_match.group(1)
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": job_title,
+                    "company_name": company_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": f"{location} (Remote)",
+                    "description_hash": desc_hash,
+                    "scraped_at": datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            log(f"Error parsing RSS feed {feed_name}: {e}")
+            
+    log(f"RSS Discovery complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct Greenhouse and Lever company board APIs...")
+    discovered = []
+    matched_count = 0
+    
+    greenhouse_companies = companies_cfg.get("greenhouse", [])
+    lever_companies = companies_cfg.get("lever", [])
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    # 1. Greenhouse Boards API
+    for company in greenhouse_companies:
+        url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true"
+        try:
+            log(f"Querying Greenhouse API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Greenhouse API for {company} returned status code {r.status_code}")
+                continue
+            
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Greenhouse board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("title", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                location_name = job.get("location", {}).get("name", "").strip()
+                if not is_us_location(location_name):
+                    continue
+                
+                job_url = job.get("absolute_url")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Greenhouse '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Greenhouse API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                content_html = job.get("content", "")
+                jd_text = clean_text(content_html).strip()
+                
+                req_id = str(job.get("id"))
+                comp_name = job.get("company_name", company.title())
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": f"{location_name} (Remote/Hybrid/Onsite)",
+                    "description_hash": desc_hash,
+                    "scraped_at": datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            log(f"Error querying Greenhouse board '{company}': {e}")
+            
+    # 2. Lever Public Postings API
+    for company in lever_companies:
+        url = f"https://api.lever.co/v0/postings/{company}?mode=json"
+        try:
+            log(f"Querying Lever API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Lever API for {company} returned status code {r.status_code}")
+                continue
+            
+            jobs = r.json()
+            if not isinstance(jobs, list):
+                log(f"Lever API for {company} returned invalid format")
+                continue
+                
+            log(f"  Lever board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("text", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                country = job.get("country", "")
+                location_cat = job.get("categories", {}).get("location", "")
+                
+                is_us = False
+                if country.lower() == "us":
+                    is_us = True
+                elif is_us_location(location_cat):
+                    is_us = True
+                
+                if not is_us:
+                    continue
+                
+                job_url = job.get("hostedUrl")
+                if not job_url:
+                    continue
+                    
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Lever '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Lever API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                parts = []
+                if job.get("descriptionPlain"):
+                    parts.append(job["descriptionPlain"])
+                elif job.get("description"):
+                    parts.append(clean_text(job["description"]))
+                
+                if job.get("openingPlain"):
+                    parts.append(job["openingPlain"])
+                elif job.get("opening"):
+                    parts.append(clean_text(job["opening"]))
+                
+                for lst in job.get("lists", []):
+                    lst_title = lst.get("text", "")
+                    lst_content = lst.get("content", "")
+                    if lst_title:
+                        parts.append(lst_title)
+                    if lst_content:
+                        parts.append(clean_text(lst_content))
+                
+                jd_text = "\n\n".join([p.strip() for p in parts if p.strip()])
+                if not jd_text:
+                    continue
+                    
+                req_id = str(job.get("id"))
+                comp_name = company.title()
+                
+                location_work = location_cat or "Remote"
+                if job.get("workplaceType"):
+                    location_work = f"{location_work} ({job['workplaceType'].title()})"
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": f"{location_work}",
+                    "description_hash": desc_hash,
+                    "scraped_at": datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            log(f"Error querying Lever board '{company}': {e}")
+            
+    log(f"Company API Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
 def main(dry_run=False):
     target_titles = []
     config_data = {}
@@ -1202,6 +1591,17 @@ def main(dry_run=False):
     scraped_jobs = []
     dry_urls = []
 
+    # 1. Fetch from RSS Feeds
+    log("Starting direct RSS feed sourcing...")
+    rss_jobs = fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(rss_jobs)
+    
+    # 2. Fetch from Company Board APIs
+    log("Starting direct Company Board API sourcing...")
+    target_companies = config_data.get("target_companies", {})
+    api_jobs = fetch_company_board_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(api_jobs)
+
     log("Starting Yahoo search for US job postings (remote / hybrid / onsite)...")
     if dry_run:
         log("DRY RUN: collecting URLs only (no per-job page scrape).")
@@ -1209,7 +1609,6 @@ def main(dry_run=False):
     yield_threshold = search_cfg.get("yield_threshold", 2)
     api_key = os.environ.get("GEMINI_API_KEY")
     
-    # Generate synonym expansion mapping using Gemini (with fallback)
     synonyms_map = expand_target_titles_with_gemini(target_titles, api_key)
 
     for title in target_titles:
@@ -1217,7 +1616,6 @@ def main(dry_run=False):
         new_jobs, urls_found = search_and_scrape_for_keyword(title, search_cfg, found_urls, dry_run, dry_urls)
         scraped_jobs.extend(new_jobs)
 
-        # Track search yield
         current_yield = len(new_jobs) if not dry_run else urls_found
 
         if current_yield < yield_threshold:

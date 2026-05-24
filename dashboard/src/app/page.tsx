@@ -1,24 +1,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { 
-  Briefcase, 
-  Settings as SettingsIcon, 
-  CheckCircle2, 
-  XCircle, 
-  AlertTriangle, 
-  RefreshCw, 
-  Search, 
-  ExternalLink, 
-  Edit3, 
-  Database, 
-  Send, 
-  Check, 
-  Sliders, 
-  ChevronRight, 
-  FileText,
+import {
+  Briefcase,
+  Settings as SettingsIcon,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  RefreshCw,
+  Search,
+  ExternalLink,
+  Edit3,
+  Database,
+  Check,
+  Sliders,
+  ChevronRight,
   BellRing,
-  Info,
   BarChart3,
   Shield,
   Copy,
@@ -35,6 +32,18 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
+interface DecisionPayload {
+  apply_decision?: string;
+  strongest_label?: string;
+  red_flags?: string[];
+  confidence_score?: number;
+  rationale?: string;
+  cloud?: {
+    primary_cloud?: string;
+  };
+  [key: string]: unknown;
+}
+
 interface Job {
   job_title: string;
   company_name: string;
@@ -47,12 +56,34 @@ interface Job {
   confidence_score: number;
   rationale: string;
   red_flags?: string[];
-  apply_decision_payload?: any;
+  apply_decision_payload?: DecisionPayload;
   synced?: boolean;
-  synced_data?: any;
+  synced_data?: unknown;
   scraped_at?: string;
   stale?: boolean;
   archived?: boolean;
+  cloud?: string;
+  seniority?: string;
+  source?: string;
+}
+
+interface AnalyticsData {
+  total_sourced: number;
+  approved: number;
+  rejected: number;
+  approval_rate: number;
+  labels_distribution: Record<string, number>;
+  sources_distribution: Record<string, number>;
+  rejection_reasons: Record<string, number>;
+}
+
+interface PolicyConfig {
+  max_experience_years: number;
+  min_salary_annual: number;
+  min_salary_hourly: number;
+  enforce_visa_sponsorship: boolean;
+  enforce_no_clearance: boolean;
+  custom_red_flag_keywords: string[];
 }
 
 interface Config {
@@ -117,67 +148,17 @@ export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
 
   // Analytics and Policy States
-  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [policyConfig, setPolicyConfig] = useState<any>(null);
+  const [policyConfig, setPolicyConfig] = useState<PolicyConfig | null>(null);
   const [policyLoading, setPolicyLoading] = useState(false);
 
-  const fetchAnalytics = async () => {
-    setAnalyticsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/analytics`);
-      if (res.ok) {
-        const data = await res.json();
-        setAnalyticsData(data);
-      }
-    } catch (e) {
-      showStatus('Failed to load analytics data.', 'error');
-    } finally {
-      setAnalyticsLoading(false);
-    }
-  };
-
-  const fetchPolicy = async () => {
-    setPolicyLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/policy`);
-      if (res.ok) {
-        const data = await res.json();
-        setPolicyConfig(data);
-      }
-    } catch (e) {
-      showStatus('Failed to load policy config.', 'error');
-    } finally {
-      setPolicyLoading(false);
-    }
-  };
-
-  const savePolicyConfig = async (updatedPolicy: any) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/policy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedPolicy)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus(data.message, 'success');
-          setPolicyConfig(updatedPolicy);
-        } else {
-          showStatus(data.message, 'error');
-        }
-      }
-    } catch (e) {
-      showStatus('Failed to save policy configuration.', 'error');
-    }
-  };
+  // States
   const [config, setConfig] = useState<Config>({
     target_titles: [],
     scheduler: { enabled: true, run_at_hour: 8, run_at_minute: 0 },
     webhook_url: ''
   });
-  const [syncedJobs, setSyncedJobs] = useState<Record<string, any>>({});
   const [scraperStatus, setScraperStatus] = useState({
     status: 'idle',
     message: 'Ready.',
@@ -193,15 +174,6 @@ export default function Dashboard() {
   const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
   const [showActiveOnly, setShowActiveOnly] = useState(true);
 
-  useEffect(() => {
-    setSelectedRoleFilter('all');
-    if (activeTab === 'analytics') {
-      fetchAnalytics();
-    } else if (activeTab === 'policy') {
-      fetchPolicy();
-    }
-  }, [activeTab]);
-  
   // Selection / Editing Modal States
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -232,14 +204,114 @@ export default function Dashboard() {
   const [sendDigestOnly, setSendDigestOnly] = useState(true);
 
   // General Loading & Notification UI States
-  const [loading, setLoading] = useState(false);
   const [syncingJobUrl, setSyncingJobUrl] = useState<string | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Fetch Jobs & Config
+  // Core helpers (hoisted to prevent temporal dead zone)
+  const showStatus = (text: string, type: 'success' | 'error' | 'info') => {
+    setStatusMessage({ text, type });
+    setTimeout(() => setStatusMessage(null), 5000);
+  };
+
+  const checkStaleStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/stale-status`);
+      if (res.ok) {
+        const data = await res.json();
+        setStaleCheckStatus(data);
+      }
+    } catch {
+      // Silence is golden
+    }
+  };
+
+  const checkNotionStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/test-notion`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setNotionConnection({ connected: true, message: 'Connected', dbName: data.db_name });
+        } else {
+          setNotionConnection({ connected: false, message: data.message, dbName: '' });
+        }
+      }
+    } catch {
+      setNotionConnection({ connected: false, message: 'Offline', dbName: '' });
+    }
+  };
+
+  const checkScraperStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/scraper-status`);
+      if (res.ok) {
+        const data = await res.json();
+        setScraperStatus((prev) => ({
+          ...prev,
+          ...data,
+          last_error: data.last_error ?? prev.last_error ?? null,
+          last_metrics: data.last_metrics ?? prev.last_metrics ?? {},
+        }));
+      }
+    } catch {
+      // Silence is golden
+    }
+  };
+
+  // Fetch API Functions
+  const fetchAnalytics = async () => {
+    setAnalyticsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/analytics`);
+      if (res.ok) {
+        const data = await res.json();
+        setAnalyticsData(data);
+      }
+    } catch {
+      showStatus('Failed to load analytics data.', 'error');
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
+  const fetchPolicy = async () => {
+    setPolicyLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/policy`);
+      if (res.ok) {
+        const data = await res.json();
+        setPolicyConfig(data);
+      }
+    } catch {
+      showStatus('Failed to load policy config.', 'error');
+    } finally {
+      setPolicyLoading(false);
+    }
+  };
+
+  const savePolicyConfig = async (updatedPolicy: PolicyConfig) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/policy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedPolicy)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          showStatus(data.message, 'success');
+          setPolicyConfig(updatedPolicy);
+        } else {
+          showStatus(data.message, 'error');
+        }
+      }
+    } catch {
+      showStatus('Failed to save policy configuration.', 'error');
+    }
+  };
+
   const fetchData = async () => {
-    setLoading(true);
     try {
       // 1. Fetch Jobs
       const resJobs = await fetch(`${API_BASE}/api/jobs`);
@@ -247,7 +319,7 @@ export default function Dashboard() {
         const jobsData = await resJobs.json();
         setJobs(jobsData);
       }
-      
+
       // 2. Fetch Config
       const resConfig = await fetch(`${API_BASE}/api/config`);
       if (resConfig.ok) {
@@ -267,42 +339,20 @@ export default function Dashboard() {
       checkScraperStatus();
       // Check stale status
       checkStaleStatus();
-    } catch (error) {
+    } catch {
       showStatus('Failed to communicate with local dashboard API.', 'error');
-    } finally {
-      setLoading(false);
     }
   };
 
-  const checkNotionStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/test-notion`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setNotionConnection({ connected: true, message: 'Connected', dbName: data.db_name });
-        } else {
-          setNotionConnection({ connected: false, message: data.message, dbName: '' });
-        }
-      }
-    } catch (e) {
-      setNotionConnection({ connected: false, message: 'Offline', dbName: '' });
+  // Tab change handler replacing side-effect useEffect
+  const handleTabChange = (tab: 'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy') => {
+    setActiveTab(tab);
+    setSelectedRoleFilter('all');
+    if (tab === 'analytics') {
+      fetchAnalytics();
+    } else if (tab === 'policy') {
+      fetchPolicy();
     }
-  };
-
-  const checkScraperStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/scraper-status`);
-      if (res.ok) {
-        const data = await res.json();
-        setScraperStatus((prev) => ({
-          ...prev,
-          ...data,
-          last_error: data.last_error ?? prev.last_error ?? null,
-          last_metrics: data.last_metrics ?? prev.last_metrics ?? {},
-        }));
-      }
-    } catch (e) {}
   };
 
   // Poll scraper status when it is running
@@ -314,20 +364,24 @@ export default function Dashboard() {
         // Periodically refresh jobs list too
         fetch(`${API_BASE}/api/jobs`)
           .then(res => res.ok && res.json())
-          .then(data => data && setJobs(data));
+          .then(data => {
+            if (data) setJobs(data);
+          })
+          .catch(() => {
+            // Silence
+          });
       }, 2000);
     }
     return () => clearInterval(interval);
   }, [scraperStatus.status]);
 
+  // Initial load
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, []);
-
-  const showStatus = (text: string, type: 'success' | 'error' | 'info') => {
-    setStatusMessage({ text, type });
-    setTimeout(() => setStatusMessage(null), 5000);
-  };
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // Start scraper
   const triggerScrape = async () => {
@@ -346,7 +400,7 @@ export default function Dashboard() {
           showStatus(data.message, 'error');
         }
       }
-    } catch (error) {
+    } catch {
       showStatus('Failed to trigger scraper run.', 'error');
     }
   };
@@ -367,19 +421,9 @@ export default function Dashboard() {
           showStatus(data.message, 'error');
         }
       }
-    } catch (error) {
+    } catch {
       showStatus('Failed to trigger stale check.', 'error');
     }
-  };
-
-  const checkStaleStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/stale-status`);
-      if (res.ok) {
-        const data = await res.json();
-        setStaleCheckStatus(data);
-      }
-    } catch (e) {}
   };
 
   // Poll stale check status when it is running
@@ -391,7 +435,12 @@ export default function Dashboard() {
         // Periodically refresh jobs list too
         fetch(`${API_BASE}/api/jobs`)
           .then(res => res.ok && res.json())
-          .then(data => data && setJobs(data));
+          .then(data => {
+            if (data) setJobs(data);
+          })
+          .catch(() => {
+            // Silence
+          });
       }, 2000);
     }
     return () => clearInterval(interval);
@@ -415,7 +464,7 @@ export default function Dashboard() {
           showStatus(data.message, 'error');
         }
       }
-    } catch (e) {
+    } catch {
       showStatus('Failed to archive job.', 'error');
     }
   };
@@ -439,7 +488,7 @@ export default function Dashboard() {
           showStatus(data.message, 'error');
         }
       }
-    } catch (e) {
+    } catch {
       showStatus('Notion sync request failed.', 'error');
     } finally {
       setSyncingJobUrl(null);
@@ -478,7 +527,7 @@ export default function Dashboard() {
           showStatus('Failed to save settings.', 'error');
         }
       }
-    } catch (e) {
+    } catch {
       showStatus('Failed to reach settings API.', 'error');
     }
   };
@@ -504,7 +553,7 @@ export default function Dashboard() {
           showStatus(data.message, 'error');
         }
       }
-    } catch (e) {
+    } catch {
       showStatus('Failed to execute webhook test request.', 'error');
     } finally {
       setTestingWebhook(false);
@@ -546,7 +595,7 @@ export default function Dashboard() {
     const end = textarea.selectionEnd;
     const text = textarea.value;
     const selectedText = text.substring(start, end);
-    
+
     let replacement = '';
     switch (action) {
       case 'bold':
@@ -576,10 +625,10 @@ export default function Dashboard() {
       default:
         return;
     }
-    
+
     const newValue = text.substring(0, start) + replacement + text.substring(end);
     updateDescWithHistory(newValue);
-    
+
     setTimeout(() => {
       textarea.focus();
       textarea.setSelectionRange(start, start + replacement.length);
@@ -606,15 +655,15 @@ export default function Dashboard() {
     setHistoryIndex(0);
 
     // Parse cloud from payload or custom property
-    const jobCloud = (job as any).cloud || job.apply_decision_payload?.cloud?.primary_cloud || 'Not specified';
+    const jobCloud = job.cloud || job.apply_decision_payload?.cloud?.primary_cloud || 'Not specified';
     setEditCloud(jobCloud);
 
     // Parse seniority from custom property or fallback
-    const jobSeniority = (job as any).seniority || 'Not specified';
+    const jobSeniority = job.seniority || 'Not specified';
     setEditSeniority(jobSeniority);
 
     // Determine source
-    let defaultSource = (job as any).source;
+    let defaultSource = job.source;
     if (!defaultSource) {
       if (job.job_url?.includes('lever.co')) defaultSource = 'Lever';
       else if (job.job_url?.includes('greenhouse.io')) defaultSource = 'Greenhouse';
@@ -632,7 +681,7 @@ export default function Dashboard() {
       rationale: job.rationale || ''
     };
     setEditPayload(JSON.stringify(payloadObj, null, 2));
-    
+
     setIsPayloadExpanded(false);
     setIsModalOpen(true);
   };
@@ -646,7 +695,7 @@ export default function Dashboard() {
       if (editPayload.trim()) {
         parsedPayload = JSON.parse(editPayload);
       }
-    } catch (e) {
+    } catch {
       showStatus('Invalid Decision Payload JSON formatting. Please check the JSON syntax.', 'error');
       return;
     }
@@ -663,7 +712,7 @@ export default function Dashboard() {
       rationale: editRationale.trim(),
       job_description: editDesc.trim(),
       red_flags: editDecision === 'APPLY' ? [] : (selectedJob.red_flags || ['Manual Disapproval']),
-      
+
       // Extended fields
       cloud: editCloud,
       seniority: editSeniority,
@@ -690,7 +739,7 @@ export default function Dashboard() {
           showStatus(data.message, 'error');
         }
       }
-    } catch (e) {
+    } catch {
       showStatus('Failed to send classification override.', 'error');
     }
   };
@@ -702,12 +751,12 @@ export default function Dashboard() {
 
   const filteredJobs = () => {
     let list = activeTab === 'approved' ? approvedJobs : activeTab === 'rejected' ? rejectedJobs : pendingJobs;
-    
+
     // Filter out stale/closed jobs if showActiveOnly is enabled
     if (activeTab === 'approved' && showActiveOnly) {
       list = list.filter(j => !j.stale);
     }
-    
+
     // Filter approved jobs by role category if selected
     if (activeTab === 'approved' && selectedRoleFilter !== 'all') {
       list = list.filter(j => j.strongest_label === selectedRoleFilter);
@@ -715,7 +764,7 @@ export default function Dashboard() {
 
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
-      list = list.filter(j => 
+      list = list.filter(j =>
         j.job_title.toLowerCase().includes(term) ||
         j.company_name.toLowerCase().includes(term) ||
         j.requirement_id.toLowerCase().includes(term)
@@ -756,20 +805,20 @@ export default function Dashboard() {
   const formatScrapedDate = (dateStr: string) => {
     try {
       const date = new Date(dateStr);
-      return date.toLocaleDateString(undefined, { 
-        month: 'short', 
-        day: 'numeric', 
-        hour: 'numeric', 
-        minute: '2-digit' 
+      return date.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
       });
-    } catch (e) {
+    } catch {
       return dateStr;
     }
   };
 
   return (
     <div className="flex-1 min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-violet-600/30">
-      
+
       {/* Background gradients */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full filter blur-[80px] pointer-events-none" />
       <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-600/10 rounded-full filter blur-[80px] pointer-events-none" />
@@ -790,7 +839,7 @@ export default function Dashboard() {
 
         {/* Integration Status Badges */}
         <div className="flex items-center space-x-4">
-          
+
           {/* Notion Status */}
           <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 shadow-inner">
             <Database className="w-3.5 h-3.5 text-slate-400" />
@@ -801,7 +850,7 @@ export default function Dashboard() {
                 {notionConnection.dbName || 'Connected'}
               </span>
             ) : (
-              <button 
+              <button
                 onClick={checkNotionStatus}
                 className="inline-flex items-center text-xs font-semibold text-rose-400 bg-rose-950/40 px-2 py-0.5 rounded-full border border-rose-800/50 hover:bg-rose-900/30 transition-colors"
               >
@@ -853,11 +902,10 @@ export default function Dashboard() {
           <button
             onClick={triggerStaleCheck}
             disabled={staleCheckStatus.status === 'running'}
-            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${
-              staleCheckStatus.status === 'running'
+            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${staleCheckStatus.status === 'running'
                 ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                 : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
-            }`}
+              }`}
           >
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${staleCheckStatus.status === 'running' ? 'animate-spin' : ''}`} />
             Check Closed Jobs
@@ -867,11 +915,10 @@ export default function Dashboard() {
           <button
             onClick={triggerScrape}
             disabled={scraperStatus.status === 'running'}
-            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${
-              scraperStatus.status === 'running'
+            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${scraperStatus.status === 'running'
                 ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                 : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-violet-600/10 border border-violet-500/20 active:scale-95'
-            }`}
+              }`}
           >
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${scraperStatus.status === 'running' ? 'animate-spin' : ''}`} />
             Run Sourcing Agent
@@ -881,13 +928,12 @@ export default function Dashboard() {
 
       {/* Floating Status Message */}
       {statusMessage && (
-        <div className={`fixed bottom-6 right-6 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl border shadow-xl animate-bounce ${
-          statusMessage.type === 'success' 
-            ? 'bg-emerald-950/90 text-emerald-300 border-emerald-800/80 shadow-emerald-900/20' 
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl border shadow-xl animate-bounce ${statusMessage.type === 'success'
+            ? 'bg-emerald-950/90 text-emerald-300 border-emerald-800/80 shadow-emerald-900/20'
             : statusMessage.type === 'error'
-            ? 'bg-rose-950/90 text-rose-300 border-rose-800/80 shadow-rose-900/20'
-            : 'bg-indigo-950/90 text-indigo-300 border-indigo-800/80 shadow-indigo-900/20'
-        }`}>
+              ? 'bg-rose-950/90 text-rose-300 border-rose-800/80 shadow-rose-900/20'
+              : 'bg-indigo-950/90 text-indigo-300 border-indigo-800/80 shadow-indigo-900/20'
+          }`}>
           {statusMessage.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
           <span className="text-sm font-medium">{statusMessage.text}</span>
         </div>
@@ -895,18 +941,18 @@ export default function Dashboard() {
 
       {/* Main Layout Grid */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6 flex flex-col">
-        
-        {scraperStatus.status === 'failed' && (scraperStatus as any).last_error && (
+
+        {scraperStatus.status === 'failed' && scraperStatus.last_error && (
           <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl text-rose-200 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
             <p className="font-semibold text-rose-300 mb-1">Last pipeline error</p>
-            {(scraperStatus as any).last_error}
+            {scraperStatus.last_error}
           </div>
         )}
 
-        {(scraperStatus as any).last_metrics && Object.keys((scraperStatus as any).last_metrics || {}).length > 0 && scraperStatus.status !== 'running' && (
+        {scraperStatus.last_metrics && Object.keys(scraperStatus.last_metrics || {}).length > 0 && scraperStatus.status !== 'running' && (
           <div className="bg-slate-900/50 border border-slate-800 p-3 rounded-xl text-xs text-slate-400">
             Last run counts:{' '}
-            {Object.entries((scraperStatus as any).last_metrics)
+            {Object.entries(scraperStatus.last_metrics)
               .map(([k, v]) => `${k}: ${v}`)
               .join(' · ')}
           </div>
@@ -925,7 +971,7 @@ export default function Dashboard() {
 
         {/* Dashboard Stat Counters */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
+
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
             <div>
               <p className="text-sm text-slate-400 font-medium">Approved Jobs</p>
@@ -969,68 +1015,62 @@ export default function Dashboard() {
 
         {/* Toolbar & Filter Tabs */}
         <section className="flex flex-col md:flex-row items-stretch md:items-center justify-between bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-3 rounded-2xl gap-4 shadow-xl">
-          
+
           {/* Navigation Tabs */}
           <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/50 flex-wrap gap-1">
             <button
-              onClick={() => setActiveTab('approved')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'approved' 
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md' 
+              onClick={() => handleTabChange('approved')}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'approved'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               Approved ({approvedJobs.length})
             </button>
             <button
-              onClick={() => setActiveTab('pending')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'pending' 
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md' 
+              onClick={() => handleTabChange('pending')}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'pending'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               Unreviewed ({pendingJobs.length})
             </button>
             <button
-              onClick={() => setActiveTab('rejected')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'rejected' 
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md' 
+              onClick={() => handleTabChange('rejected')}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'rejected'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               Filtered ({rejectedJobs.length})
             </button>
             <button
-              onClick={() => setActiveTab('analytics')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'analytics' 
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md' 
+              onClick={() => handleTabChange('analytics')}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'analytics'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               <BarChart3 className="w-3.5 h-3.5 mr-1" />
               Analytics
             </button>
             <button
-              onClick={() => setActiveTab('policy')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'policy' 
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md' 
+              onClick={() => handleTabChange('policy')}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'policy'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               <Shield className="w-3.5 h-3.5 mr-1" />
               Classifier Policy
             </button>
             <button
-              onClick={() => setActiveTab('settings')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'settings' 
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md' 
+              onClick={() => handleTabChange('settings')}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'settings'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               <SettingsIcon className="w-3.5 h-3.5 mr-1" />
               Settings
@@ -1060,7 +1100,7 @@ export default function Dashboard() {
                   </span>
                 </div>
               )}
-              
+
               {/* Sort By Dropdown */}
               <div className="relative shrink-0">
                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -1084,11 +1124,10 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() => setShowActiveOnly(prev => !prev)}
-                  className={`inline-flex items-center px-4 py-2 border rounded-xl text-sm font-semibold transition-colors shrink-0 shadow-inner ${
-                    showActiveOnly 
-                      ? 'bg-violet-950/40 border-violet-850 text-violet-300' 
+                  className={`inline-flex items-center px-4 py-2 border rounded-xl text-sm font-semibold transition-colors shrink-0 shadow-inner ${showActiveOnly
+                      ? 'bg-violet-950/40 border-violet-850 text-violet-300'
                       : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
+                    }`}
                 >
                   <Sliders className="w-4 h-4 mr-2 text-violet-400" />
                   {showActiveOnly ? 'Active Only' : 'Include Closed'}
@@ -1143,7 +1182,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div className="space-y-6 animate-in fade-in duration-300">
-                  
+
                   {/* Cards Row */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-slate-900/30 border border-slate-800 p-5 rounded-2xl shadow-lg">
@@ -1170,7 +1209,7 @@ export default function Dashboard() {
 
                   {/* Charts Grid */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    
+
                     {/* Role Labels Distribution */}
                     <div className="bg-slate-900/30 border border-slate-800 p-6 rounded-3xl shadow-xl space-y-4">
                       <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
@@ -1182,8 +1221,8 @@ export default function Dashboard() {
                           <p className="text-xs text-slate-500 text-center py-6">No approved jobs available for distribution.</p>
                         ) : (
                           Object.entries(analyticsData.labels_distribution)
-                            .sort((a: any, b: any) => b[1] - a[1])
-                            .map(([label, count]: any) => {
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([label, count]) => {
                               const pct = analyticsData.approved > 0 ? (count / analyticsData.approved * 100).toFixed(1) : 0;
                               return (
                                 <div key={label} className="space-y-1">
@@ -1207,12 +1246,12 @@ export default function Dashboard() {
                         <Database className="w-5 h-5 text-violet-400" />
                         <h3 className="text-sm font-bold text-white">Scraper Sources Yield</h3>
                       </div>
-                      
+
                       <div className="flex items-end justify-between h-48 pt-6 pb-2 px-4 gap-2 bg-slate-950/40 rounded-2xl border border-slate-800/40">
                         {Object.entries(analyticsData.sources_distribution).length === 0 ? (
                           <p className="text-xs text-slate-500 text-center w-full py-16">No sourced listings available.</p>
                         ) : (
-                          Object.entries(analyticsData.sources_distribution).map(([src, count]: any) => {
+                          Object.entries(analyticsData.sources_distribution).map(([src, count]) => {
                             const maxVal = Math.max(...(Object.values(analyticsData.sources_distribution) as number[]));
                             const heightPct = maxVal > 0 ? (count / maxVal * 100) : 0;
                             return (
@@ -1240,12 +1279,12 @@ export default function Dashboard() {
                         <AlertTriangle className="w-5 h-5 text-rose-400" />
                         <h3 className="text-sm font-bold text-white">Rejection Policy Failures Breakdown</h3>
                       </div>
-                      
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {Object.entries(analyticsData.rejection_reasons)
-                          .filter(([_, count]: any) => count > 0)
-                          .sort((a: any, b: any) => b[1] - a[1])
-                          .map(([reason, count]: any) => {
+                          .filter(([, count]) => count > 0)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([reason, count]) => {
                             const maxVal = Math.max(...(Object.values(analyticsData.rejection_reasons) as number[]));
                             const pct = maxVal > 0 ? (count / maxVal * 100).toFixed(1) : 0;
                             return (
@@ -1260,7 +1299,7 @@ export default function Dashboard() {
                               </div>
                             );
                           })}
-                        
+
                         {Object.values(analyticsData.rejection_reasons).every(v => v === 0) && (
                           <p className="text-xs text-slate-500 text-center py-6 w-full col-span-2">No rejected jobs logged yet.</p>
                         )}
@@ -1361,7 +1400,7 @@ export default function Dashboard() {
                       Standard Security Restrictions
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      
+
                       {/* Visa sponsorship toggle */}
                       <label className="flex items-center space-x-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800 cursor-pointer hover:border-slate-700 transition-colors">
                         <input
@@ -1372,7 +1411,7 @@ export default function Dashboard() {
                         />
                         <div>
                           <span className="text-xs font-bold text-slate-200 block">Block Visa Sponsorship Limits</span>
-                          <span className="text-[9px] text-slate-500 block mt-0.5">Reject jobs that explicitly state "no sponsorship" or "cannot sponsor"</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5">{'Reject jobs that explicitly state "no sponsorship" or "cannot sponsor"'}</span>
                         </div>
                       </label>
 
@@ -1386,7 +1425,7 @@ export default function Dashboard() {
                         />
                         <div>
                           <span className="text-xs font-bold text-slate-200 block">Block Security Clearance Roles</span>
-                          <span className="text-[9px] text-slate-500 block mt-0.5">Reject roles requesting "Active Secret/TS Clearance" or government eligibility</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5">{'Reject roles requesting "Active Secret/TS Clearance" or government eligibility'}</span>
                         </div>
                       </label>
 
@@ -1426,7 +1465,7 @@ export default function Dashboard() {
               )}
             </div>
           ) : activeTab === 'settings' ? (
-            
+
             /* Settings Tab */
             <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-3xl shadow-xl">
               <div className="flex items-center space-x-2 pb-4 border-b border-slate-800">
@@ -1455,7 +1494,7 @@ export default function Dashboard() {
                     {testingWebhook ? 'Testing...' : 'Test Webhook'}
                   </button>
                 </div>
-                
+
                 {/* Webhook Delivery Preference Toggle */}
                 <div className="bg-slate-950/40 border border-slate-850 p-3 rounded-xl flex items-center justify-between">
                   <div className="space-y-0.5">
@@ -1475,7 +1514,7 @@ export default function Dashboard() {
                     <span className="ms-2 text-xs font-semibold text-slate-300">Digest</span>
                   </label>
                 </div>
-                
+
                 <p className="text-xs text-slate-500">Sends alerts when new approved jobs are synced to Notion.</p>
               </div>
 
@@ -1548,7 +1587,7 @@ export default function Dashboard() {
 
             </div>
           ) : (
-            
+
             /* Jobs List Cards Grid */
             <div className="flex-1 flex flex-col">
               {filteredJobs().length === 0 ? (
@@ -1562,17 +1601,16 @@ export default function Dashboard() {
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {filteredJobs().map((job, idx) => (
-                    
+
                     /* Job Card */
-                    <div 
+                    <div
                       key={job.job_url + idx}
-                      className={`relative bg-slate-900/30 backdrop-blur-md rounded-2xl p-5 border flex flex-col justify-between shadow-lg hover:shadow-2xl transition-all duration-300 group ${
-                        activeTab === 'approved' 
-                          ? 'border-emerald-500/20 hover:border-emerald-500/50 hover:bg-emerald-950/5' 
+                      className={`relative bg-slate-900/30 backdrop-blur-md rounded-2xl p-5 border flex flex-col justify-between shadow-lg hover:shadow-2xl transition-all duration-300 group ${activeTab === 'approved'
+                          ? 'border-emerald-500/20 hover:border-emerald-500/50 hover:bg-emerald-950/5'
                           : activeTab === 'rejected'
-                          ? 'border-rose-500/20 hover:border-rose-500/50 hover:bg-rose-950/5'
-                          : 'border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-950/5'
-                      }`}
+                            ? 'border-rose-500/20 hover:border-rose-500/50 hover:bg-rose-950/5'
+                            : 'border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-950/5'
+                        }`}
                     >
                       {/* Top Job Headers */}
                       <div>
@@ -1586,19 +1624,18 @@ export default function Dashboard() {
                             </div>
                             <p className="text-xs font-semibold text-slate-400 mt-0.5">{job.company_name}</p>
                           </div>
-                          
+
                           <div className="flex flex-col items-end space-y-1.5 shrink-0">
                             {/* Label Badge */}
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                              activeTab === 'approved'
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${activeTab === 'approved'
                                 ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
                                 : activeTab === 'rejected'
-                                ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
-                                : 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
-                            }`}>
+                                  ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
+                                  : 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
+                              }`}>
                               {job.strongest_label}
                             </span>
-                            
+
                             {/* Stale Badge */}
                             {job.stale && (
                               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-rose-950/80 text-rose-300 border border-rose-850 animate-pulse">
@@ -1667,11 +1704,10 @@ export default function Dashboard() {
                                 {job.confidence_score}%
                               </span>
                               <div className="w-20 bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full ${
-                                    job.confidence_score >= 90 ? 'bg-emerald-500' : job.confidence_score >= 70 ? 'bg-amber-500' : 'bg-rose-500'
-                                  }`} 
-                                  style={{ width: `${job.confidence_score}%` }} 
+                                <div
+                                  className={`h-full rounded-full ${job.confidence_score >= 90 ? 'bg-emerald-500' : job.confidence_score >= 70 ? 'bg-amber-500' : 'bg-rose-500'
+                                    }`}
+                                  style={{ width: `${job.confidence_score}%` }}
                                 />
                               </div>
                             </div>
@@ -1689,11 +1725,11 @@ export default function Dashboard() {
 
                       {/* Card Actions Bottom */}
                       <div className="mt-5 pt-3.5 border-t border-slate-850 flex items-center justify-between">
-                        
+
                         {/* URL click */}
-                        <a 
-                          href={job.job_url} 
-                          target="_blank" 
+                        <a
+                          href={job.job_url}
+                          target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link"
                         >
@@ -1716,13 +1752,12 @@ export default function Dashboard() {
                             <button
                               onClick={() => syncJob(job)}
                               disabled={job.synced || syncingJobUrl === job.job_url}
-                              className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all ${
-                                job.synced
+                              className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all ${job.synced
                                   ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-800/40 cursor-not-allowed'
                                   : syncingJobUrl === job.job_url
-                                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/10 border border-emerald-500/20 active:scale-95'
-                              }`}
+                                    ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/10 border border-emerald-500/20 active:scale-95'
+                                }`}
                             >
                               {job.synced ? (
                                 <>
@@ -1797,7 +1832,7 @@ export default function Dashboard() {
       {isModalOpen && selectedJob && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-4xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            
+
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
               <div className="flex items-center space-x-2">
@@ -1814,7 +1849,7 @@ export default function Dashboard() {
 
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-5 flex-1 select-text bg-slate-900">
-              
+
               {/* Job Title */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -1975,10 +2010,10 @@ export default function Dashboard() {
                   </label>
                   <CopyButton text={editDesc} />
                 </div>
-                
+
                 {/* Editor Container */}
                 <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950 flex flex-col focus-within:border-violet-600/70 transition-colors">
-                  
+
                   {/* Toolbar */}
                   <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-900 border-b border-slate-800">
                     <button
@@ -2000,7 +2035,7 @@ export default function Dashboard() {
                       <Redo className="w-4 h-4" />
                     </button>
                     <div className="w-px h-4 bg-slate-800 mx-1" />
-                    
+
                     <button
                       type="button"
                       onClick={() => handleToolbarClick('bold')}
@@ -2026,7 +2061,7 @@ export default function Dashboard() {
                       <Underline className="w-4 h-4" />
                     </button>
                     <div className="w-px h-4 bg-slate-800 mx-1" />
-                    
+
                     <button
                       type="button"
                       onClick={() => handleToolbarClick('bullet')}
@@ -2060,7 +2095,7 @@ export default function Dashboard() {
                       <Type className="w-4 h-4" />
                     </button>
                   </div>
-                  
+
                   {/* Textarea */}
                   <textarea
                     id="job-desc-textarea"
@@ -2071,7 +2106,7 @@ export default function Dashboard() {
                     onBlur={e => updateDescWithHistory(e.target.value)}
                     className="w-full bg-transparent px-4 py-3 text-sm text-slate-300 focus:outline-none resize-y placeholder-slate-700 min-h-[180px] leading-relaxed"
                   />
-                  
+
                   {/* Status Bar */}
                   <div className="px-4 py-1.5 bg-slate-900 border-t border-slate-800 text-[10px] text-slate-500 font-mono">
                     p
@@ -2091,7 +2126,7 @@ export default function Dashboard() {
                     Optional details and review payload
                   </span>
                 </button>
-                
+
                 {isPayloadExpanded && (
                   <div className="p-4 border-t border-slate-850 space-y-4 bg-slate-950/40 animate-in fade-in duration-200">
                     <div>
