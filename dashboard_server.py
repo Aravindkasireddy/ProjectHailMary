@@ -14,6 +14,7 @@ import requests
 from jobsearch_paths import workspace_root
 from jobsearch_webhook import effective_webhook_url, public_config_for_api
 from notion_sqlite_mirror import upsert_notion_job_report, ensure_notion_mirror_schema
+from services.resume_service import generate_resume
 
 # Load env variables from repo root
 WORKSPACE_DIR = str(workspace_root())
@@ -2036,6 +2037,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 }).encode('utf-8'))
             except Exception as e:
                 self.wfile.write(json.dumps({"success": False, "message": f"Gemini API tailoring failed: {str(e)}"}).encode('utf-8'))
+            return
+
+        # API: Generate tailored resume with GPT-4o
+        elif parsed_url.path == "/api/resume/generate":
+            jd = payload.get("jd", "").strip()
+            if not jd:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Missing 'jd' parameter in request body."}).encode('utf-8'))
+                return
+
+            result = generate_resume(jd)
+            if "error" in result:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": result["error"]}).encode('utf-8'))
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode('utf-8'))
             return
 
         else:
