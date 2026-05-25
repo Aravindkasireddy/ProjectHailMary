@@ -1165,10 +1165,10 @@ export default function Dashboard() {
         </section>
 
         {/* Toolbar & Filter Tabs */}
-        <section className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-3 rounded-2xl gap-4 shadow-xl">
+        <section className="flex flex-col bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-4 rounded-2xl gap-4 shadow-xl">
 
-          {/* Left: Navigation Tabs & Notion Buttons */}
-          <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
+          {/* Top Row: Navigation Tabs & Notion Buttons */}
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
             {/* Navigation Tabs */}
             <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/50 flex-wrap gap-1">
               <button
@@ -1231,7 +1231,7 @@ export default function Dashboard() {
             </div>
 
             {/* Notion Sync Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 self-start lg:self-auto">
               <button
                 type="button"
                 onClick={syncAllToNotion}
@@ -1265,9 +1265,9 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Search bar & Category filter */}
+          {/* Bottom Row: Search bar & Category filter */}
           {activeTab !== 'settings' && (
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 xl:max-w-3xl justify-end">
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 w-full justify-between border-t border-slate-800/40 pt-3 flex-wrap">
               {activeTab === 'approved' && (
                 <div className="relative shrink-0">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
