@@ -417,6 +417,12 @@ def load_all_jobs():
     approved_urls = set()
     synced_jobs = load_synced_jobs()
     
+    # Import salary extractor helper
+    try:
+        from salary_extractor import extract_salary
+    except ImportError:
+        extract_salary = None
+    
     # Load approved jobs
     if os.path.exists(APPROVED_PATH):
         try:
@@ -428,6 +434,17 @@ def load_all_jobs():
                     j['synced'] = url in synced_jobs
                     j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'approved_jobs.json'
+                    
+                    # Set default pipeline stage
+                    if 'pipeline_stage' not in j:
+                        j['pipeline_stage'] = 'Approved'
+                    
+                    # Retroactive salary parsing
+                    if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                        sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
+                        if sal_info:
+                            j.update(sal_info)
+                            
                     if url:
                         approved_urls.add(url)
                     jobs.append(j)
@@ -449,6 +466,16 @@ def load_all_jobs():
                     j['synced'] = url in synced_jobs
                     j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'active_candidate_jobs.json'
+                    
+                    # Set default pipeline stage
+                    if 'pipeline_stage' not in j:
+                        j['pipeline_stage'] = 'Unreviewed'
+                    
+                    # Retroactive salary parsing
+                    if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                        sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
+                        if sal_info:
+                            j.update(sal_info)
                     
                     # Fill in defaults if classify_and_save.py didn't write them
                     if 'apply_decision' not in j:
@@ -482,6 +509,17 @@ def load_all_jobs():
                     j['strongest_label'] = 'OutOfScope'
                     j['confidence_score'] = 100
                     j['rationale'] = f"Failed pre-screen regex checks. Red flags: {', '.join(j.get('red_flags', []))}"
+                    
+                    # Set default pipeline stage
+                    if 'pipeline_stage' not in j:
+                        j['pipeline_stage'] = 'Rejected'
+                    
+                    # Retroactive salary parsing
+                    if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                        sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
+                        if sal_info:
+                            j.update(sal_info)
+                            
                     jobs.append(j)
         except Exception as e:
             print(f"Error reading failed candidates: {e}")
@@ -643,6 +681,11 @@ def override_job_on_disk(updated_job):
         "cloud": updated_job.get("cloud", target_job.get("cloud", "Not specified")),
         "seniority": updated_job.get("seniority", target_job.get("seniority", "Not specified")),
         "source": updated_job.get("source", target_job.get("source", "Not specified")),
+        "pipeline_stage": updated_job.get("pipeline_stage", target_job.get("pipeline_stage", "Approved")),
+        "min_salary": updated_job.get("min_salary", target_job.get("min_salary")),
+        "max_salary": updated_job.get("max_salary", target_job.get("max_salary")),
+        "is_hourly": updated_job.get("is_hourly", target_job.get("is_hourly", False)),
+        "salary_text": updated_job.get("salary_text", target_job.get("salary_text")),
     })
 
     # If the user passed apply_decision_payload, use it. Otherwise, construct it.
@@ -738,6 +781,16 @@ def build_notion_properties(job):
             "date": {"start": datetime.utcnow().strftime("%Y-%m-%d")}
         }
     }
+    
+    # Sync optional pipeline and salary fields if defined
+    if job.get("pipeline_stage"):
+        props["Pipeline Stage"] = {
+            "select": {"name": job.get("pipeline_stage")}
+        }
+    if job.get("salary_text"):
+        props["Salary Range"] = {
+            "rich_text": [{"text": {"content": job.get("salary_text")}}]
+        }
 
     # Format Red Flags
     red_flags = job.get("red_flags", [])
@@ -1297,6 +1350,54 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"logs": log_lines}).encode('utf-8'))
             return
 
+        # API: Get salary insights
+        elif parsed_url.path == "/api/salary-insights":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            jobs = load_all_jobs()
+            approved_jobs = [j for j in jobs if j.get('status') == 'approved' and not j.get('archived')]
+            
+            yearly_salaries = []
+            hourly_salaries = []
+            
+            for j in approved_jobs:
+                min_s = j.get('min_salary')
+                max_s = j.get('max_salary')
+                is_h = j.get('is_hourly')
+                
+                if min_s is not None and max_s is not None:
+                    avg_s = (min_s + max_s) / 2.0
+                    if is_h:
+                        hourly_salaries.append(avg_s)
+                    else:
+                        yearly_salaries.append(avg_s)
+            
+            yearly_avg = sum(yearly_salaries) / len(yearly_salaries) if yearly_salaries else 0
+            yearly_min = min(yearly_salaries) if yearly_salaries else 0
+            yearly_max = max(yearly_salaries) if yearly_salaries else 0
+            
+            hourly_avg = sum(hourly_salaries) / len(hourly_salaries) if hourly_salaries else 0
+            hourly_min = min(hourly_salaries) if hourly_salaries else 0
+            hourly_max = max(hourly_salaries) if hourly_salaries else 0
+            
+            insights = {
+                "yearly_count": len(yearly_salaries),
+                "yearly_avg": yearly_avg,
+                "yearly_min": yearly_min,
+                "yearly_max": yearly_max,
+                "hourly_count": len(hourly_salaries),
+                "hourly_avg": hourly_avg,
+                "hourly_min": hourly_min,
+                "hourly_max": hourly_max,
+                "yearly_distribution": yearly_salaries,
+                "hourly_distribution": hourly_salaries
+            }
+            self.wfile.write(json.dumps(insights).encode('utf-8'))
+            return
+
         # Serve Frontend index.html
         elif parsed_url.path == "/" or parsed_url.path == "/index.html":
             self.send_response(200)
@@ -1402,6 +1503,131 @@ class DashboardHandler(BaseHTTPRequestHandler):
             
             success, msg = override_job_on_disk(payload)
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
+            return
+
+        # API: Update application pipeline stage
+        elif parsed_url.path == "/api/update-pipeline-stage":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            url = payload.get("job_url")
+            new_stage = payload.get("pipeline_stage")
+            if not url or not new_stage:
+                self.wfile.write(json.dumps({"success": False, "message": "Missing job_url or pipeline_stage"}).encode('utf-8'))
+                return
+                
+            approved = []
+            if os.path.exists(APPROVED_PATH):
+                try:
+                    with open(APPROVED_PATH, 'r') as f:
+                        approved = json.load(f)
+                except Exception:
+                    pass
+                    
+            active = []
+            if os.path.exists(ACTIVE_PATH):
+                try:
+                    with open(ACTIVE_PATH, 'r') as f:
+                        active = json.load(f)
+                except Exception:
+                    pass
+                    
+            failed = []
+            if os.path.exists(FAILED_PATH):
+                try:
+                    with open(FAILED_PATH, 'r') as f:
+                        failed = json.load(f)
+                except Exception:
+                    pass
+            
+            # Find and update job
+            target_job = None
+            found_list = None
+            
+            for j in approved:
+                if j.get("job_url") == url:
+                    target_job = j
+                    found_list = approved
+                    break
+            if not target_job:
+                for j in active:
+                    if j.get("job_url") == url:
+                        target_job = j
+                        found_list = active
+                        break
+            if not target_job:
+                for j in failed:
+                    if j.get("job_url") == url:
+                        target_job = j
+                        found_list = failed
+                        break
+                        
+            if not target_job:
+                self.wfile.write(json.dumps({"success": False, "message": "Job not found."}).encode('utf-8'))
+                return
+                
+            target_job["pipeline_stage"] = new_stage
+            
+            # Save back to JSON lists
+            try:
+                with open(APPROVED_PATH, 'w') as f:
+                    json.dump(approved, f, indent=2)
+                with open(ACTIVE_PATH, 'w') as f:
+                    json.dump(active, f, indent=2)
+                with open(FAILED_PATH, 'w') as f:
+                    json.dump(failed, f, indent=2)
+            except Exception as e:
+                self.wfile.write(json.dumps({"success": False, "message": f"Failed to save JSON updates: {str(e)}"}).encode('utf-8'))
+                return
+                
+            # Update SQLite mirror if synced
+            synced_jobs = load_synced_jobs()
+            page_id = None
+            db_id = os.getenv("NOTION_DATABASE_ID")
+            
+            if url in synced_jobs:
+                page_id = synced_jobs[url].get("page_id")
+                
+            if page_id:
+                try:
+                    from notion_sqlite_mirror import upsert_notion_job_report
+                    upsert_notion_job_report(target_job, page_id, db_id or "")
+                except Exception as e:
+                    print(f"Warning: Failed to update SQLite mirror: {e}")
+                    
+                # Attempt to sync back to Notion
+                token = os.getenv("NOTION_TOKEN")
+                if token and page_id:
+                    notion_url = f"https://api.notion.com/v1/pages/{page_id}"
+                    headers = {
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "Notion-Version": "2022-06-28"
+                    }
+                    notion_payload = {
+                        "properties": {
+                            "Pipeline Stage": {
+                                "select": {"name": new_stage}
+                            }
+                        }
+                    }
+                    try:
+                        r = requests.patch(notion_url, headers=headers, json=notion_payload, timeout=8)
+                        if r.status_code != 200:
+                            notion_payload_fallback = {
+                                "properties": {
+                                    "Pipeline Stage": {
+                                        "rich_text": [{"text": {"content": new_stage}}]
+                                    }
+                                }
+                            }
+                            requests.patch(notion_url, headers=headers, json=notion_payload_fallback, timeout=8)
+                    except Exception:
+                        pass
+                        
+            self.wfile.write(json.dumps({"success": True, "message": f"Pipeline stage updated to '{new_stage}'"}).encode('utf-8'))
             return
             
         # API: Sync job to Notion

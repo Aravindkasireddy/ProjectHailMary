@@ -65,6 +65,11 @@ interface Job {
   cloud?: string;
   seniority?: string;
   source?: string;
+  pipeline_stage?: string;
+  min_salary?: number;
+  max_salary?: number;
+  is_hourly?: boolean;
+  salary_text?: string;
 }
 
 interface AnalyticsData {
@@ -181,6 +186,22 @@ export default function Dashboard() {
   const [notionSyncLoading, setNotionSyncLoading] = useState(false);
   const [notionStatusSyncLoading, setNotionStatusSyncLoading] = useState(false);
 
+  // Custom States for Salary Insights and Kanban Board
+  const [salaryInsights, setSalaryInsights] = useState<{
+    yearly_count: number;
+    yearly_avg: number;
+    yearly_min: number;
+    yearly_max: number;
+    hourly_count: number;
+    hourly_avg: number;
+    hourly_min: number;
+    hourly_max: number;
+    yearly_distribution: number[];
+    hourly_distribution: number[];
+  } | null>(null);
+  const [salaryInsightsLoading, setSalaryInsightsLoading] = useState(false);
+  const [isKanbanView, setIsKanbanView] = useState(false);
+
   // Selection / Editing Modal States
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -294,6 +315,42 @@ export default function Dashboard() {
       showStatus('Failed to load policy config.', 'error');
     } finally {
       setPolicyLoading(false);
+    }
+  };
+
+  const fetchSalaryInsights = async () => {
+    setSalaryInsightsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/salary-insights`);
+      if (res.ok) {
+        const data = await res.json();
+        setSalaryInsights(data);
+      }
+    } catch {
+      showStatus('Failed to load salary insights.', 'error');
+    } finally {
+      setSalaryInsightsLoading(false);
+    }
+  };
+
+  const updatePipelineStage = async (jobUrl: string, newStage: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/update-pipeline-stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_url: jobUrl, pipeline_stage: newStage })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          showStatus(data.message, 'success');
+          setJobs(prev => prev.map(j => j.job_url === jobUrl ? { ...j, pipeline_stage: newStage } : j));
+        } else {
+          showStatus(data.message, 'error');
+        }
+      }
+    } catch {
+      showStatus('Failed to update pipeline stage.', 'error');
     }
   };
 
@@ -422,6 +479,7 @@ export default function Dashboard() {
     setSelectedRoleFilter('all');
     if (tab === 'analytics') {
       fetchAnalytics();
+      fetchSalaryInsights();
     } else if (tab === 'policy') {
       fetchPolicy();
     }
@@ -1560,6 +1618,85 @@ export default function Dashboard() {
                         </div>
                       </div>
 
+                      {/* Salary Analytics Insights */}
+                      <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-3xl shadow-xl space-y-6 lg:col-span-2">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                          <div className="flex items-center space-x-2">
+                            <Database className="w-5 h-5 text-indigo-400" />
+                            <h3 className="text-sm font-bold text-white">Sourced Salary & Compensation Metrics</h3>
+                          </div>
+                          <span className="text-[10px] text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full font-semibold">
+                            Salary Analytics
+                          </span>
+                        </div>
+
+                        {salaryInsightsLoading || !salaryInsights ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
+                            <RefreshCw className="w-8 h-8 text-violet-500 animate-spin mb-3" />
+                            <p className="text-xs font-semibold">Computing market salary trends...</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-300">
+                            
+                            {/* Salary Metric Stats */}
+                            <div className="space-y-4">
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Compensation Summary</h4>
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-2xl flex flex-col justify-between">
+                                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Average Annual Base</span>
+                                  <span className="text-xl font-extrabold text-white mt-1.5 font-mono">
+                                    {salaryInsights.yearly_avg > 0 ? `$${(salaryInsights.yearly_avg / 1000).toFixed(0)}k` : '$0'}
+                                  </span>
+                                  <span className="text-[9px] text-slate-500 mt-1">Based on {salaryInsights.yearly_count} salaried positions</span>
+                                </div>
+                                <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-2xl flex flex-col justify-between">
+                                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Salaried Range</span>
+                                  <span className="text-sm font-bold text-emerald-400 mt-2 font-mono truncate">
+                                    {salaryInsights.yearly_min > 0 ? `$${(salaryInsights.yearly_min / 1000).toFixed(0)}k - $${(salaryInsights.yearly_max / 1000).toFixed(0)}k` : 'N/A'}
+                                  </span>
+                                  <span className="text-[9px] text-slate-500 mt-1">Min/Max limits found</span>
+                                </div>
+                                <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-2xl flex flex-col justify-between">
+                                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Average Hourly Rate</span>
+                                  <span className="text-xl font-extrabold text-white mt-1.5 font-mono">
+                                    {salaryInsights.hourly_avg > 0 ? `$${salaryInsights.hourly_avg.toFixed(2)}/hr` : '$0'}
+                                  </span>
+                                  <span className="text-[9px] text-slate-500 mt-1">Based on {salaryInsights.hourly_count} hourly positions</span>
+                                </div>
+                                <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-2xl flex flex-col justify-between">
+                                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Hourly Range</span>
+                                  <span className="text-sm font-bold text-emerald-400 mt-2 font-mono truncate">
+                                    {salaryInsights.hourly_min > 0 ? `$${salaryInsights.hourly_min.toFixed(0)} - $${salaryInsights.hourly_max.toFixed(0)}/hr` : 'N/A'}
+                                  </span>
+                                  <span className="text-[9px] text-slate-500 mt-1">Min/Max hourly limits</span>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Salary Bands/insights detail */}
+                            <div className="space-y-4 bg-slate-950/40 border border-slate-850 p-5 rounded-2xl">
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Sourcing Intelligence</h4>
+                              <div className="space-y-3.5 text-xs">
+                                <div className="flex justify-between items-center py-2 border-b border-slate-900/60">
+                                  <span className="text-slate-400">Total Postings Checked</span>
+                                  <span className="font-bold text-white font-mono">{approvedJobs.length}</span>
+                                </div>
+                                <div className="flex justify-between items-center py-2 border-b border-slate-900/60">
+                                  <span className="text-slate-400">Postings with Salary Info</span>
+                                  <span className="font-bold text-violet-400 font-mono">
+                                    {salaryInsights.yearly_count + salaryInsights.hourly_count} ({approvedJobs.length > 0 ? (((salaryInsights.yearly_count + salaryInsights.hourly_count) / approvedJobs.length) * 100).toFixed(0) : 0}%)
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-500 leading-relaxed pt-2">
+                                  Market intelligence extracts salary bands directly from the scraped text descriptions using customized regular expressions. Rates below $500/hr are categorized as hourly wages, while larger rates are calculated as annual salaries.
+                                </p>
+                              </div>
+                            </div>
+                            
+                          </div>
+                        )}
+                      </div>
+
                     </div>
 
                   </div>
@@ -1845,6 +1982,33 @@ export default function Dashboard() {
 
             /* Jobs List Cards Grid */
             <div className="flex-1 flex flex-col space-y-4">
+              
+              {/* View toggle (List vs Kanban) */}
+              <div className="flex items-center justify-between border-b border-slate-900 pb-3">
+                <div className="flex items-center space-x-2">
+                  <Sliders className="w-4 h-4 text-violet-400" />
+                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                    {activeTab === 'approved' ? 'Approved Postings' : activeTab === 'rejected' ? 'Filtered Postings' : 'Pending Review'}
+                  </h2>
+                </div>
+                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-900">
+                  <button
+                    type="button"
+                    onClick={() => setIsKanbanView(false)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${!isKanbanView ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                    List View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsKanbanView(true)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${isKanbanView ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                    Kanban Board
+                  </button>
+                </div>
+              </div>
+
               {selectedSourceFilter && (
                 <div className="flex items-center space-x-2 bg-slate-900/60 border border-slate-800/80 rounded-xl px-3 py-1.5 w-fit">
                   <span className="text-xs text-slate-400">Active Filter:</span>
@@ -1866,6 +2030,62 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-500 max-w-sm mt-1">
                     {searchTerm ? 'No results matched your search term.' : 'Try running the sourcing agent to scrape jobs or override filter settings.'}
                   </p>
+                </div>
+              ) : isKanbanView ? (
+                /* Kanban Board Columns */
+                <div className="flex space-x-4 overflow-x-auto pb-4 custom-scrollbar items-start select-none">
+                  {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(stage => {
+                    const stageJobs = filteredJobs().filter(j => (j.pipeline_stage || 'Approved') === stage || (stage === 'Rejected' && (j.pipeline_stage === 'Rejected' || j.pipeline_stage === 'Closed')));
+                    return (
+                      <div key={stage} className="bg-slate-900/25 border border-slate-800/50 rounded-2xl p-4 w-72 shrink-0 flex flex-col max-h-[70vh] backdrop-blur-sm">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
+                          <span className="text-xs font-bold text-white uppercase tracking-wider">{stage}</span>
+                          <span className="text-xs font-semibold bg-slate-950 px-2 py-0.5 rounded-full text-slate-400 border border-slate-800">{stageJobs.length}</span>
+                        </div>
+                        <div className="space-y-3 overflow-y-auto flex-1 custom-scrollbar pr-1 min-h-[300px]">
+                          {stageJobs.map((job, idx) => (
+                            <div 
+                              key={job.job_url + idx}
+                              className="bg-slate-950/80 border border-slate-900 hover:border-violet-500/50 rounded-xl p-3.5 space-y-3 transition-colors hover:shadow-lg shadow-black/25 group cursor-pointer"
+                              onClick={() => openModal(job)}
+                            >
+                              <div className="flex justify-between items-start">
+                                <span className="text-[10px] font-bold text-violet-400 tracking-wider truncate max-w-[150px]">{job.company_name}</span>
+                                <span className="text-[10px] font-mono text-slate-500">{formatScrapedDate(job.scraped_at || '')}</span>
+                              </div>
+                              <h4 className="text-xs font-bold text-slate-200 line-clamp-2 leading-snug group-hover:text-white transition-colors">{job.job_title}</h4>
+                              
+                              {/* Salary Badge */}
+                              {job.salary_text && (
+                                <span className="inline-block text-[9px] font-semibold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/30">
+                                  {job.salary_text}
+                                </span>
+                              )}
+                              
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-900/60">
+                                <select
+                                  value={job.pipeline_stage || 'Approved'}
+                                  onClick={e => e.stopPropagation()}
+                                  onChange={e => updatePipelineStage(job.job_url, e.target.value)}
+                                  className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[9px] text-slate-300 focus:outline-none cursor-pointer"
+                                >
+                                  {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                  ))}
+                                </select>
+                                <span className="text-[9px] text-slate-500">{getJobSource(job.job_url)}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {stageJobs.length === 0 && (
+                            <div className="flex flex-col items-center justify-center py-12 text-center text-slate-600 border border-dashed border-slate-900/40 rounded-xl">
+                              <span className="text-[10px] font-semibold">Column Empty</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1915,7 +2135,7 @@ export default function Dashboard() {
                         </div>
 
                         {/* Location / Req ID details */}
-                        <div className="mt-3 grid grid-cols-3 gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40">
+                        <div className={`mt-3 grid ${job.salary_text ? 'grid-cols-4' : 'grid-cols-3'} gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40`}>
                           <div>
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Location</span>
@@ -1943,6 +2163,17 @@ export default function Dashboard() {
                               {job.scraped_at ? formatScrapedDate(job.scraped_at) : 'N/A'}
                             </span>
                           </div>
+                          {job.salary_text && (
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Salary Range</span>
+                                <CopyButton text={job.salary_text} />
+                              </div>
+                              <span className="mt-0.5 block truncate text-emerald-400 font-semibold" title={job.salary_text}>
+                                {job.salary_text}
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Red Flags warning if rejected */}
@@ -2007,6 +2238,19 @@ export default function Dashboard() {
                         </a>
 
                         <div className="flex items-center space-x-2">
+                          {/* Pipeline stage selector */}
+                          {activeTab === 'approved' && (
+                            <select
+                              value={job.pipeline_stage || 'Approved'}
+                              onChange={e => updatePipelineStage(job.job_url, e.target.value)}
+                              className="bg-slate-900 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-300 focus:outline-none cursor-pointer hover:border-slate-700 transition-colors"
+                            >
+                              {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
+                                <option key={s} value={s}>{s}</option>
+                              ))}
+                            </select>
+                          )}
+
                           {/* Inspect details button */}
                           <button
                             onClick={() => openModal(job)}

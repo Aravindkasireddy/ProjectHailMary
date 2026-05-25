@@ -906,6 +906,10 @@ def main():
                 }
                 if "requirement_id" in matched:
                     cls["req_id_override"] = matched["requirement_id"]
+                # Copy pipeline & salary fields to prevent wiping them out during runs
+                for key in ["pipeline_stage", "min_salary", "max_salary", "is_hourly", "salary_text"]:
+                    if key in matched:
+                        job[key] = matched[key]
             elif h in failed_hashes:
                 print(f"  Cache HIT (Failed) for '{job.get('job_title')}'. Reusing rejection.", flush=True)
                 matched = failed_hashes[h]
@@ -917,6 +921,10 @@ def main():
                     "rationale": matched.get("rationale", "Previously rejected cache hit."),
                     "payload": matched.get("apply_decision_payload", {})
                 }
+                # Copy pipeline & salary fields for failed cache hits too
+                for key in ["pipeline_stage", "min_salary", "max_salary", "is_hourly", "salary_text"]:
+                    if key in matched:
+                        job[key] = matched[key]
             
         if not cls:
             # Try LLM-driven classification if API key is present

@@ -2238,6 +2238,18 @@ def main(dry_run=False):
         if u:
             final_map[normalize_job_url(u)] = j
     out_list = list(final_map.values())
+    
+    # Extract salary data
+    try:
+        from salary_extractor import extract_salary
+        for j in out_list:
+            if not j.get("salary_text"):
+                sal_info = extract_salary(j.get("job_description", ""), j.get("job_title", ""))
+                if sal_info:
+                    j.update(sal_info)
+    except Exception as e:
+        log(f"Warning: Failed to extract salary data: {e}")
+
     SCRAPED_OUTPUT.write_text(json.dumps(out_list, indent=2), encoding="utf-8")
 
     log(f"Completed search and scrape. New/changed rows this run: {len(scraped_jobs)}. Total in {SCRAPED_OUTPUT.name}: {len(out_list)}")
