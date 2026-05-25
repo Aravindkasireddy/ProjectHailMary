@@ -27,7 +27,8 @@ import {
   List,
   ListOrdered,
   Link2,
-  Type
+  Type,
+  FileText
 } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -172,7 +173,17 @@ export default function Dashboard() {
   });
   const [notionConnection, setNotionConnection] = useState({ connected: false, message: 'Checking...', dbName: '' });
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy'>('approved');
+  const [activeTab, setActiveTab] = useState<'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy' | 'resume'>('approved');
+  const [resume, setResume] = useState<string>('');
+  const [resumeLoading, setResumeLoading] = useState<boolean>(false);
+  const [resumeSaving, setResumeSaving] = useState<boolean>(false);
+  
+  // Custom states for AI tailoring
+  const [tailoringLoading, setTailoringLoading] = useState<boolean>(false);
+  const [tailoredCoverLetter, setTailoredCoverLetter] = useState<string>('');
+  const [tailoredResumeBullets, setTailoredResumeBullets] = useState<Array<{original_bullet: string, suggested_bullet: string, rationale: string}>>([]);
+  const [isTailorModalOpen, setIsTailorModalOpen] = useState<boolean>(false);
+  const [tailoredJobUrl, setTailoredJobUrl] = useState<string>('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
   const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
@@ -333,6 +344,80 @@ export default function Dashboard() {
     }
   };
 
+  const fetchResume = async () => {
+    setResumeLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/resume`);
+      if (res.ok) {
+        const data = await res.json();
+        setResume(data.resume || '');
+      }
+    } catch {
+      showStatus('Failed to load base resume.', 'error');
+    } finally {
+      setResumeLoading(false);
+    }
+  };
+
+  const saveResume = async () => {
+    setResumeSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resume }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          showStatus(data.message, 'success');
+        } else {
+          showStatus(data.message || 'Failed to save resume.', 'error');
+        }
+      } else {
+        showStatus('Failed to save resume.', 'error');
+      }
+    } catch {
+      showStatus('Error saving resume.', 'error');
+    } finally {
+      setResumeSaving(false);
+    }
+  };
+
+  const generateTailoring = async (jobUrl: string) => {
+    setTailoringLoading(true);
+    setTailoredJobUrl(jobUrl);
+    setTailoredCoverLetter('');
+    setTailoredResumeBullets([]);
+    setIsTailorModalOpen(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/generate-tailoring`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_url: jobUrl }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setTailoredCoverLetter(data.cover_letter || '');
+          setTailoredResumeBullets(data.resume_suggestions || []);
+          showStatus('Tailored materials generated successfully!', 'success');
+        } else {
+          showStatus(data.message || 'Failed to generate tailored materials.', 'error');
+          setIsTailorModalOpen(false);
+        }
+      } else {
+        showStatus('Failed to generate tailored materials.', 'error');
+        setIsTailorModalOpen(false);
+      }
+    } catch {
+      showStatus('Error communicating with backend server.', 'error');
+      setIsTailorModalOpen(false);
+    } finally {
+      setTailoringLoading(false);
+    }
+  };
+
   const updatePipelineStage = async (jobUrl: string, newStage: string) => {
     try {
       const res = await fetch(`${API_BASE}/api/update-pipeline-stage`, {
@@ -474,7 +559,7 @@ export default function Dashboard() {
   };
 
   // Tab change handler replacing side-effect useEffect
-  const handleTabChange = (tab: 'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy') => {
+  const handleTabChange = (tab: 'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy' | 'resume') => {
     setActiveTab(tab);
     setSelectedRoleFilter('all');
     if (tab === 'analytics') {
@@ -482,6 +567,8 @@ export default function Dashboard() {
       fetchSalaryInsights();
     } else if (tab === 'policy') {
       fetchPolicy();
+    } else if (tab === 'resume') {
+      fetchResume();
     }
   };
 
@@ -1217,6 +1304,16 @@ export default function Dashboard() {
               >
                 <Shield className="w-3.5 h-3.5 mr-1" />
                 Classifier Policy
+              </button>
+              <button
+                onClick={() => handleTabChange('resume')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'resume'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                <FileText className="w-3.5 h-3.5 mr-1" />
+                Base Resume
               </button>
               <button
                 onClick={() => handleTabChange('settings')}
@@ -1978,6 +2075,43 @@ export default function Dashboard() {
               </div>
 
             </div>
+          ) : activeTab === 'resume' ? (
+            <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-4xl shadow-xl flex flex-col h-[70vh]">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                <div className="flex items-center space-x-2">
+                  <FileText className="w-5 h-5 text-violet-400" />
+                  <h2 className="text-lg font-bold text-white">Master Resume (Markdown)</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={saveResume}
+                  disabled={resumeSaving}
+                  className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <Check className="w-3.5 h-3.5 mr-1.5" />
+                  {resumeSaving ? 'Saving...' : 'Save Resume'}
+                </button>
+              </div>
+
+              {resumeLoading ? (
+                <div className="flex-1 flex flex-col items-center justify-center space-y-3">
+                  <RefreshCw className="w-8 h-8 text-violet-500 animate-spin" />
+                  <p className="text-sm text-slate-400">Loading master resume...</p>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col space-y-2">
+                  <p className="text-xs text-slate-400">
+                    This Markdown document is your base resume. The AI Tailor uses this document to align your bullets and experience with approved job descriptions.
+                  </p>
+                  <textarea
+                    value={resume}
+                    onChange={e => setResume(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm font-mono text-slate-200 focus:outline-none focus:border-violet-600/70 shadow-inner resize-none h-[400px]"
+                    placeholder="# Master Resume..."
+                  />
+                </div>
+              )}
+            </div>
           ) : (
 
             /* Jobs List Cards Grid */
@@ -2238,7 +2372,16 @@ export default function Dashboard() {
                         </a>
 
                         <div className="flex items-center space-x-2">
-                          {/* Pipeline stage selector */}
+                          {activeTab === 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() => generateTailoring(job.job_url)}
+                              className="p-1.5 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 hover:text-emerald-300 border border-emerald-800/40 rounded-xl transition-all"
+                              title="AI Tailor Application"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          )}
                           {activeTab === 'approved' && (
                             <select
                               value={job.pipeline_stage || 'Approved'}
@@ -2787,7 +2930,20 @@ export default function Dashboard() {
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-slate-800 flex justify-end space-x-3 bg-slate-950/50">
+            <div className="px-6 py-4 border-t border-slate-800 flex justify-end items-center space-x-3 bg-slate-950/50">
+              {selectedJob.apply_decision === 'APPLY' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    generateTailoring(selectedJob.job_url);
+                  }}
+                  className="mr-auto inline-flex items-center px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold border border-emerald-500/20 active:scale-95 shadow-md transition-all"
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  AI Tailor Application
+                </button>
+              )}
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition-all"
@@ -2800,6 +2956,135 @@ export default function Dashboard() {
               >
                 <Check className="w-4 h-4 mr-2" />
                 Apply Override Changes
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* AI Tailoring Drawer/Modal */}
+      {isTailorModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+              <div className="flex items-center space-x-2">
+                <FileText className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <h3 className="text-base font-bold text-white">AI Application Tailoring</h3>
+                  <p className="text-xs text-slate-400">Customized using gemini-2.5-flash</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTailorModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-xs font-bold px-2.5"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-slate-900 text-slate-200">
+              {tailoringLoading ? (
+                <div className="flex flex-col items-center justify-center py-20 space-y-4">
+                  <RefreshCw className="w-10 h-10 text-emerald-500 animate-spin" />
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-semibold text-white">Generating tailored application materials...</p>
+                    <p className="text-xs text-slate-500">Retrieving job postings, evaluating resume relevance, and executing Gemini model prompts.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+                  
+                  {/* Left Column: Cover Letter */}
+                  <div className="flex flex-col space-y-3 bg-slate-950/30 p-5 rounded-2xl border border-slate-850">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                      <h4 className="text-sm font-bold text-white uppercase tracking-wider">Tailored Cover Letter</h4>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(tailoredCoverLetter);
+                          showStatus('Cover letter copied to clipboard!', 'success');
+                        }}
+                        className="inline-flex items-center px-3 py-1.5 bg-slate-850 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-800 transition-colors"
+                      >
+                        <Copy className="w-3.5 h-3.5 mr-1.5" />
+                        Copy Letter
+                      </button>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={tailoredCoverLetter}
+                      className="flex-1 min-h-[350px] lg:min-h-[450px] bg-slate-950/80 border border-slate-850 rounded-xl p-4 text-xs font-mono text-slate-300 leading-relaxed focus:outline-none resize-none"
+                    />
+                  </div>
+
+                  {/* Right Column: Resume Bullet Revisions */}
+                  <div className="flex flex-col space-y-3 bg-slate-950/30 p-5 rounded-2xl border border-slate-850">
+                    <div className="border-b border-slate-800 pb-2.5">
+                      <h4 className="text-sm font-bold text-white uppercase tracking-wider">Resume Bullet Suggestions</h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Adapt your resume with these tailored bullet points</p>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-4 max-h-[350px] lg:max-h-[450px] pr-1">
+                      {tailoredResumeBullets.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-500 py-10">
+                          <p className="text-xs">No bullet points require adaptation for this role.</p>
+                        </div>
+                      ) : (
+                        tailoredResumeBullets.map((s, idx) => (
+                          <div key={idx} className="bg-slate-950/40 border border-slate-850 rounded-xl p-3.5 space-y-3 shadow-sm">
+                            {/* Original bullet */}
+                            <div>
+                              <span className="text-[9px] font-bold text-rose-400/80 uppercase tracking-wide block">Original</span>
+                              <p className="text-[11px] text-slate-400 line-through mt-0.5 leading-relaxed">{s.original_bullet}</p>
+                            </div>
+                            
+                            {/* Suggested bullet */}
+                            <div className="border-t border-slate-850/60 pt-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wide">Suggested Edit</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(s.suggested_bullet);
+                                    showStatus(`Suggested bullet ${idx + 1} copied!`, 'success');
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-all"
+                                  title="Copy Bullet"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </button>
+                              </div>
+                              <p className="text-xs text-emerald-300/90 font-medium mt-0.5 leading-relaxed">{s.suggested_bullet}</p>
+                            </div>
+
+                            {/* Rationale */}
+                            <div className="bg-slate-900/50 p-2.5 rounded-lg text-[10px] text-slate-400 leading-relaxed border border-slate-850/40">
+                              <span className="font-bold text-slate-500 uppercase text-[9px] block mb-0.5">Why this change?</span>
+                              {s.rationale}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+              )}
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-slate-800 flex justify-end bg-slate-950/50">
+              <button
+                type="button"
+                onClick={() => setIsTailorModalOpen(false)}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all"
+              >
+                Close Drawer
               </button>
             </div>
 

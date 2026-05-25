@@ -1398,6 +1398,55 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(insights).encode('utf-8'))
             return
 
+        # API: Get base resume
+        elif parsed_url.path == "/api/resume":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            data_dir = os.path.join(WORKSPACE_DIR, "data")
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+            resume_path = os.path.join(data_dir, "base_resume.md")
+            
+            content = ""
+            if os.path.exists(resume_path):
+                try:
+                    with open(resume_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as e:
+                    content = f"Error reading resume: {str(e)}"
+            else:
+                # Default template if it doesn't exist
+                content = (
+                    "# Master Resume\n\n"
+                    "**Name:** Your Name\n"
+                    "**Email:** email@example.com | **LinkedIn:** linkedin.com/in/username\n\n"
+                    "## Professional Summary\n"
+                    "Experienced engineer specializing in cloud automation, SRE, and DevOps practices.\n\n"
+                    "## Core Skills\n"
+                    "- Python, Bash, Go\n"
+                    "- AWS, GCP, Kubernetes, Terraform\n"
+                    "- CI/CD, Git, Linux Administration\n\n"
+                    "## Experience\n"
+                    "### Senior Platform Engineer | Company Name (2022 - Present)\n"
+                    "- Designed and implemented scalable CI/CD pipelines reducing deployment times by 40%.\n"
+                    "- Configured Kubernetes clusters and automated infrastructure provisioning using Terraform.\n"
+                    "- Established monitoring and alerting frameworks for high-availability cloud services.\n\n"
+                    "### DevOps Engineer | Company Name (2020 - 2022)\n"
+                    "- Automated configuration management and software provisioning using Ansible.\n"
+                    "- Managed AWS cloud resources and optimized cost structure to save 15% annually.\n"
+                )
+                try:
+                    with open(resume_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                except Exception:
+                    pass
+                    
+            self.wfile.write(json.dumps({"resume": content}).encode('utf-8'))
+            return
+
         # Serve Frontend index.html
         elif parsed_url.path == "/" or parsed_url.path == "/index.html":
             self.send_response(200)
@@ -1863,7 +1912,132 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 msg += f" (Encountered {errors} network check warnings)."
             self.wfile.write(json.dumps({"success": True, "message": msg}).encode('utf-8'))
             return
+
+        # API: Save base resume
+        elif parsed_url.path == "/api/resume":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
             
+            resume_content = payload.get("resume", "")
+            data_dir = os.path.join(WORKSPACE_DIR, "data")
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+            resume_path = os.path.join(data_dir, "base_resume.md")
+            
+            try:
+                with open(resume_path, "w", encoding="utf-8") as f:
+                    f.write(resume_content)
+                self.wfile.write(json.dumps({"success": True, "message": "Base resume saved successfully!"}).encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({"success": False, "message": f"Failed to save resume: {str(e)}"}).encode('utf-8'))
+            return
+
+        # API: Generate tailored resume edits and cover letter using Gemini
+        elif parsed_url.path == "/api/generate-tailoring":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            job_url = payload.get("job_url", "")
+            if not job_url:
+                self.wfile.write(json.dumps({"success": False, "message": "Missing job_url in payload"}).encode('utf-8'))
+                return
+            
+            # Simple local URL normalizer
+            def _norm(u):
+                if not u:
+                    return ""
+                try:
+                    p = urllib.parse.urlparse(u)
+                    nl = p.netloc.lower()
+                    if nl.startswith("www."):
+                        nl = nl[4:]
+                    pth = p.path.rstrip('/')
+                    return f"{nl}{pth}"
+                except Exception:
+                    return u
+            
+            jobs = load_all_jobs()
+            target_job = None
+            norm_target = _norm(job_url)
+            for j in jobs:
+                if _norm(j.get("job_url", "")) == norm_target:
+                    target_job = j
+                    break
+                    
+            if not target_job:
+                self.wfile.write(json.dumps({"success": False, "message": "Job posting not found in local database."}).encode('utf-8'))
+                return
+                
+            resume_path = os.path.join(WORKSPACE_DIR, "data", "base_resume.md")
+            base_resume = ""
+            if os.path.exists(resume_path):
+                try:
+                    with open(resume_path, "r", encoding="utf-8") as f:
+                        base_resume = f.read()
+                except Exception:
+                    pass
+                    
+            if not base_resume:
+                self.wfile.write(json.dumps({"success": False, "message": "Base resume is empty. Please set your base resume in the 'Base Resume' tab first."}).encode('utf-8'))
+                return
+                
+            import google.generativeai as genai
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                self.wfile.write(json.dumps({"success": False, "message": "GEMINI_API_KEY environment variable not set in .env."}).encode('utf-8'))
+                return
+                
+            system_instruction = (
+                "You are an expert technical resume writer and career coach specializing in SRE, DevOps, and Platform Engineering.\n"
+                "Your task is to tailor a candidate's resume and draft a compelling cover letter for a specific job description.\n"
+                "You must return a JSON response with the following keys:\n"
+                "{\n"
+                "  \"cover_letter\": \"<markdown formatted cover letter text, including placeholders or direct details matching the company>\",\n"
+                "  \"resume_suggestions\": [\n"
+                "    {\n"
+                "      \"original_bullet\": \"<the exact bullet point from the base resume that you are proposing to change>\",\n"
+                "      \"suggested_bullet\": \"<the rewritten, tailored version of that bullet point>\",\n"
+                "      \"rationale\": \"<brief explanation of why this change fits the job description and what keywords/achievements it highlights>\"\n"
+                "    }\n"
+                "  ]\n"
+                "}\n"
+                "Guidelines:\n"
+                "- Align the cover letter closely with the requirements, tone, and technologies mentioned in the job description.\n"
+                "- The cover letter should be professional, concise (3-4 paragraphs), and formatted in Markdown.\n"
+                "- Select 3-5 high-impact bullets from the base resume that correspond most directly to requirements in the job description, and rewrite them to highlight matching skills (e.g. AWS, Kubernetes, Terraform, CI/CD tools) and quantify results if possible.\n"
+                "- Do not hallucinate credentials or experiences the candidate does not have in the base resume; only adapt existing statements to align terminology and context."
+            )
+            
+            user_prompt = (
+                f"=== JOB TITLE ===\n{target_job.get('job_title')}\n\n"
+                f"=== COMPANY ===\n{target_job.get('company_name')}\n\n"
+                f"=== JOB DESCRIPTION ===\n{target_job.get('job_description')}\n\n"
+                f"=== BASE RESUME ===\n{base_resume}\n"
+            )
+            
+            try:
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel(
+                    model_name="gemini-2.5-flash",
+                    generation_config={"response_mime_type": "application/json"},
+                    system_instruction=system_instruction
+                )
+                response = model.generate_content(user_prompt)
+                result = json.loads(response.text)
+                
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "cover_letter": result.get("cover_letter", ""),
+                    "resume_suggestions": result.get("resume_suggestions", [])
+                }).encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({"success": False, "message": f"Gemini API tailoring failed: {str(e)}"}).encode('utf-8'))
+            return
+
         else:
             self.send_response(404)
             self.end_headers()

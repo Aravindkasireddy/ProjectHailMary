@@ -15,18 +15,62 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, quote_plus, parse_qs
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
-
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    # Chrome on Windows/Mac/Linux
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    # Safari on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+    # Firefox on Windows/Mac/Linux
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    # Edge on Windows/Mac
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
 ]
 
 def get_random_user_agent():
     return random.choice(USER_AGENTS)
+
+def get_random_proxy():
+    try:
+        from jobsearch_paths import workspace_root
+        config_path = workspace_root() / "config.json"
+        if config_path.exists():
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            proxies = cfg.get("proxies", [])
+            if proxies:
+                return random.choice(proxies)
+    except Exception:
+        pass
+    return None
+
+def get_playwright_proxy(proxy_str):
+    if not proxy_str:
+        return None
+    try:
+        if not proxy_str.startswith("http://") and not proxy_str.startswith("https://"):
+            proxy_str = "http://" + proxy_str
+        parsed = urlparse(proxy_str)
+        server = f"{parsed.scheme}://{parsed.hostname}"
+        if parsed.port:
+            server += f":{parsed.port}"
+        res = {"server": server}
+        if parsed.username:
+            res["username"] = parsed.username
+        if parsed.password:
+            res["password"] = parsed.password
+        return res
+    except Exception:
+        return None
+
 
 def compute_description_hash(description):
     if not description:
@@ -199,18 +243,31 @@ log = _setup_run_logging().info
 
 
 def http_get(url, headers=None, timeout=10, attempts=3):
-    """GET with simple exponential backoff on connection errors."""
+    """GET with simple exponential backoff on connection errors, proxy and User-Agent rotation."""
     last_exc = None
-    h = headers or {}
     for i in range(attempts):
+        h = (headers or {}).copy()
+        if "User-Agent" not in h:
+            h["User-Agent"] = get_random_user_agent()
+        
+        proxy_str = get_random_proxy()
+        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+        if proxy_str:
+            log(f"Routing http_get through proxy: {proxy_str} (attempt {i+1})")
         try:
-            return requests.get(url, headers=h, timeout=timeout)
+            return requests.get(url, headers=h, proxies=proxies, timeout=timeout)
         except (requests.RequestException, OSError) as e:
             last_exc = e
             time.sleep(min(2 ** i, 8))
     if last_exc:
         raise last_exc
-    return requests.get(url, headers=h, timeout=timeout)
+    h = (headers or {}).copy()
+    if "User-Agent" not in h:
+        h["User-Agent"] = get_random_user_agent()
+    proxy_str = get_random_proxy()
+    proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+    return requests.get(url, headers=h, proxies=proxies, timeout=timeout)
+
 
 def clean_text(html_content):
     if not html_content:
@@ -230,7 +287,14 @@ def fetch_with_playwright(url):
             # Randomized pre-navigation delay (1-3s)
             time.sleep(random.uniform(1.0, 3.0))
             with sync_playwright() as p:
-                browser = p.webkit.launch(headless=True)
+                launch_kwargs = {"headless": True}
+                proxy_str = get_random_proxy()
+                proxy_obj = get_playwright_proxy(proxy_str)
+                if proxy_obj:
+                    launch_kwargs["proxy"] = proxy_obj
+                    log(f"Routing Playwright attempt {attempt} through proxy: {proxy_str}")
+                
+                browser = p.webkit.launch(**launch_kwargs)
                 context = browser.new_context(
                     user_agent=get_random_user_agent()
                 )
@@ -247,6 +311,7 @@ def fetch_with_playwright(url):
             time.sleep(min(2 ** attempt, 8))
     print(f"Playwright WebKit error for {url}: {last_err}", flush=True)
     return None
+
 
 
 def scrape_weworkremotely(url):
@@ -1110,6 +1175,8 @@ Conform exactly to this structure:
 
 
 def scrape_single_url(href, api_key=None):
+    # Introduce randomized rate throttling delay (1.5 to 4.0 seconds)
+    time.sleep(random.uniform(1.5, 4.0))
     domain = urlparse(href).netloc.lower()
     job_data = None
     try:
