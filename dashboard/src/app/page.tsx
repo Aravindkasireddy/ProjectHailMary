@@ -174,6 +174,13 @@ export default function Dashboard() {
   const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
   const [showActiveOnly, setShowActiveOnly] = useState(true);
 
+  // Custom States for Advanced Sourcing, Notion Sync, and Live Logs Console
+  const [selectedSourceFilter, setSelectedSourceFilter] = useState<string | null>(null);
+  const [scraperLogs, setScraperLogs] = useState<string[]>([]);
+  const [isLogsExpanded, setIsLogsExpanded] = useState(false);
+  const [notionSyncLoading, setNotionSyncLoading] = useState(false);
+  const [notionStatusSyncLoading, setNotionStatusSyncLoading] = useState(false);
+
   // Selection / Editing Modal States
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -289,6 +296,71 @@ export default function Dashboard() {
       setPolicyLoading(false);
     }
   };
+
+  // Sync approved, unsynced jobs to Notion in bulk
+  const syncAllToNotion = async () => {
+    setNotionSyncLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sync-notion`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showStatus(data.message, 'success');
+        fetchData();
+        fetchAnalytics();
+      } else {
+        showStatus(data.message || 'Batch Notion Sync failed.', 'error');
+      }
+    } catch {
+      showStatus('Failed to connect to backend for Notion sync.', 'error');
+    } finally {
+      setNotionSyncLoading(false);
+    }
+  };
+
+  // Sync statuses from Notion back to local SQLite/JSON databases
+  const syncStatusFromNotion = async () => {
+    setNotionStatusSyncLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sync-notion-status`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showStatus(data.message, 'success');
+        fetchData();
+        fetchAnalytics();
+      } else {
+        showStatus(data.message || 'Two-way Notion status sync failed.', 'error');
+      }
+    } catch {
+      showStatus('Failed to connect to backend for status check.', 'error');
+    } finally {
+      setNotionStatusSyncLoading(false);
+    }
+  };
+
+  // Poll scraper console logs when logs drawer is expanded
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    const fetchLogs = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/logs`);
+        if (res.ok) {
+          const data = await res.json();
+          setScraperLogs(data.logs || []);
+        }
+      } catch (err) {
+        console.error('Error fetching logs:', err);
+      }
+    };
+
+    if (isLogsExpanded) {
+      fetchLogs();
+      interval = setInterval(fetchLogs, 3000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isLogsExpanded]);
 
   const savePolicyConfig = async (updatedPolicy: PolicyConfig) => {
     try {
@@ -749,12 +821,33 @@ export default function Dashboard() {
   const rejectedJobs = jobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0)));
   const pendingJobs = jobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
 
+  const getJobSource = (url: string) => {
+    if (!url) return 'Other';
+    const lUrl = url.toLowerCase();
+    if (lUrl.includes('greenhouse.io')) return 'Greenhouse';
+    if (lUrl.includes('lever.co')) return 'Lever';
+    if (lUrl.includes('myworkdayjobs.com')) return 'Workday';
+    if (lUrl.includes('ashbyhq.com')) return 'Ashby';
+    if (lUrl.includes('workable.com')) return 'Workable';
+    if (lUrl.includes('smartrecruiters.com')) return 'SmartRecruiters';
+    if (lUrl.includes('weworkremotely.com')) return 'We Work Remotely';
+    if (lUrl.includes('remote.co')) return 'Remote.co';
+    if (lUrl.includes('linkedin.com')) return 'LinkedIn';
+    if (lUrl.includes('workatastartup.com') || lUrl.includes('ycombinator.com')) return 'Y Combinator';
+    return 'Other';
+  };
+
   const filteredJobs = () => {
     let list = activeTab === 'approved' ? approvedJobs : activeTab === 'rejected' ? rejectedJobs : pendingJobs;
 
     // Filter out stale/closed jobs if showActiveOnly is enabled
     if (activeTab === 'approved' && showActiveOnly) {
       list = list.filter(j => !j.stale);
+    }
+
+    // Filter by source if selected
+    if (selectedSourceFilter) {
+      list = list.filter(j => getJobSource(j.job_url) === selectedSourceFilter);
     }
 
     // Filter approved jobs by role category if selected
@@ -1014,72 +1107,109 @@ export default function Dashboard() {
         </section>
 
         {/* Toolbar & Filter Tabs */}
-        <section className="flex flex-col md:flex-row items-stretch md:items-center justify-between bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-3 rounded-2xl gap-4 shadow-xl">
+        <section className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-3 rounded-2xl gap-4 shadow-xl">
 
-          {/* Navigation Tabs */}
-          <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/50 flex-wrap gap-1">
-            <button
-              onClick={() => handleTabChange('approved')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'approved'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+          {/* Left: Navigation Tabs & Notion Buttons */}
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
+            {/* Navigation Tabs */}
+            <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/50 flex-wrap gap-1">
+              <button
+                onClick={() => handleTabChange('approved')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'approved'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                Approved ({approvedJobs.length})
+              </button>
+              <button
+                onClick={() => handleTabChange('pending')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'pending'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                Unreviewed ({pendingJobs.length})
+              </button>
+              <button
+                onClick={() => handleTabChange('rejected')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'rejected'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                Filtered ({rejectedJobs.length})
+              </button>
+              <button
+                onClick={() => handleTabChange('analytics')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'analytics'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5 mr-1" />
+                Analytics
+              </button>
+              <button
+                onClick={() => handleTabChange('policy')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'policy'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                <Shield className="w-3.5 h-3.5 mr-1" />
+                Classifier Policy
+              </button>
+              <button
+                onClick={() => handleTabChange('settings')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'settings'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                <SettingsIcon className="w-3.5 h-3.5 mr-1" />
+                Settings
+              </button>
+            </div>
+
+            {/* Notion Sync Actions */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={syncAllToNotion}
+                disabled={notionSyncLoading || !notionConnection.connected}
+                className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
+                  notionSyncLoading
+                    ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
+                    : !notionConnection.connected
+                    ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 border-violet-500/20 text-white shadow-md shadow-violet-500/10'
                 }`}
-            >
-              Approved ({approvedJobs.length})
-            </button>
-            <button
-              onClick={() => handleTabChange('pending')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'pending'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+              >
+                <Database className={`w-3.5 h-3.5 mr-1.5 ${notionSyncLoading ? 'animate-spin' : ''}`} />
+                {notionSyncLoading ? 'Syncing...' : 'Sync to Notion'}
+              </button>
+              <button
+                type="button"
+                onClick={syncStatusFromNotion}
+                disabled={notionStatusSyncLoading || !notionConnection.connected}
+                className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
+                  notionStatusSyncLoading
+                    ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
+                    : !notionConnection.connected
+                    ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
+                    : 'bg-slate-900/90 hover:bg-slate-800 border-slate-700 hover:border-slate-600 text-slate-200'
                 }`}
-            >
-              Unreviewed ({pendingJobs.length})
-            </button>
-            <button
-              onClick={() => handleTabChange('rejected')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'rejected'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              Filtered ({rejectedJobs.length})
-            </button>
-            <button
-              onClick={() => handleTabChange('analytics')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'analytics'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5 mr-1" />
-              Analytics
-            </button>
-            <button
-              onClick={() => handleTabChange('policy')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'policy'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <Shield className="w-3.5 h-3.5 mr-1" />
-              Classifier Policy
-            </button>
-            <button
-              onClick={() => handleTabChange('settings')}
-              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'settings'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-                }`}
-            >
-              <SettingsIcon className="w-3.5 h-3.5 mr-1" />
-              Settings
-            </button>
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${notionStatusSyncLoading ? 'animate-spin' : ''}`} />
+                {notionStatusSyncLoading ? 'Pulling...' : 'Pull Notion Status'}
+              </button>
+            </div>
           </div>
 
           {/* Search bar & Category filter */}
           {activeTab !== 'settings' && (
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 md:max-w-2xl">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 xl:max-w-3xl justify-end">
               {activeTab === 'approved' && (
                 <div className="relative shrink-0">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -1308,7 +1438,14 @@ export default function Dashboard() {
                               const pctOfTotal = analyticsData.total_sourced > 0 ? (count / analyticsData.total_sourced * 100).toFixed(1) : 0;
                               const grad = getSourceGradient(src);
                               return (
-                                <div key={src} className="flex-1 flex flex-col items-center group relative h-full justify-end z-10">
+                                <div 
+                                  key={src} 
+                                  className="flex-1 flex flex-col items-center group relative h-full justify-end z-10 cursor-pointer"
+                                  onClick={() => {
+                                    setSelectedSourceFilter(src);
+                                    setActiveTab('approved');
+                                  }}
+                                >
                                   {/* Custom Tooltip */}
                                   <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 border border-slate-700 text-slate-100 text-[10px] font-bold py-1.5 px-2.5 rounded-lg shadow-xl pointer-events-none z-25 whitespace-nowrap flex flex-col items-center gap-0.5">
                                     <span className="text-white">{src}</span>
@@ -1356,7 +1493,14 @@ export default function Dashboard() {
                                   const pct = analyticsData.total_sourced > 0 ? (count / analyticsData.total_sourced * 100).toFixed(1) : 0;
                                   const dot = getSourceDotColor(src);
                                   return (
-                                    <tr key={src} className="hover:bg-slate-800/10 transition-colors group">
+                                    <tr 
+                                      key={src} 
+                                      className="hover:bg-slate-800/10 transition-colors group cursor-pointer"
+                                      onClick={() => {
+                                        setSelectedSourceFilter(src);
+                                        setActiveTab('approved');
+                                      }}
+                                    >
                                       <td className="py-3 px-4 flex items-center space-x-2 font-medium text-slate-300 group-hover:text-white transition-colors">
                                         <span className={`w-2.5 h-2.5 rounded-full ${dot} shadow-sm shadow-black`} />
                                         <span>{src}</span>
@@ -1700,7 +1844,21 @@ export default function Dashboard() {
           ) : (
 
             /* Jobs List Cards Grid */
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col space-y-4">
+              {selectedSourceFilter && (
+                <div className="flex items-center space-x-2 bg-slate-900/60 border border-slate-800/80 rounded-xl px-3 py-1.5 w-fit">
+                  <span className="text-xs text-slate-400">Active Filter:</span>
+                  <span className="text-xs font-semibold text-violet-400">{selectedSourceFilter}</span>
+                  <button
+                    onClick={() => setSelectedSourceFilter(null)}
+                    className="p-0.5 hover:bg-slate-800 rounded-md text-slate-400 hover:text-white transition-colors"
+                    title="Clear filter"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {filteredJobs().length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-2xl p-12 text-center bg-slate-900/10">
                   <Briefcase className="w-12 h-12 text-slate-600 mb-3" />
@@ -1927,6 +2085,57 @@ export default function Dashboard() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+        </section>
+
+        {/* Live Scraper Log Console */}
+        <section className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 rounded-2xl shadow-xl overflow-hidden mt-6">
+          <button
+            type="button"
+            onClick={() => setIsLogsExpanded(prev => !prev)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-800/25 transition-colors"
+          >
+            <div className="flex items-center space-x-2.5">
+              <Database className="w-5 h-5 text-indigo-400 animate-pulse" />
+              <div className="text-left">
+                <h3 className="text-sm font-bold text-white">Live Pipeline Logs Console</h3>
+                <p className="text-[10px] text-slate-400">
+                  {scraperStatus.status === 'running'
+                    ? 'Scraper active - streaming logs'
+                    : 'Pipeline idle - click to view recent logs'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              {scraperStatus.status === 'running' && (
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+              )}
+              <span className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">
+                {isLogsExpanded ? 'Hide Console' : 'Show Console'}
+              </span>
+            </div>
+          </button>
+          
+          {isLogsExpanded && (
+            <div className="border-t border-slate-800 p-4 bg-slate-950/85">
+              <div className="flex items-center justify-between mb-3 text-xs text-slate-400 font-mono">
+                <span>logs/scrape.log · Last 100 lines</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Auto-refreshing (3s)
+                </span>
+              </div>
+              <div className="h-64 overflow-y-auto bg-slate-950 font-mono text-xs text-slate-300 p-4 rounded-xl border border-slate-850/80 custom-scrollbar">
+                <pre className="whitespace-pre-wrap leading-relaxed text-left">
+                  {scraperLogs.length > 0 
+                    ? scraperLogs.join('') 
+                    : 'No logs fetched yet or pipeline log is empty.'}
+                </pre>
+              </div>
             </div>
           )}
         </section>

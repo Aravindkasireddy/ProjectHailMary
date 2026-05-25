@@ -1275,6 +1275,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(stale_check_state).encode('utf-8'))
             return
 
+        # API: Get scraper console logs
+        elif parsed_url.path == "/api/logs":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            log_lines = []
+            log_path = os.path.join(WORKSPACE_DIR, "logs", "scrape.log")
+            if os.path.exists(log_path):
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        log_lines = lines[-100:]
+                except Exception as e:
+                    log_lines = [f"Error reading log file: {str(e)}"]
+            else:
+                log_lines = ["Log file logs/scrape.log not found. Scraper may not have logged a run yet."]
+                
+            self.wfile.write(json.dumps({"logs": log_lines}).encode('utf-8'))
+            return
+
         # Serve Frontend index.html
         elif parsed_url.path == "/" or parsed_url.path == "/index.html":
             self.send_response(200)
@@ -1471,6 +1493,149 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 
             success, msg = archive_job_on_disk(url)
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
+            return
+
+        # API: Sync all approved, unsynced jobs to Notion (batch sync)
+        elif parsed_url.path == "/api/sync-notion":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            token = os.getenv("NOTION_TOKEN")
+            db_id = os.getenv("NOTION_DATABASE_ID")
+            if not token or not db_id:
+                self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
+                return
+                
+            all_jobs = load_all_jobs()
+            unsynced_approved = [j for j in all_jobs if j.get("status") == "approved" and not j.get("synced")]
+            
+            if not unsynced_approved:
+                self.wfile.write(json.dumps({"success": True, "message": "No new approved jobs to sync."}).encode('utf-8'))
+                return
+                
+            synced_count = 0
+            failed_count = 0
+            last_err = ""
+            
+            for j in unsynced_approved:
+                url = j.get("job_url")
+                success, page_id, error_msg = sync_job_to_notion(j, token, db_id)
+                if success:
+                    mark_job_synced(url, page_id)
+                    send_webhook_alert(j, page_id)
+                    synced_count += 1
+                else:
+                    failed_count += 1
+                    last_err = error_msg
+                    
+            msg = f"Successfully synced {synced_count} jobs."
+            if failed_count > 0:
+                msg += f" Failed to sync {failed_count} jobs. Last error: {last_err}"
+            
+            self.wfile.write(json.dumps({"success": synced_count > 0, "message": msg}).encode('utf-8'))
+            return
+
+        # API: Sync job statuses from Notion back to local SQLite/JSON databases (Two-Way Sync)
+        elif parsed_url.path == "/api/sync-notion-status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            
+            token = os.getenv("NOTION_TOKEN")
+            db_id = os.getenv("NOTION_DATABASE_ID")
+            if not token or not db_id:
+                self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
+                return
+                
+            synced_jobs = load_synced_jobs()
+            if not synced_jobs:
+                self.wfile.write(json.dumps({"success": True, "message": "No synced jobs to check."}).encode('utf-8'))
+                return
+                
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": "2022-06-28"
+            }
+            
+            updated_count = 0
+            errors = 0
+            
+            approved = []
+            if os.path.exists(APPROVED_PATH):
+                try:
+                    with open(APPROVED_PATH, 'r') as f:
+                        approved = json.load(f)
+                except Exception:
+                    pass
+            
+            active = []
+            if os.path.exists(ACTIVE_PATH):
+                try:
+                    with open(ACTIVE_PATH, 'r') as f:
+                        active = json.load(f)
+                except Exception:
+                    pass
+                    
+            for url, sync_info in list(synced_jobs.items()):
+                page_id = sync_info.get("page_id")
+                if not page_id:
+                    continue
+                    
+                page_url = f"https://api.notion.com/v1/pages/{page_id}"
+                try:
+                    r = requests.get(page_url, headers=headers, timeout=8)
+                    if r.status_code == 200:
+                        page_data = r.json()
+                        props = page_data.get("properties", {}) or {}
+                        
+                        decision = None
+                        decision_prop = props.get("Apply Decision") or {}
+                        if "select" in decision_prop:
+                            sel = decision_prop["select"]
+                            decision = sel.get("name") if sel else None
+                        elif "rich_text" in decision_prop:
+                            rt = decision_prop["rich_text"]
+                            decision = "".join([t.get("text", {}).get("content", "") for t in rt]).strip()
+                            
+                        if decision:
+                            found = False
+                            for job in approved:
+                                if job.get("job_url") == url:
+                                    if job.get("apply_decision") != decision:
+                                        job["apply_decision"] = decision
+                                        updated_count += 1
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                for job in active:
+                                    if job.get("job_url") == url:
+                                        if job.get("apply_decision") != decision:
+                                            job["apply_decision"] = decision
+                                            updated_count += 1
+                                        found = True
+                                        break
+                                        
+                except Exception as e:
+                    errors += 1
+                    
+            if updated_count > 0:
+                try:
+                    with open(APPROVED_PATH, 'w') as f:
+                        json.dump(approved, f, indent=2)
+                    with open(ACTIVE_PATH, 'w') as f:
+                        json.dump(active, f, indent=2)
+                except Exception as e:
+                    self.wfile.write(json.dumps({"success": False, "message": f"Failed to save synced states: {str(e)}"}).encode('utf-8'))
+                    return
+                    
+            msg = f"Two-way sync complete. Updated {updated_count} job decisions."
+            if errors > 0:
+                msg += f" (Encountered {errors} network check warnings)."
+            self.wfile.write(json.dumps({"success": True, "message": msg}).encode('utf-8'))
             return
             
         else:
