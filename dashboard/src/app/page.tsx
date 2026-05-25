@@ -30,6 +30,7 @@ import {
   Type,
   FileText
 } from 'lucide-react';
+import ResumeGenerator from '../../components/ResumeGenerator';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -2373,14 +2374,22 @@ export default function Dashboard() {
 
                         <div className="flex items-center space-x-2">
                           {activeTab === 'approved' && (
-                            <button
-                              type="button"
-                              onClick={() => generateTailoring(job.job_url)}
-                              className="p-1.5 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 hover:text-emerald-300 border border-emerald-800/40 rounded-xl transition-all"
-                              title="AI Tailor Application"
-                            >
-                              <FileText className="w-4 h-4" />
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => generateTailoring(job.job_url)}
+                                className="p-1.5 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 hover:text-emerald-300 border border-emerald-800/40 rounded-xl transition-all"
+                                title="AI Tailor Application"
+                              >
+                                <FileText className="w-4 h-4" />
+                              </button>
+                              <ResumeGenerator
+                                jd={job.job_description}
+                                jobTitle={job.job_title}
+                                companyName={job.company_name}
+                                compact={true}
+                              />
+                            </>
                           )}
                           {activeTab === 'approved' && (
                             <select
@@ -2932,17 +2941,25 @@ export default function Dashboard() {
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-slate-800 flex justify-end items-center space-x-3 bg-slate-950/50">
               {selectedJob.apply_decision === 'APPLY' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    generateTailoring(selectedJob.job_url);
-                  }}
-                  className="mr-auto inline-flex items-center px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold border border-emerald-500/20 active:scale-95 shadow-md transition-all"
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  AI Tailor Application
-                </button>
+                <div className="mr-auto flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      generateTailoring(selectedJob.job_url);
+                    }}
+                    className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold border border-emerald-500/20 active:scale-95 shadow-md transition-all"
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    AI Tailor Application
+                  </button>
+                  <ResumeGenerator
+                    jd={selectedJob.job_description}
+                    jobTitle={selectedJob.job_title}
+                    companyName={selectedJob.company_name}
+                    compact={false}
+                  />
+                </div>
               )}
               <button
                 onClick={() => setIsModalOpen(false)}

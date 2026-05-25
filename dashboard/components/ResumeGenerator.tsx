@@ -7,9 +7,10 @@ export interface ResumeGeneratorProps {
   jd: string;
   jobTitle: string;
   companyName: string;
+  compact?: boolean;
 }
 
-export default function ResumeGenerator({ jd, jobTitle, companyName }: ResumeGeneratorProps) {
+export default function ResumeGenerator({ jd, jobTitle, companyName, compact = false }: ResumeGeneratorProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [resume, setResume] = useState<string | null>(null);
   const [stats, setStats] = useState<{ words: number; bullets: number; tokens_used: number } | null>(null);
@@ -78,17 +79,22 @@ export default function ResumeGenerator({ jd, jobTitle, companyName }: ResumeGen
         type="button"
         onClick={handleGenerate}
         disabled={loading}
-        className="bg-white/10 border border-white/20 text-white hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold backdrop-blur-md shadow-lg"
+        title="Generate ATS Resume (V5)"
+        className={
+          compact
+            ? "p-1.5 bg-violet-950/40 hover:bg-violet-900/60 text-violet-400 hover:text-violet-300 border border-violet-800/40 rounded-xl transition-all disabled:opacity-50"
+            : "bg-white/10 border border-white/20 text-white hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold backdrop-blur-md shadow-lg"
+        }
       >
         {loading ? (
           <>
             <RefreshCw className="w-3.5 h-3.5 animate-spin text-violet-400" />
-            <span>GPT-4o generating...</span>
+            {!compact && <span>GPT-4o generating...</span>}
           </>
         ) : (
           <>
-            <FileText className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Generate ATS Resume (V5)</span>
+            <FileText className={compact ? "w-4 h-4" : "w-3.5 h-3.5 text-emerald-400"} />
+            {!compact && <span>Generate ATS Resume (V5)</span>}
           </>
         )}
       </button>
