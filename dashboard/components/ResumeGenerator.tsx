@@ -10,10 +10,25 @@ export interface ResumeGeneratorProps {
   compact?: boolean;
 }
 
+interface ResumeStats {
+  words: number;
+  bullets: number;
+  tokens_used: number;
+  long_bullets: { bullet: string; words: number }[];
+  warnings: string[];
+  signals_detected: {
+    primary_platform: string | null;
+    dominant_cloud: string;
+    cicd_tools: string[];
+    monitoring_tools: string[];
+    compliance: string[];
+  };
+}
+
 export default function ResumeGenerator({ jd, jobTitle, companyName, compact = false }: ResumeGeneratorProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [resume, setResume] = useState<string | null>(null);
-  const [stats, setStats] = useState<{ words: number; bullets: number; tokens_used: number } | null>(null);
+  const [stats, setStats] = useState<ResumeStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [isOpen, setIsOpen] = useState<boolean>(false);
@@ -146,6 +161,69 @@ export default function ResumeGenerator({ jd, jobTitle, companyName, compact = f
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tokens:</span>
                     <span className="text-xs font-bold text-blue-400">{stats.tokens_used}</span>
                   </div>
+                </div>
+              )}
+
+              {stats?.signals_detected && (
+                <div style={{ marginBottom: '12px' }}>
+                  <p style={{ fontSize: '11px', color: '#6b7280', textTransform: 'uppercase', 
+                              letterSpacing: '0.06em', marginBottom: '8px' }}>
+                    JD signals detected
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {stats.signals_detected.primary_platform && (
+                      <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '20px',
+                                     background: 'rgba(16,185,129,0.15)', color: '#10b981',
+                                     fontFamily: 'monospace' }}>
+                        platform: {stats.signals_detected.primary_platform}
+                      </span>
+                    )}
+                    {stats.signals_detected.dominant_cloud && (
+                      <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '20px',
+                                     background: 'rgba(59,130,246,0.15)', color: '#60a5fa',
+                                     fontFamily: 'monospace' }}>
+                        cloud: {stats.signals_detected.dominant_cloud}
+                      </span>
+                    )}
+                    {stats.signals_detected.cicd_tools?.map((t: string) => (
+                      <span key={t} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '20px',
+                                             background: 'rgba(139,92,246,0.15)', color: '#a78bfa',
+                                             fontFamily: 'monospace' }}>
+                        {t}
+                      </span>
+                    ))}
+                    {stats.signals_detected.monitoring_tools?.map((t: string) => (
+                      <span key={t} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '20px',
+                                             background: 'rgba(245,158,11,0.15)', color: '#fbbf24',
+                                             fontFamily: 'monospace' }}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+
+                  {stats.warnings?.length > 0 && (
+                    <div style={{ marginTop: '8px', padding: '8px 12px', background: 'rgba(239,68,68,0.1)',
+                                  borderRadius: '8px', border: '1px solid rgba(239,68,68,0.2)' }}>
+                      {stats.warnings.map((w: string, i: number) => (
+                        <p key={i} style={{ fontSize: '12px', color: '#f87171', margin: 0 }}>{w}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {stats.long_bullets?.length > 0 && (
+                    <div style={{ marginTop: '8px', padding: '8px 12px', background: 'rgba(245,158,11,0.1)',
+                                  borderRadius: '8px', border: '1px solid rgba(245,158,11,0.2)' }}>
+                      <p style={{ fontSize: '12px', color: '#fbbf24', margin: '0 0 4px 0', fontWeight: 500 }}>
+                        {stats.long_bullets.length} bullet(s) over 24 words — Workday will truncate these
+                      </p>
+                      {stats.long_bullets.map((b: any, i: number) => (
+                        <p key={i} style={{ fontSize: '11px', color: '#f59e0b', margin: '2px 0',
+                                            fontFamily: 'monospace' }}>
+                          [{b.words}w] {b.bullet}...
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
