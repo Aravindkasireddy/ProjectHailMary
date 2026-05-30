@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (tests + syntax)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Pytest
+        run: python -m pytest tests/ -q --tb=short
+
+      - name: Byte-compile key modules
+        run: |
+          python -m compileall -q \
+            jobsearch_paths.py \
+            jobsearch_webhook.py \
+            notion_sqlite_mirror.py \
+            dashboard_server.py \
+            find_and_scrape_jobs.py \
+            save_to_notion.py \
+            scrape_jobs.py \
+            scripts/
+
+  dashboard:
+    name: Dashboard (build + optional lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Lint (informational)
+        working-directory: dashboard
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Build
+        working-directory: dashboard
+        run: npm run build

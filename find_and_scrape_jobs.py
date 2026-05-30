@@ -6,14 +6,332 @@ import time
 import logging
 import argparse
 import requests
+import hashlib
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, quote_plus
+from urllib.parse import urlparse, quote_plus, parse_qs
 from playwright.sync_api import sync_playwright
+from dotenv import load_dotenv
+
+def get_cdt_now_iso():
+    # CDT is UTC-5
+    cdt = timezone(timedelta(hours=-5))
+    return datetime.now(cdt).isoformat()
+
+def is_recent_date(val):
+    if not val:
+        return True
+    try:
+        import email.utils
+        
+        # Lever API createdAt is integer milliseconds
+        if isinstance(val, (int, float)):
+            dt = datetime.fromtimestamp(val / 1000.0, tz=timezone.utc)
+            now = datetime.now(timezone.utc)
+            return (now - dt).total_seconds() < 86400
+            
+        if isinstance(val, str):
+            val = val.strip()
+            # Try parsing RFC 2822 date (standard for RSS pubDate)
+            try:
+                dt = email.utils.parsedate_to_datetime(val)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(dt.tzinfo)
+                return (now - dt).total_seconds() < 86400
+            except Exception:
+                pass
+                
+            # Try parsing ISO 8601 date
+            iso_str = val.replace('Z', '+00:00')
+            try:
+                dt = datetime.fromisoformat(iso_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(dt.tzinfo)
+                return (now - dt).total_seconds() < 86400
+            except Exception:
+                pass
+                
+            # Try parsing YYYY-MM-DD
+            try:
+                dt = datetime.strptime(val[:10], "%Y-%m-%d")
+                dt = dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                return (now - dt).total_seconds() < 86400
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Error parsing date {val}: {e}")
+    return True
+
+SEARCH_STATE = {
+    "consecutive_failures": 0,
+    "consecutive_zero_yields": 0,
+    "aborted": False
+}
+
+USER_AGENTS = [
+    # Chrome on Windows/Mac/Linux
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    # Safari on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+    # Firefox on Windows/Mac/Linux
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    # Edge on Windows/Mac
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+]
+
+def get_random_user_agent():
+    return random.choice(USER_AGENTS)
+
+def get_random_proxy():
+    try:
+        from jobsearch_paths import workspace_root
+        config_path = workspace_root() / "config.json"
+        if config_path.exists():
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            proxies = cfg.get("proxies", [])
+            if proxies:
+                return random.choice(proxies)
+    except Exception:
+        pass
+    return None
+
+def get_playwright_proxy(proxy_str):
+    if not proxy_str:
+        return None
+    try:
+        if not proxy_str.startswith("http://") and not proxy_str.startswith("https://"):
+            proxy_str = "http://" + proxy_str
+        parsed = urlparse(proxy_str)
+        server = f"{parsed.scheme}://{parsed.hostname}"
+        if parsed.port:
+            server += f":{parsed.port}"
+        res = {"server": server}
+        if parsed.username:
+            res["username"] = parsed.username
+        if parsed.password:
+            res["password"] = parsed.password
+        return res
+    except Exception:
+        return None
+
+
+def compute_description_hash(description):
+    if not description:
+        return ""
+    normalized = "".join(description.lower().split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+def filter_discovered_links(links):
+    if not links:
+        return []
+    valid_links = []
+    for link in links:
+        try:
+            parsed = urlparse(link)
+            domain = parsed.netloc.lower()
+            if any(bad in domain for bad in ['duckduckgo.com', 'yahoo.com', 'google.com', 'bing.com']):
+                continue
+            if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
+                path_parts = [p for p in parsed.path.split('/') if p]
+                if 'greenhouse.io' in domain:
+                    if len(path_parts) >= 3 and path_parts[1] == 'jobs':
+                        valid_links.append(link)
+                elif 'lever.co' in domain:
+                    if len(path_parts) >= 2:
+                        valid_links.append(link)
+                elif 'myworkdayjobs.com' in domain:
+                    if 'job' in path_parts:
+                        valid_links.append(link)
+                elif 'ashbyhq.com' in domain:
+                    if len(path_parts) >= 2:
+                        valid_links.append(link)
+                elif 'workable.com' in domain:
+                    if len(path_parts) >= 3 and path_parts[1] == 'j':
+                        valid_links.append(link)
+                elif 'smartrecruiters.com' in domain:
+                    if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
+                        valid_links.append(link)
+                elif 'weworkremotely.com' in domain:
+                    if 'remote-jobs' in path_parts:
+                        valid_links.append(link)
+                elif 'remote.co' in domain:
+                    if 'job-details' in path_parts or 'job' in path_parts:
+                        valid_links.append(link)
+                elif 'linkedin.com' in domain:
+                    if 'view' in path_parts:
+                        valid_links.append(link)
+                elif 'workatastartup.com' in domain:
+                    if 'jobs' in path_parts:
+                        valid_links.append(link)
+        except Exception:
+            pass
+    return list(set(valid_links))
+
+def search_google_custom(query):
+    api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
+    cx = os.environ.get("GOOGLE_SEARCH_CX")
+    if not api_key or not cx:
+        return None
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": api_key,
+        "cx": cx,
+        "q": query,
+        "dateRestrict": "d1"
+    }
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            items = data.get("items", [])
+            return [item["link"] for item in items if "link" in item]
+        else:
+            log(f"Google Custom Search API returned status code {r.status_code}: {r.text}")
+    except Exception as e:
+        log(f"Google Custom Search API error: {e}")
+    return None
+
+def search_bing_api(query):
+    api_key = os.environ.get("BING_SEARCH_API_KEY")
+    if not api_key:
+        return None
+    url = "https://api.bing.microsoft.com/v7.0/search"
+    headers = {"Ocp-Apim-Subscription-Key": api_key}
+    params = {"q": query, "count": 10, "freshness": "Day"}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            web_pages = data.get("webPages", {}).get("value", [])
+            return [page["url"] for page in web_pages if "url" in page]
+        else:
+            log(f"Bing Search API returned status code {r.status_code}: {r.text}")
+    except Exception as e:
+        log(f"Bing Search API error: {e}")
+    return None
+
+def search_duckduckgo(query):
+    if SEARCH_STATE["aborted"]:
+        return []
+    headers = {
+        "User-Agent": get_random_user_agent(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    }
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&df=d"
+    links = []
+    try:
+        r = http_get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            SEARCH_STATE["consecutive_failures"] = 0
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if 'uddg=' in href:
+                    parsed_href = urlparse(href)
+                    queries = parse_qs(parsed_href.query)
+                    actual_url = queries.get('uddg', [None])[0]
+                    if actual_url:
+                        href = actual_url
+                links.append(href)
+        else:
+            log(f"DuckDuckGo search error for '{query}': status code {r.status_code}")
+            SEARCH_STATE["consecutive_failures"] += 1
+    except Exception as e:
+        log(f"DuckDuckGo search error for '{query}': {e}")
+        SEARCH_STATE["consecutive_failures"] += 1
+        
+    if SEARCH_STATE["consecutive_failures"] >= 5:
+        log("Aborting search discovery stage early: reached 5 consecutive connection/DNS/server failures.")
+        SEARCH_STATE["aborted"] = True
+    return links
+
+def extract_job_with_gemini(url, html, api_key):
+    if not api_key:
+        return None
+    try:
+        import google.generativeai as genai
+        body_text = clean_text(html)
+        body_text = body_text[:12000]
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        prompt = f"""
+You are an expert technical sourcing parser. Given a job posting webpage's text content, extract the job details.
+URL: {url}
+
+Page Content:
+\"\"\"
+{body_text}
+\"\"\"
+
+Extract the following fields and return ONLY a JSON object:
+- "job_title": The official title of the job.
+- "company_name": The hiring company's name.
+- "requirement_id": A unique job ID, requisition number, or code found in the text or URL. If not found, look at the URL path segments. If still not found, return "Unknown".
+- "job_description": The full text of the job description/requirements. Keep formatting clean.
+- "location_work_type": The location and work type (e.g. Remote, Hybrid, or city/state).
+
+Conform exactly to this JSON schema:
+{{
+  "job_title": "string",
+  "company_name": "string",
+  "requirement_id": "string",
+  "job_description": "string",
+  "location_work_type": "string"
+}}
+"""
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        data = json.loads(text)
+        
+        if data.get("job_title") and data.get("job_description"):
+            data["job_url"] = url
+            return data
+    except Exception as e:
+        print(f"Gemini fallback extraction failed for {url}: {e}", flush=True)
+    return None
+
+def scrape_url_with_gemini_fallback(url, api_key):
+    if not api_key:
+        return None
+    log(f"Triggering Gemini fallback parser for: {url}")
+    html = fetch_with_playwright(url)
+    if not html:
+        return None
+    return extract_job_with_gemini(url, html, api_key)
+
+
 
 from jobsearch_paths import workspace_root
 
 WORKSPACE = workspace_root()
+load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
 CONFIG_PATH = WORKSPACE / "config.json"
 SCRAPED_OUTPUT = WORKSPACE / "scraped_jobs.json"
 
@@ -42,19 +360,27 @@ def _setup_run_logging():
 log = _setup_run_logging().info
 
 
-def http_get(url, headers=None, timeout=10, attempts=3):
-    """GET with simple exponential backoff on connection errors."""
+def http_get(url, headers=None, timeout=10, attempts=2):
+    """GET with simple exponential backoff on connection errors, proxy and User-Agent rotation."""
     last_exc = None
-    h = headers or {}
     for i in range(attempts):
+        h = (headers or {}).copy()
+        if "User-Agent" not in h:
+            h["User-Agent"] = get_random_user_agent()
+        
+        proxy_str = get_random_proxy()
+        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+        if proxy_str:
+            log(f"Routing http_get through proxy: {proxy_str} (attempt {i+1})")
         try:
-            return requests.get(url, headers=h, timeout=timeout)
+            return requests.get(url, headers=h, proxies=proxies, timeout=timeout)
         except (requests.RequestException, OSError) as e:
             last_exc = e
-            time.sleep(min(2 ** i, 8))
+            if i < attempts - 1:
+                time.sleep(min(2 ** i, 8))
     if last_exc:
         raise last_exc
-    return requests.get(url, headers=h, timeout=timeout)
+
 
 def clean_text(html_content):
     if not html_content:
@@ -71,14 +397,24 @@ def fetch_with_playwright(url):
     last_err = None
     for attempt in range(1, 4):
         try:
+            # Randomized pre-navigation delay (1-3s)
+            time.sleep(random.uniform(1.0, 3.0))
             with sync_playwright() as p:
-                browser = p.webkit.launch(headless=True)
+                launch_kwargs = {"headless": True}
+                proxy_str = get_random_proxy()
+                proxy_obj = get_playwright_proxy(proxy_str)
+                if proxy_obj:
+                    launch_kwargs["proxy"] = proxy_obj
+                    log(f"Routing Playwright attempt {attempt} through proxy: {proxy_str}")
+                
+                browser = p.webkit.launch(**launch_kwargs)
                 context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+                    user_agent=get_random_user_agent()
                 )
                 page = context.new_page()
                 page.goto(url, wait_until="commit", timeout=20000)
-                time.sleep(3)
+                # Randomized post-navigation delay (2.5-4.5s)
+                time.sleep(random.uniform(2.5, 4.5))
                 html = page.content()
                 browser.close()
                 return html
@@ -88,6 +424,8 @@ def fetch_with_playwright(url):
             time.sleep(min(2 ** attempt, 8))
     print(f"Playwright WebKit error for {url}: {last_err}", flush=True)
     return None
+
+
 
 def scrape_weworkremotely(url):
     try:
@@ -201,6 +539,18 @@ def scrape_remoteco(url):
         if locs:
             location = ", ".join(locs) if isinstance(locs, list) else locs
             
+        source_url = job_details.get("sourceUrl")
+        if source_url and isinstance(source_url, str):
+            source_url = source_url.strip().replace('"', '').replace("'", "")
+            if source_url.startswith("http://") or source_url.startswith("https://"):
+                url = source_url
+            else:
+                log(f"Skipping Remote.co URL {url} because sourceUrl is not a valid HTTP link.")
+                return None
+        else:
+            log(f"Skipping Remote.co URL {url} because sourceUrl is paywalled or missing.")
+            return None
+            
         return {
             "job_title": title,
             "company_name": company_name,
@@ -295,9 +645,66 @@ def scrape_lever(url):
         return None
 
 def scrape_workday(url):
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    
+    # 1. Attempt REST API scraping (faster, cleaner, handles client-side dynamic rendering)
     try:
-        response = http_get(url, headers=headers, timeout=10)
+        parsed = urlparse(url)
+        tenant = parsed.netloc.split('.')[0]
+        path_parts = [p for p in parsed.path.split('/') if p]
+        
+        if 'job' in path_parts:
+            job_idx = path_parts.index('job')
+            if job_idx > 0:
+                board = path_parts[job_idx - 1]
+                # Extract the job slug (handle trailing /apply)
+                if path_parts[-1].lower() == 'apply':
+                    job_slug = path_parts[-2]
+                else:
+                    job_slug = path_parts[-1]
+                    
+                api_url = f"https://{parsed.netloc}/wday/cxs/{tenant}/{board}/job/{job_slug}"
+                api_response = http_get(api_url, headers=headers, timeout=10, attempts=2)
+                
+                if api_response.status_code == 200:
+                    api_data = api_response.json()
+                    job_info = api_data.get("jobPostingInfo", {})
+                    if job_info:
+                        title = job_info.get("title", "Unknown Title")
+                        company = parsed.netloc.split('.')[0].capitalize()
+                        req_id = job_info.get("jobReqId") or job_info.get("id") or "Unknown"
+                        description = clean_text(job_info.get("jobDescription", ""))
+                        location = job_info.get("location", "Remote")
+                        
+                        return {
+                            "job_title": title,
+                            "company_name": company,
+                            "job_url": url,
+                            "requirement_id": req_id,
+                            "job_description": description.strip(),
+                            "location_work_type": f"{location} (Remote/Hybrid)"
+                        }
+                    else:
+                        print(f"Workday REST API payload missing jobPostingInfo for {url}")
+                elif api_response.status_code == 403:
+                    # 403 indicates expired/inactive postings
+                    print(f"Workday REST API returned 403 (likely inactive/expired) for {url}")
+                    return {"inactive": True}
+                else:
+                    print(f"Workday REST API returned status {api_response.status_code} for {url}")
+        else:
+            print(f"Could not extract REST API details from Workday URL path structure: {url}")
+    except Exception as api_err:
+        print(f"Workday REST API scraping attempt failed for {url}: {api_err}")
+
+    # 2. HTML / JSON-LD Fallback (for older/custom Workday setups)
+    try:
+        html_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        response = http_get(url, headers=html_headers, timeout=10)
         if response.status_code != 200:
             return None
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -345,7 +752,7 @@ def scrape_workday(url):
             "location_work_type": "Remote"
         }
     except Exception as e:
-        print(f"Failed to scrape Workday URL {url}: {e}")
+        print(f"Failed to scrape Workday URL fallback {url}: {e}")
         return None
 
 def scrape_ashby(url):
@@ -367,7 +774,7 @@ def scrape_ashby(url):
         # If the path segments decreased significantly, it redirected to company board
         if len(final_path_parts) < len(path_parts) and len(final_path_parts) <= 1:
             print(f"  Inactive: Ashby page redirected to company board.", flush=True)
-            return None
+            return {"inactive": True}
             
         json_ld_script = soup.find('script', type='application/ld+json')
         if json_ld_script:
@@ -531,7 +938,7 @@ def scrape_smartrecruiters(url):
             # If the job is inactive, filter it out
             if not data.get("active", True):
                 print(f"  Inactive: SmartRecruiters REST API reports active=False.", flush=True)
-                return None
+                return {"inactive": True}
                 
             title = data.get("name", "Unknown Title")
             company_name = data.get("company", {}).get("name") if isinstance(data.get("company"), dict) else company_slug.replace('-', ' ').title()
@@ -567,7 +974,7 @@ def scrape_smartrecruiters(url):
         # Check for inactive job indicators
         if "This job is no longer available" in response.text or "no longer available" in response.text:
             print(f"  Inactive: SmartRecruiters HTML says job no longer available.", flush=True)
-            return None
+            return {"inactive": True}
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -704,15 +1111,18 @@ def scrape_yc(url):
         return None
 
 def search_yahoo(query):
+    if SEARCH_STATE["aborted"]:
+        return []
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
-    url = f"https://search.yahoo.com/search?p={quote_plus(query)}"
+    url = f"https://search.yahoo.com/search?p={quote_plus(query)}&btf=d"
     links = []
     try:
-        r = http_get(url, headers=headers, timeout=15)
+        r = http_get(url, headers=headers, timeout=10)
         if r.status_code == 200:
+            SEARCH_STATE["consecutive_failures"] = 0
             soup = BeautifulSoup(r.text, 'html.parser')
             for a in soup.find_all('a', href=True):
                 href = a['href']
@@ -724,58 +1134,17 @@ def search_yahoo(query):
                         links.append(actual_url)
                     else:
                         links.append(href)
+        else:
+            log(f"Yahoo search error for '{query}': status code {r.status_code}")
+            SEARCH_STATE["consecutive_failures"] += 1
     except Exception as e:
         log(f"Yahoo search error for '{query}': {e}")
-    
-    # Filter valid links
-    valid_links = []
-    for link in links:
-        parsed = urlparse(link)
-        domain = parsed.netloc.lower()
-        if any(bad in domain for bad in ['search.yahoo.com', 'scout.yahoo.com', 'login.yahoo.com']):
-            continue
-        if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
-            path_parts = [p for p in parsed.path.split('/') if p]
-            if 'greenhouse.io' in domain:
-                # Job pages look like /company/jobs/12345
-                if len(path_parts) >= 3 and path_parts[1] == 'jobs':
-                    valid_links.append(link)
-            elif 'lever.co' in domain:
-                # Job pages look like /company/uuid
-                if len(path_parts) >= 2:
-                    valid_links.append(link)
-            elif 'myworkdayjobs.com' in domain:
-                # Job pages look like /company/job/details
-                if 'job' in path_parts:
-                    valid_links.append(link)
-            elif 'ashbyhq.com' in domain:
-                # Job pages look like /company/job-uuid
-                if len(path_parts) >= 2:
-                    valid_links.append(link)
-            elif 'workable.com' in domain:
-                # Job pages look like /company/j/job-shortcode/
-                if len(path_parts) >= 3 and path_parts[1] == 'j':
-                    valid_links.append(link)
-            elif 'smartrecruiters.com' in domain:
-                # Job pages look like /company/posting-id-slug
-                # Skip main lists (which have no hyphen or posting id)
-                if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
-                    valid_links.append(link)
-            elif 'weworkremotely.com' in domain:
-                # Job pages look like /remote-jobs/slug
-                if 'remote-jobs' in path_parts:
-                    valid_links.append(link)
-            elif 'remote.co' in domain:
-                # Job pages look like /job-details/slug
-                if 'job-details' in path_parts or 'job' in path_parts:
-                    valid_links.append(link)
-            elif 'linkedin.com' in domain:
-                if 'view' in path_parts:
-                    valid_links.append(link)
-            elif 'workatastartup.com' in domain:
-                if 'jobs' in path_parts:
-                    valid_links.append(link)
-    return list(set(valid_links))
+        SEARCH_STATE["consecutive_failures"] += 1
+        
+    if SEARCH_STATE["consecutive_failures"] >= 5:
+        log("Aborting search discovery stage early: reached 5 consecutive connection/DNS/server failures.")
+        SEARCH_STATE["aborted"] = True
+    return links
 
 def normalize_job_url(url):
     if not url:
@@ -819,6 +1188,1202 @@ def build_yahoo_queries(title, search_cfg):
     return core
 
 
+def expand_target_titles_with_gemini(target_titles, api_key):
+    """
+    Expand target titles using Gemini 2.5 Flash, falling back to a static mapping if it fails or key is missing.
+    """
+    STATIC_SYNONYM_FALLBACK = {
+        "DevOps Engineer": ["DevOps", "Site Reliability Engineer", "SRE"],
+        "Cloud Automation Engineer": ["Cloud Infrastructure Engineer", "Automation Engineer", "Cloud Engineer"],
+        "Platform Engineer": ["Platform Engineering", "Infrastructure Engineer", "DevOps Engineer"],
+        "Cloud Infrastructure Engineer": ["Cloud Engineer", "Infrastructure Engineer", "DevOps"],
+        "Cloud Security Engineer": ["Security Engineer", "DevSecOps", "Cloud SecOps"],
+        "DevSecOps": ["DevSecOps Engineer", "Security Engineer", "DevOps Security"],
+        "Site Reliability Engineer": ["SRE", "Reliability Engineer", "DevOps Engineer"],
+        "CI/CD Engineer": ["Release Engineer", "Build Engineer", "DevOps CI/CD"],
+        "Systems Engineer": ["System Engineer", "Linux Systems Engineer", "Operations Engineer"],
+        "Cloud Network Engineer": ["Network Engineer", "Cloud Network Administrator"],
+        "Data Platform Engineer": ["Data Infrastructure Engineer", "Data Engineer", "Data Ops"],
+        "Machine Learning Engineer": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Infrastructure"],
+        "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"]
+    }
+    
+    if not api_key:
+        log("No Gemini API key found for query expansion. Falling back to static synonym mapping.")
+        return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        prompt = f"""
+You are an expert technical recruiter and sourcing agent.
+Given the following list of target job titles:
+{json.dumps(target_titles)}
+
+Generate 2-3 highly relevant, search-friendly synonyms, abbreviations, or closely related titles for each target title.
+These will be used for searching job boards, so choose terms commonly used in job listings.
+Avoid overly generic terms that would cause search query bloat or return irrelevant results.
+
+Return ONLY a JSON object mapping each original title to a list of its 2-3 synonyms/abbreviations.
+Conform exactly to this structure:
+{{
+  "Title 1": ["Synonym A", "Synonym B"],
+  "Title 2": ["Synonym C", "Synonym D"]
+}}
+"""
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        expanded = json.loads(text)
+        
+        result = {}
+        for title in target_titles:
+            syns = expanded.get(title, expanded.get(title.strip(), []))
+            if isinstance(syns, list):
+                clean_syns = [str(s).strip() for s in syns if s][:3]
+                result[title] = clean_syns
+            else:
+                result[title] = STATIC_SYNONYM_FALLBACK.get(title, [])
+        log(f"Successfully generated query expansions with Gemini for {len(result)} titles.")
+        return result
+    except Exception as e:
+        log(f"Gemini query expansion failed: {e}. Falling back to static synonym mapping.")
+        return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
+
+
+def scrape_single_url(href, api_key=None):
+    # Introduce randomized rate throttling delay (1.5 to 4.0 seconds)
+    time.sleep(random.uniform(1.5, 4.0))
+    domain = urlparse(href).netloc.lower()
+    job_data = None
+    try:
+        if 'greenhouse.io' in domain:
+            job_data = scrape_greenhouse(href)
+        elif 'lever.co' in domain:
+            job_data = scrape_lever(href)
+        elif 'myworkdayjobs.com' in domain:
+            job_data = scrape_workday(href)
+        elif 'ashbyhq.com' in domain:
+            job_data = scrape_ashby(href)
+        elif 'workable.com' in domain:
+            job_data = scrape_workable(href)
+        elif 'smartrecruiters.com' in domain:
+            job_data = scrape_smartrecruiters(href)
+        elif 'weworkremotely.com' in domain:
+            job_data = scrape_weworkremotely(href)
+        elif 'remote.co' in domain:
+            job_data = scrape_remoteco(href)
+        elif 'linkedin.com' in domain:
+            job_data = scrape_linkedin(href)
+        elif 'workatastartup.com' in domain:
+            job_data = scrape_yc(href)
+        else:
+            job_data = scrape_url_with_gemini_fallback(href, api_key)
+    except Exception as e:
+        print(f"Scraper error for {href}: {e}", flush=True)
+
+    if job_data and job_data.get("inactive"):
+        return None
+
+    if not job_data or len(job_data.get("job_description", "")) < 200:
+        if api_key:
+            try:
+                job_data = scrape_url_with_gemini_fallback(href, api_key)
+            except Exception as e:
+                print(f"Gemini fallback scraper failed for {href}: {e}", flush=True)
+                
+    if job_data:
+        desc = job_data.get("job_description", "")
+        if desc:
+            job_data["description_hash"] = compute_description_hash(desc)
+            
+    return job_data
+
+def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_urls):
+    """
+    Search Yahoo and scrape jobs for a given keyword/title.
+    Returns a list of newly scraped job dictionaries and count of unique URLs found.
+    """
+    queries = build_yahoo_queries(keyword, search_cfg)
+    keyword_scraped_jobs = []
+    urls_found_for_keyword = 0
+    urls_to_scrape = []
+    
+    for query in queries:
+        if SEARCH_STATE["aborted"]:
+            break
+        
+        urls = None
+        using_api = False
+        
+        has_google = bool(os.environ.get("GOOGLE_SEARCH_API_KEY") and os.environ.get("GOOGLE_SEARCH_CX"))
+        has_bing = bool(os.environ.get("BING_SEARCH_API_KEY"))
+        
+        if has_google:
+            using_api = True
+            log(f"Searching Google Custom Search API: {query}")
+            urls = search_google_custom(query)
+        elif has_bing:
+            using_api = True
+            log(f"Searching Bing Search API: {query}")
+            urls = search_bing_api(query)
+            
+        if not urls and not SEARCH_STATE["aborted"]:
+            using_api = False
+            log(f"Searching Yahoo: {query}")
+            urls = search_yahoo(query)
+            if not urls and not SEARCH_STATE["aborted"]:
+                log(f"Yahoo search returned 0 results for '{query}'. Falling back to DuckDuckGo...")
+                urls = search_duckduckgo(query)
+        
+        if SEARCH_STATE["aborted"]:
+            break
+            
+        if not urls:
+            SEARCH_STATE["consecutive_zero_yields"] += 1
+        else:
+            SEARCH_STATE["consecutive_zero_yields"] = 0
+            
+        if SEARCH_STATE["consecutive_zero_yields"] >= 10:
+            log("Aborting search discovery stage early: 10 consecutive search engine queries returned 0 results (likely rate-limited or blocked).")
+            SEARCH_STATE["aborted"] = True
+            break
+            
+        if using_api:
+            delay = random.uniform(1.5, 3.0)
+        else:
+            delay = random.uniform(8.0, 15.0)
+        log(f"Sleeping for {delay:.2f} seconds...")
+        time.sleep(delay)
+
+        for href in urls:
+            nu = normalize_job_url(href)
+            if not nu:
+                continue
+            if nu in found_urls:
+                continue
+            found_urls.add(nu)
+            urls_found_for_keyword += 1
+
+            if dry_run:
+                dry_urls.append({"job_url": href, "query": query, "title_keyword": keyword})
+                continue
+            
+            urls_to_scrape.append(href)
+
+    if not dry_run and urls_to_scrape:
+        log(f"Scraping {len(urls_to_scrape)} URLs in parallel for keyword '{keyword}'...")
+        api_key = os.environ.get("GEMINI_API_KEY")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_url = {executor.submit(scrape_single_url, url, api_key): url for url in urls_to_scrape}
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    job_data = future.result()
+                    if job_data and job_data.get("job_description"):
+                        if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
+                            log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
+                            job_data["scraped_at"] = get_cdt_now_iso()
+                            keyword_scraped_jobs.append(job_data)
+                        else:
+                            log(f"Discarded (No Requirement ID): {url}")
+                    else:
+                        if job_data:
+                            log(f"Discarded (No JD text or inactive): {url}")
+                except Exception as e:
+                    log(f"Thread execution error scraping {url}: {e}")
+                    
+    return keyword_scraped_jobs, urls_found_for_keyword
+
+
+
+def is_us_location(location_str):
+    if not location_str:
+        return False
+    loc_lower = location_str.lower()
+    
+    # 1. Clean and tokenize into words
+    words = re.findall(r'\b[a-z]+\b', loc_lower)
+    
+    # 2. Ignored generic terms
+    ignored_words = {
+        "remote", "hybrid", "onsite", "work", "from", "home", "anywhere", "location", 
+        "timezone", "time", "zone", "eastern", "pacific", "central", "mountain", 
+        "et", "pt", "ct", "mt", "hours", "day", "days", "week", "weeks", "flexible", 
+        "office", "and", "or", "in", "at", "the", "with", "option", "applicants", 
+        "applicable", "global", "worldwide", "only", "based", "located", "reside",
+        "resident", "residents", "us-based", "us-remote", "remote-us", "state", "states",
+        "united", "america", "americas", "columbia", "district"
+    }
+    
+    # 3. Positive US indicators
+    us_indicators = {"us", "usa", "u.s.", "u.s.a", "united states", "america"}
+    
+    # 4. US states (names and postal codes)
+    us_states_abbr = {
+        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
+        "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+        "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy"
+    }
+    us_states_full = {
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida", 
+        "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", 
+        "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", 
+        "nevada", "new hampshire", "new jersey", "new mexico", "new york", "north carolina", "north dakota", 
+        "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota", "tennessee", 
+        "texas", "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming"
+    }
+    
+    # 5. Major US cities
+    us_cities = {
+        "san francisco", "sf", "seattle", "new york", "nyc", "austin", "chicago", "boston", 
+        "denver", "los angeles", "la", "atlanta", "dallas", "houston", "miami", "philadelphia", 
+        "phoenix", "san diego", "san jose", "sunnyvale", "mountain view", "palo alto", "redmond", 
+        "bellevue", "oakland", "detroit", "minneapolis", "portland", "salt lake city", "pittsburgh", 
+        "washington", "arlington", "boulder", "cambridge", "raleigh", "durham", "charlotte", 
+        "nashville", "salt lake", "las vegas", "orlando", "tampa", "tempe", "culver city",
+        "menlo park", "cupertino", "santa clara", "redwood city", "irvine", "berkeley", "columbus"
+    }
+    
+    # Check for direct negative indicator match (e.g. EMEA, Canada, Europe, UK, etc.)
+    negative_indicators = {
+        "europe", "uk", "london", "india", "germany", "france", "canada", "latam", 
+        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil", 
+        "spain", "poland", "ukraine", "philippines", "ireland", "tokyo", "japan",
+        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne", 
+        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo", 
+        "amsterdam", "krakow", "mexico", "sweden", "stockholm", "zurich",
+        "pakistan", "lahore", "karachi", "islamabad", "italy", "rome", "milan",
+        "portugal", "lisbon", "madrid", "barcelona", "china", "beijing",
+        "shanghai", "hong kong", "taiwan", "taipei", "vietnam", "thailand", "bangkok",
+        "croatia", "zagreb", "czech", "republic", "türkiye", "turkey", "noida",
+        "argentina", "ankara", "mississauga", "copenhagen", "denmark", "south korea",
+        "korea", "belgrade", "serbia", "yerevan", "armenia"
+    }
+    
+    has_negative = any(ni in loc_lower for ni in negative_indicators)
+    if has_negative:
+        return False
+        
+    has_positive = any(pi in loc_lower for pi in us_indicators)
+    if has_positive:
+        return True
+        
+    has_city = any(city in loc_lower for city in us_cities)
+    has_state_full = any(state in loc_lower for state in us_states_full)
+    
+    if has_city or has_state_full:
+        return True
+        
+    # Check individual words for states
+    for w in words:
+        if w in us_states_abbr:
+            # Avoid matching common words like "in", "or", "me", "la", "co" as states unless prefixed by a comma or space comma
+            if w in {"in", "or", "me", "la", "co", "ma"}:
+                if re.search(r'\b,\s*' + w + r'\b', loc_lower):
+                    return True
+            else:
+                return True
+                
+    # If no negative indicators and it has remote/hybrid/onsite, and no other foreign words
+    non_generic_non_us = []
+    for w in words:
+        if (w not in ignored_words and 
+            w not in us_states_abbr and 
+            w not in us_states_full and 
+            w not in us_cities and 
+            w not in us_indicators):
+            non_generic_non_us.append(w)
+            
+    if non_generic_non_us:
+        return False
+        
+    return True
+
+
+
+def is_target_job(job_title, target_titles):
+    jt = job_title.lower()
+    
+    # 1. Strict substring and all-tokens checks
+    for t in target_titles:
+        t_lower = t.lower()
+        if t_lower in jt:
+            return True
+        parts = t_lower.split()
+        if len(parts) > 1 and all(p in jt for p in parts):
+            return True
+            
+    # 2. Acronym expansion check
+    acronyms = {
+        "sre": "site reliability engineer",
+        "ml": "machine learning engineer",
+        "ai": "ai platform engineer",
+        "cicd": "ci/cd engineer"
+    }
+    words = re.findall(r'\b[a-z]+\b', jt)
+    for ac, expanded in acronyms.items():
+        if ac in words:
+            if any(ac in t.lower() or expanded in t.lower() for t in target_titles):
+                return True
+                
+    # 3. Fuzzy Jaccard token overlap check (Jaccard similarity fallback)
+    negatives = {"recruiter", "talent", "hr", "marketing", "sales", "finance", "legal", "accountant", "coordinator", "sourcer"}
+    if any(n in words for n in negatives):
+        return False
+        
+    jt_clean = re.sub(r'[^a-z0-9\s]', '', jt)
+    jt_tokens = set(jt_clean.split())
+    
+    for t in target_titles:
+        t_clean = re.sub(r'[^a-z0-9\s]', '', t.lower())
+        t_tokens = set(t_clean.split())
+        if not t_tokens:
+            continue
+        intersection = jt_tokens.intersection(t_tokens)
+        if len(intersection) / len(t_tokens) >= 0.75:
+            return True
+            
+    return False
+
+
+def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
+    log("Fetching direct RSS feeds from WeWorkRemotely and Remote.co...")
+    discovered = []
+    matched_count = 0
+    
+    feeds = {
+        "WeWorkRemotely - All": "https://weworkremotely.com/remote-jobs.rss",
+        "WeWorkRemotely - DevOps/SysAdmin": "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+        "Remote.co": "https://remote.co/feed/?post_type=job_listing"
+    }
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*"
+    }
+    
+    for feed_name, url in feeds.items():
+        try:
+            log(f"Fetching RSS feed: {feed_name}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Failed to fetch RSS feed {feed_name}: status code {r.status_code}")
+                continue
+            
+            soup = BeautifulSoup(r.content, "xml")
+            items = soup.find_all("item")
+            log(f"Found {len(items)} items in RSS feed: {feed_name}")
+            
+            for item in items:
+                title_elem = item.find("title")
+                link_elem = item.find("link")
+                desc_elem = item.find("description")
+                
+                if not title_elem or not link_elem:
+                    continue
+                
+                raw_title = title_elem.text.strip()
+                job_url = link_elem.text.strip()
+                
+                pub_date_elem = item.find("pubDate")
+                pub_date_str = pub_date_elem.text.strip() if pub_date_elem else None
+                if not is_recent_date(pub_date_str):
+                    continue
+                
+                if not is_target_job(raw_title, target_titles):
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] RSS {feed_name}: '{raw_title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"RSS: {feed_name}",
+                        "title_keyword": raw_title
+                    })
+                    continue
+                
+                raw_desc = desc_elem.text if desc_elem else ""
+                jd_text = clean_text(raw_desc).strip()
+                
+                company_name = "Unknown"
+                job_title = raw_title
+                
+                if "weworkremotely" in job_url.lower():
+                    if ":" in raw_title:
+                        parts = raw_title.split(":", 1)
+                        company_name = parts[0].strip()
+                        job_title = parts[1].strip()
+                elif "remote.co" in job_url.lower():
+                    if " - " in raw_title:
+                        title_parts = raw_title.split(" - ")
+                        if len(title_parts) >= 2:
+                            p0 = title_parts[0].strip()
+                            p1 = title_parts[1].strip()
+                            if not any(w in p0.lower() for w in ["engineer", "developer", "architect", "lead", "manager", "senior", "junior", "remote"]):
+                                company_name = p0
+                                job_title = p1
+                    if company_name == "Unknown":
+                        company_name = "Remote.co"
+                
+                # Geographic gating
+                desc_lower = jd_text.lower()
+                exclude_keywords = [
+                    "europe only", "uk only", "canada only", "asia only", "latam only", 
+                    "eu only", "apac only", "emea only", "germany only", "france only", 
+                    "outside us", "outside the us", "outside the united states"
+                ]
+                if any(kw in desc_lower for kw in exclude_keywords):
+                    continue
+                
+                location = "Remote"
+                if "weworkremotely" in job_url.lower():
+                    hq_match = re.search(r'Headquarters:\s*([^\n<]+)', raw_desc, re.IGNORECASE)
+                    if hq_match:
+                        hq_loc = hq_match.group(1).strip()
+                        location = f"{hq_loc} (Remote)"
+                        if not is_us_location(hq_loc) and not any(ind in desc_lower for ind in ["united states", "us", "u.s.", "usa"]):
+                            continue
+                
+                parsed_url = urlparse(job_url)
+                path_parts = [p for p in parsed_url.path.split('/') if p]
+                req_id = path_parts[-1] if path_parts else "Unknown"
+                if "remote.co" in job_url.lower():
+                    uuid_match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', req_id)
+                    if uuid_match:
+                        req_id = uuid_match.group(1)
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": job_title,
+                    "company_name": company_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": f"{location} (Remote)",
+                    "description_hash": desc_hash,
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": pub_date_str if pub_date_str else get_cdt_now_iso()
+                })
+        except Exception as e:
+            log(f"Error parsing RSS feed {feed_name}: {e}")
+            
+    log(f"RSS Discovery complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct Greenhouse and Lever company board APIs...")
+    discovered = []
+    matched_count = 0
+    
+    greenhouse_companies = companies_cfg.get("greenhouse", [])
+    lever_companies = companies_cfg.get("lever", [])
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    # 1. Greenhouse Boards API
+    for company in greenhouse_companies:
+        url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true"
+        try:
+            log(f"Querying Greenhouse API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Greenhouse API for {company} returned status code {r.status_code}")
+                continue
+            
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Greenhouse board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("title", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                updated_at_str = job.get("updated_at")
+                if not is_recent_date(updated_at_str):
+                    continue
+                
+                location_name = job.get("location", {}).get("name", "").strip()
+                if not is_us_location(location_name):
+                    continue
+                
+                job_url = job.get("absolute_url")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Greenhouse '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Greenhouse API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                content_html = job.get("content", "")
+                jd_text = clean_text(content_html).strip()
+                
+                req_id = str(job.get("id"))
+                comp_name = job.get("company_name", company.title())
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": f"{location_name} (Remote/Hybrid/Onsite)",
+                    "description_hash": desc_hash,
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": updated_at_str if updated_at_str else get_cdt_now_iso()
+                })
+        except Exception as e:
+            log(f"Error querying Greenhouse board '{company}': {e}")
+            
+    # 2. Lever Public Postings API
+    for company in lever_companies:
+        url = f"https://api.lever.co/v0/postings/{company}?mode=json"
+        try:
+            log(f"Querying Lever API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Lever API for {company} returned status code {r.status_code}")
+                continue
+            
+            jobs = r.json()
+            if not isinstance(jobs, list):
+                log(f"Lever API for {company} returned invalid format")
+                continue
+                
+            log(f"  Lever board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("text", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                created_at_ms = job.get("createdAt")
+                if not is_recent_date(created_at_ms):
+                    continue
+                
+                country = job.get("country", "")
+                location_cat = job.get("categories", {}).get("location", "")
+                
+                is_us = False
+                if country.lower() == "us":
+                    is_us = True
+                elif is_us_location(location_cat):
+                    is_us = True
+                
+                if not is_us:
+                    continue
+                
+                job_url = job.get("hostedUrl")
+                if not job_url:
+                    continue
+                    
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Lever '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Lever API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                parts = []
+                if job.get("descriptionPlain"):
+                    parts.append(job["descriptionPlain"])
+                elif job.get("description"):
+                    parts.append(clean_text(job["description"]))
+                
+                if job.get("openingPlain"):
+                    parts.append(job["openingPlain"])
+                elif job.get("opening"):
+                    parts.append(clean_text(job["opening"]))
+                
+                for lst in job.get("lists", []):
+                    lst_title = lst.get("text", "")
+                    lst_content = lst.get("content", "")
+                    if lst_title:
+                        parts.append(lst_title)
+                    if lst_content:
+                        parts.append(clean_text(lst_content))
+                
+                jd_text = "\n\n".join([p.strip() for p in parts if p.strip()])
+                if not jd_text:
+                    continue
+                    
+                req_id = str(job.get("id"))
+                comp_name = company.title()
+                
+                location_work = location_cat or "Remote"
+                if job.get("workplaceType"):
+                    location_work = f"{location_work} ({job['workplaceType'].title()})"
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": f"{location_work}",
+                    "description_hash": desc_hash,
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": datetime.fromtimestamp(created_at_ms / 1000.0, tz=timezone.utc).isoformat() if created_at_ms else get_cdt_now_iso()
+                })
+        except Exception as e:
+            log(f"Error querying Lever board '{company}': {e}")
+            
+    log(f"Company API Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct Ashby company board APIs...")
+    discovered = []
+    matched_count = 0
+    
+    ashby_companies = companies_cfg.get("ashby", [])
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    for company in ashby_companies:
+        url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
+        try:
+            log(f"Querying Ashby API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"Ashby API for {company} returned status code {r.status_code}")
+                continue
+                
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Ashby board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("title", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                published_at_str = job.get("publishedAt")
+                if not is_recent_date(published_at_str):
+                    continue
+                
+                location = job.get("location")
+                location = location.strip() if location else ""
+                
+                is_remote = job.get("isRemote") or False
+                
+                workplace_type = job.get("workplaceType")
+                workplace_type = workplace_type.strip() if workplace_type else ""
+                
+                loc_str = location
+                if is_remote or workplace_type.lower() == "remote":
+                    if "remote" not in loc_str.lower():
+                        loc_str = f"{loc_str} (Remote)" if loc_str else "Remote"
+                
+                if not is_us_location(loc_str):
+                    continue
+                
+                job_url = job.get("jobUrl")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Ashby '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Ashby API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                desc_plain = job.get("descriptionPlain")
+                desc_html = job.get("descriptionHtml")
+                
+                if desc_plain:
+                    jd_text = desc_plain.strip()
+                elif desc_html:
+                    jd_text = clean_text(desc_html).strip()
+                else:
+                    jd_text = ""
+                
+                if not jd_text:
+                    continue
+                    
+                req_id = str(job.get("id"))
+                comp_name = company.title()
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": loc_str,
+                    "description_hash": desc_hash,
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": published_at_str if published_at_str else get_cdt_now_iso()
+                })
+        except Exception as e:
+            log(f"Error querying Ashby board '{company}': {e}")
+            
+    log(f"Ashby API Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct Workable Global Search API...")
+    discovered = []
+    matched_count = 0
+    import urllib.parse
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    for title_query in target_titles:
+        encoded_query = urllib.parse.quote(title_query)
+        url = f"https://jobs.workable.com/api/v1/jobs?query={encoded_query}"
+        
+        try:
+            log(f"Querying Workable Global Search for: '{title_query}'")
+            r = http_get(url, headers=headers, timeout=15, attempts=2)
+            if r.status_code != 200:
+                log(f"Workable API for query '{title_query}' returned status code {r.status_code}")
+                continue
+                
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Workable search '{title_query}': Found {len(jobs)} total jobs on first page")
+            
+            for job in jobs:
+                title = job.get("title", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                
+                published_at_str = job.get("published")
+                if not is_recent_date(published_at_str):
+                    continue
+                
+                location_dict = job.get("location", {}) or {}
+                location_parts = []
+                city = location_dict.get("city")
+                subregion = location_dict.get("subregion")
+                country = location_dict.get("countryName")
+                if city:
+                    location_parts.append(city)
+                if subregion:
+                    location_parts.append(subregion)
+                if country:
+                    location_parts.append(country)
+                
+                loc_str = ", ".join(location_parts)
+                workplace = job.get("workplace", "")
+                if workplace:
+                    if workplace.lower() not in loc_str.lower():
+                        loc_str = f"{loc_str} ({workplace.title()})" if loc_str else workplace.title()
+                
+                if not is_us_location(loc_str):
+                    continue
+                
+                job_url = job.get("url")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] Workable: '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"Workable Global Search: {title_query}",
+                        "title_keyword": title
+                    })
+                    continue
+                
+                desc_html = job.get("description") or ""
+                reqs_html = job.get("requirementsSection") or ""
+                benefits_html = job.get("benefitsSection") or ""
+                
+                full_html = f"{desc_html}\n\n{reqs_html}\n\n{benefits_html}"
+                jd_text = clean_text(full_html).strip()
+                
+                if not jd_text:
+                    continue
+                    
+                req_id = str(job.get("id"))
+                company_dict = job.get("company") or {}
+                comp_name = (company_dict.get("title") or "Unknown Workable Company").strip()
+                
+                desc_hash = compute_description_hash(jd_text)
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": req_id,
+                    "job_description": jd_text,
+                    "location_work_type": loc_str,
+                    "description_hash": desc_hash,
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": published_at_str if published_at_str else get_cdt_now_iso()
+                })
+        except Exception as e:
+            log(f"Error querying Workable Global Search for '{title_query}': {e}")
+            
+    log(f"Workable Global Search Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct The Muse Global Search API...")
+    discovered = []
+    matched_count = 0
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    url = "https://www.themuse.com/api/public/jobs?category=Software%20Engineering&page=1"
+    
+    try:
+        log("Querying The Muse Jobs API...")
+        r = http_get(url, headers=headers, timeout=15, attempts=2)
+        if r.status_code != 200:
+            log(f"The Muse API returned status code {r.status_code}")
+            return discovered
+            
+        data = r.json()
+        results = data.get("results", [])
+        log(f"  The Muse: Found {len(results)} total jobs on first page")
+        
+        for job in results:
+            title = job.get("name", "").strip()
+            if not is_target_job(title, target_titles):
+                continue
+                
+            pub_date_str = job.get("publication_date")
+            if not is_recent_date(pub_date_str):
+                continue
+                
+            locations_list = job.get("locations", []) or []
+            location_names = [loc.get("name", "") for loc in locations_list if loc.get("name")]
+            loc_str = ", ".join(location_names)
+            
+            if not is_us_location(loc_str):
+                continue
+                
+            job_url = job.get("refs", {}).get("landing_page")
+            if not job_url:
+                continue
+                
+            nu = normalize_job_url(job_url)
+            if not nu:
+                continue
+            if nu in found_urls:
+                continue
+            found_urls.add(nu)
+            
+            if dry_run:
+                matched_count += 1
+                log(f"  [DRY RUN MATCH] The Muse: '{title}' - {job_url}")
+                dry_urls.append({
+                    "job_url": job_url,
+                    "query": "The Muse API",
+                    "title_keyword": title
+                })
+                continue
+                
+            contents_html = job.get("contents", "")
+            jd_text = clean_text(contents_html).strip()
+            if not jd_text:
+                continue
+                
+            req_id = str(job.get("id"))
+            comp_name = job.get("company", {}).get("name", "Unknown Muse Company").strip()
+            
+            desc_hash = compute_description_hash(jd_text)
+            
+            matched_count += 1
+            discovered.append({
+                "job_title": title,
+                "company_name": comp_name,
+                "job_url": job_url,
+                "requirement_id": req_id,
+                "job_description": jd_text,
+                "location_work_type": loc_str,
+                "description_hash": desc_hash,
+                "scraped_at": get_cdt_now_iso(),
+                "posted_at": pub_date_str if pub_date_str else get_cdt_now_iso()
+            })
+    except Exception as e:
+        log(f"Error querying The Muse API: {e}")
+        
+    log(f"The Muse Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
+    log("Fetching direct SmartRecruiters company board APIs...")
+    discovered = []
+    matched_count = 0
+    
+    smart_companies = companies_cfg.get("smartrecruiters", [])
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    for company in smart_companies:
+        url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings"
+        try:
+            log(f"Querying SmartRecruiters API for: {company}")
+            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            if r.status_code != 200:
+                log(f"SmartRecruiters API for {company} returned status code {r.status_code}")
+                continue
+                
+            data = r.json()
+            jobs = data.get("content", [])
+            log(f"  SmartRecruiters board '{company}': Found {len(jobs)} total jobs")
+            
+            for job in jobs:
+                title = job.get("name", "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                    
+                released_date_str = job.get("releasedDate")
+                if not is_recent_date(released_date_str):
+                    continue
+                    
+                loc_dict = job.get("location", {}) or {}
+                city = loc_dict.get("city")
+                region = loc_dict.get("region")
+                country = loc_dict.get("country")
+                loc_parts = [p for p in [city, region, country] if p]
+                loc_str = ", ".join(loc_parts)
+                
+                if job.get("releasedOfWork") or job.get("remote") or "remote" in loc_str.lower():
+                    if "remote" not in loc_str.lower():
+                        loc_str = f"{loc_str} (Remote)" if loc_str else "Remote"
+                        
+                if not is_us_location(loc_str):
+                    continue
+                    
+                job_id = job.get("id")
+                if not job_id:
+                    continue
+                job_url = f"https://jobs.smartrecruiters.com/{company}/{job_id}"
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                if nu in found_urls:
+                    continue
+                found_urls.add(nu)
+                
+                if dry_run:
+                    matched_count += 1
+                    log(f"  [DRY RUN MATCH] SmartRecruiters '{company}': '{title}' - {job_url}")
+                    dry_urls.append({
+                        "job_url": job_url,
+                        "query": f"SmartRecruiters API: {company}",
+                        "title_keyword": title
+                    })
+                    continue
+                    
+                posting_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
+                
+                try:
+                    p_r = http_get(posting_url, headers=headers, timeout=10, attempts=2)
+                    if p_r.status_code == 200:
+                        p_data = p_r.json()
+                        sections = p_data.get("sections", {}) or {}
+                        
+                        desc_text = ""
+                        for sec_name, sec_dict in sections.items():
+                            if sec_dict and isinstance(sec_dict, dict):
+                                text_val = sec_dict.get("text", "")
+                                title_val = sec_dict.get("title", "")
+                                if text_val:
+                                    desc_text += f"\n\n### {title_val}\n{text_val}" if title_val else f"\n\n{text_val}"
+                                    
+                        jd_text = clean_text(desc_text).strip()
+                    else:
+                        jd_text = ""
+                except Exception as ex:
+                    log(f"Error querying SmartRecruiters details for {job_id}: {ex}")
+                    jd_text = ""
+                    
+                if not jd_text:
+                    continue
+                    
+                desc_hash = compute_description_hash(jd_text)
+                comp_name = company.title()
+                
+                matched_count += 1
+                discovered.append({
+                    "job_title": title,
+                    "company_name": comp_name,
+                    "job_url": job_url,
+                    "requirement_id": str(job_id),
+                    "job_description": jd_text,
+                    "location_work_type": loc_str,
+                    "description_hash": desc_hash,
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": released_date_str if released_date_str else get_cdt_now_iso()
+                })
+        except Exception as e:
+            log(f"Error querying SmartRecruiters board '{company}': {e}")
+            
+    log(f"SmartRecruiters API Sourcing complete. Found {matched_count} matching US jobs.")
+    return discovered
+
+
+def discover_new_slugs(discovered_urls, target_companies_cfg):
+    log("Scanning discovered URLs for new company slugs...")
+    greenhouse_slugs = set(target_companies_cfg.get("greenhouse", []))
+    lever_slugs = set(target_companies_cfg.get("lever", []))
+    ashby_slugs = set(target_companies_cfg.get("ashby", []))
+    smart_slugs = set(target_companies_cfg.get("smartrecruiters", []))
+    
+    new_greenhouse = []
+    new_lever = []
+    new_ashby = []
+    new_smart = []
+    
+    import urllib.parse
+    
+    for url in discovered_urls:
+        try:
+            parsed = urllib.parse.urlparse(url)
+            netloc = parsed.netloc.lower()
+            path = parsed.path
+            
+            if "greenhouse.io" in netloc:
+                parts = [p for p in path.split("/") if p]
+                if parts and parts[0] not in ("embed", "v1", "boards", "jobs"):
+                    slug = parts[0]
+                    if slug not in greenhouse_slugs:
+                        greenhouse_slugs.add(slug)
+                        new_greenhouse.append(slug)
+                elif len(parts) > 1 and parts[0] in ("boards", "jobs"):
+                    slug = parts[1]
+                    if slug not in greenhouse_slugs:
+                        greenhouse_slugs.add(slug)
+                        new_greenhouse.append(slug)
+            
+            elif "lever.co" in netloc:
+                parts = [p for p in path.split("/") if p]
+                if parts and parts[0] not in ("embed", "v0", "postings"):
+                    slug = parts[0]
+                    if slug not in lever_slugs:
+                        lever_slugs.add(slug)
+                        new_lever.append(slug)
+            
+            elif "ashbyhq.com" in netloc:
+                parts = [p for p in path.split("/") if p]
+                if parts:
+                    slug = parts[0]
+                    if slug not in ashby_slugs:
+                        ashby_slugs.add(slug)
+                        new_ashby.append(slug)
+            
+            elif "smartrecruiters.com" in netloc:
+                parts = [p for p in path.split("/") if p]
+                if parts and parts[0] not in ("postings", "v1"):
+                    slug = parts[0]
+                    if slug not in smart_slugs:
+                        smart_slugs.add(slug)
+                        new_smart.append(slug)
+                        
+        except Exception:
+            pass
+            
+    if new_greenhouse or new_lever or new_ashby or new_smart:
+        log(f"Discovered new slugs to auto-add: Greenhouse: {new_greenhouse}, Lever: {new_lever}, Ashby: {new_ashby}, SmartRecruiters: {new_smart}")
+        target_companies_cfg["greenhouse"] = sorted(list(greenhouse_slugs))
+        target_companies_cfg["lever"] = sorted(list(lever_slugs))
+        target_companies_cfg["ashby"] = sorted(list(ashby_slugs))
+        target_companies_cfg["smartrecruiters"] = sorted(list(smart_slugs))
+        
+        try:
+            config_data = {}
+            if CONFIG_PATH.exists():
+                config_data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            config_data["target_companies"] = target_companies_cfg
+            CONFIG_PATH.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
+            log("Successfully updated config.json with newly discovered slugs.")
+        except Exception as e:
+            log(f"Error saving updated config.json: {e}")
+
+
 def main(dry_run=False):
     target_titles = []
     config_data = {}
@@ -851,9 +2416,14 @@ def main(dry_run=False):
     merged_by_url = {}
     if merge_previous and SCRAPED_OUTPUT.exists():
         try:
+            mtime = datetime.fromtimestamp(SCRAPED_OUTPUT.stat().st_mtime, tz=timezone(timedelta(hours=-5))).isoformat()
             for j in json.loads(SCRAPED_OUTPUT.read_text(encoding="utf-8")):
                 u = j.get("job_url")
                 if u:
+                    if "scraped_at" not in j:
+                        j["scraped_at"] = mtime
+                    if "description_hash" not in j and j.get("job_description"):
+                        j["description_hash"] = compute_description_hash(j["job_description"])
                     merged_by_url[normalize_job_url(u)] = j
         except Exception as e:
             log(f"Warning: could not merge previous scraped_jobs.json: {e}")
@@ -862,61 +2432,73 @@ def main(dry_run=False):
     scraped_jobs = []
     dry_urls = []
 
+    # 1. Fetch from RSS Feeds
+    log("Starting direct RSS feed sourcing...")
+    rss_jobs = fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(rss_jobs)
+    
+    # 2. Fetch from Company Board APIs
+    log("Starting direct Company Board API sourcing...")
+    target_companies = config_data.get("target_companies", {})
+    api_jobs = fetch_company_board_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(api_jobs)
+
+    # 2b. Fetch from Ashby Boards API
+    log("Starting direct Ashby Boards API sourcing...")
+    ashby_jobs = fetch_ashby_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(ashby_jobs)
+
+    # 2c. Fetch from Workable Global Search API
+    log("Starting direct Workable Global Search API sourcing...")
+    workable_jobs = fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(workable_jobs)
+
+    # 2d. Fetch from SmartRecruiters Boards API
+    log("Starting direct SmartRecruiters Boards API sourcing...")
+    smart_jobs = fetch_smartrecruiters_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(smart_jobs)
+
+    # 2e. Fetch from The Muse Global Jobs API
+    log("Starting direct The Muse Global API sourcing...")
+    muse_jobs = fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls)
+    scraped_jobs.extend(muse_jobs)
+
     log("Starting Yahoo search for US job postings (remote / hybrid / onsite)...")
     if dry_run:
         log("DRY RUN: collecting URLs only (no per-job page scrape).")
 
+    yield_threshold = search_cfg.get("yield_threshold", 2)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    
+    synonyms_map = expand_target_titles_with_gemini(target_titles, api_key)
+
     for title in target_titles:
-        queries = build_yahoo_queries(title, search_cfg)
-        for query in queries:
-            log(f"Searching: {query}")
-            urls = search_yahoo(query)
-            time.sleep(2)
+        if SEARCH_STATE["aborted"]:
+            log("Search discovery stage has been aborted. Skipping remaining target titles.")
+            break
+        log(f"Processing target title: '{title}'")
+        new_jobs, urls_found = search_and_scrape_for_keyword(title, search_cfg, found_urls, dry_run, dry_urls)
+        scraped_jobs.extend(new_jobs)
 
-            for href in urls:
-                nu = normalize_job_url(href)
-                if not nu:
-                    continue
-                if nu in found_urls:
-                    continue
-                found_urls.add(nu)
+        current_yield = len(new_jobs) if not dry_run else urls_found
 
-                if dry_run:
-                    dry_urls.append({"job_url": href, "query": query, "title_keyword": title})
-                    continue
+        if current_yield < yield_threshold:
+            syns = synonyms_map.get(title, [])
+            if syns:
+                log(f"Yield of {current_yield} for '{title}' is below threshold of {yield_threshold}. Triggering query expansion with synonyms: {syns}")
+                for synonym in syns:
+                    if SEARCH_STATE["aborted"]:
+                        break
+                    log(f"Executing expanded search for synonym: '{synonym}' (original: '{title}')")
+                    syn_jobs, syn_urls_found = search_and_scrape_for_keyword(synonym, search_cfg, found_urls, dry_run, dry_urls)
+                    scraped_jobs.extend(syn_jobs)
+            else:
+                log(f"Yield of {current_yield} for '{title}' is below threshold, but no synonyms are available.")
+        else:
+            log(f"Yield of {current_yield} for '{title}' met or exceeded threshold of {yield_threshold}. No expansion needed.")
 
-                domain = urlparse(href).netloc.lower()
-                job_data = None
-                if 'greenhouse.io' in domain:
-                    job_data = scrape_greenhouse(href)
-                elif 'lever.co' in domain:
-                    job_data = scrape_lever(href)
-                elif 'myworkdayjobs.com' in domain:
-                    job_data = scrape_workday(href)
-                elif 'ashbyhq.com' in domain:
-                    job_data = scrape_ashby(href)
-                elif 'workable.com' in domain:
-                    job_data = scrape_workable(href)
-                elif 'smartrecruiters.com' in domain:
-                    job_data = scrape_smartrecruiters(href)
-                elif 'weworkremotely.com' in domain:
-                    job_data = scrape_weworkremotely(href)
-                elif 'remote.co' in domain:
-                    job_data = scrape_remoteco(href)
-                elif 'linkedin.com' in domain:
-                    job_data = scrape_linkedin(href)
-                elif 'workatastartup.com' in domain:
-                    job_data = scrape_yc(href)
-
-                if job_data and job_data.get("job_description"):
-                    if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
-                        log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
-                        scraped_jobs.append(job_data)
-                    else:
-                        log(f"Discarded (No Requirement ID): {href}")
-                else:
-                    if job_data:
-                        log(f"Discarded (No JD text or inactive): {href}")
+    # 3. Dynamic Slug Discovery (auto-detect new company boards from crawler logs)
+    discover_new_slugs(found_urls, target_companies)
 
     if dry_run:
         out_path = WORKSPACE / "dry_run_urls.json"
@@ -930,6 +2512,23 @@ def main(dry_run=False):
         if u:
             final_map[normalize_job_url(u)] = j
     out_list = list(final_map.values())
+    
+    # Extract salary and benefits data
+    try:
+        from salary_extractor import extract_salary
+        from benefits_extractor import extract_benefits
+        for j in out_list:
+            if "posted_at" not in j or not j["posted_at"]:
+                j["posted_at"] = j.get("scraped_at") or get_cdt_now_iso()
+            if not j.get("salary_text"):
+                sal_info = extract_salary(j.get("job_description", ""), j.get("job_title", ""))
+                if sal_info:
+                    j.update(sal_info)
+            if not j.get("benefits"):
+                j["benefits"] = extract_benefits(j.get("job_description", ""))
+    except Exception as e:
+        log(f"Warning: Failed to extract salary/benefits/posted_at data: {e}")
+
     SCRAPED_OUTPUT.write_text(json.dumps(out_list, indent=2), encoding="utf-8")
 
     log(f"Completed search and scrape. New/changed rows this run: {len(scraped_jobs)}. Total in {SCRAPED_OUTPUT.name}: {len(out_list)}")

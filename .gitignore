@@ -8,6 +8,9 @@
 logs/
 *.log
 
+# Local SQLite mirror of Notion-synced jobs (created at runtime)
+/data/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -46,3 +49,8 @@ dashboard/.pnpm-debug.log*
 # OS / editor
 .DS_Store
 *.pem
+
+# Diagnostic/temporary files
+/dry_run_urls.json
+/eslint_report.txt
+/scratch/

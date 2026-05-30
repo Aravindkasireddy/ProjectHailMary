@@ -1,13 +1,158 @@
+import asyncio
 import json
 import re
 import sys
 import time
+import random
+import hashlib
 from pathlib import Path
-
-import requests
-from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-from playwright.sync_api import sync_playwright
+
+import httpx
+from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
+
+def compute_description_hash(description):
+    if not description:
+        return ""
+    normalized = "".join(description.lower().split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+def is_us_location(location_str):
+    if not location_str:
+        return False
+    loc_lower = location_str.lower()
+    
+    # 1. Clean and tokenize into words
+    words = re.findall(r'\b[a-z]+\b', loc_lower)
+    
+    # 2. Ignored generic terms
+    ignored_words = {
+        "remote", "hybrid", "onsite", "work", "from", "home", "anywhere", "location", 
+        "timezone", "time", "zone", "eastern", "pacific", "central", "mountain", 
+        "et", "pt", "ct", "mt", "hours", "day", "days", "week", "weeks", "flexible", 
+        "office", "and", "or", "in", "at", "the", "with", "option", "applicants", 
+        "applicable", "global", "worldwide", "only", "based", "located", "reside",
+        "resident", "residents", "us-based", "us-remote", "remote-us", "state", "states",
+        "united", "america", "americas", "columbia", "district"
+    }
+    
+    # 3. Positive US indicators
+    us_indicators = {"us", "usa", "u.s.", "u.s.a", "united states", "america"}
+    
+    # 4. US states (names and postal codes)
+    us_states_abbr = {
+        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
+        "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+        "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy"
+    }
+    us_states_full = {
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida", 
+        "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", 
+        "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", 
+        "nevada", "new hampshire", "new jersey", "new mexico", "new york", "north carolina", "north dakota", 
+        "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota", "tennessee", 
+        "texas", "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming"
+    }
+    
+    # 5. Major US cities
+    us_cities = {
+        "san francisco", "sf", "seattle", "new york", "nyc", "austin", "chicago", "boston", 
+        "denver", "los angeles", "la", "atlanta", "dallas", "houston", "miami", "philadelphia", 
+        "phoenix", "san diego", "san jose", "sunnyvale", "mountain view", "palo alto", "redmond", 
+        "bellevue", "oakland", "detroit", "minneapolis", "portland", "salt lake city", "pittsburgh", 
+        "washington", "arlington", "boulder", "cambridge", "raleigh", "durham", "charlotte", 
+        "nashville", "salt lake", "las vegas", "orlando", "tampa", "tempe", "culver city",
+        "menlo park", "cupertino", "santa clara", "redwood city", "irvine", "berkeley", "columbus"
+    }
+    
+    # Check for direct negative indicator match (e.g. EMEA, Canada, Europe, UK, etc.)
+    negative_indicators = {
+        "europe", "uk", "london", "india", "germany", "france", "canada", "latam", 
+        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil", 
+        "spain", "poland", "ukraine", "philippines", "ireland", "tokyo", "japan",
+        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne", 
+        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo", 
+        "amsterdam", "krakow", "mexico", "sweden", "stockholm", "zurich",
+        "pakistan", "lahore", "karachi", "islamabad", "italy", "rome", "milan",
+        "portugal", "lisbon", "madrid", "barcelona", "china", "beijing",
+        "shanghai", "hong kong", "taiwan", "taipei", "vietnam", "thailand", "bangkok",
+        "croatia", "zagreb", "czech", "republic", "türkiye", "turkey", "noida",
+        "argentina", "ankara", "mississauga", "copenhagen", "denmark", "south korea",
+        "korea", "belgrade", "serbia", "yerevan", "armenia"
+    }
+    
+    has_negative = any(ni in loc_lower for ni in negative_indicators)
+    if has_negative:
+        return False
+        
+    has_positive = any(pi in loc_lower for pi in us_indicators)
+    if has_positive:
+        return True
+        
+    has_city = any(city in loc_lower for city in us_cities)
+    has_state_full = any(state in loc_lower for state in us_states_full)
+    
+    if has_city or has_state_full:
+        return True
+        
+    # Check individual words for states
+    for w in words:
+        if w in us_states_abbr:
+            # Avoid matching common words like "in", "or", "me", "la", "co" as states unless prefixed by a comma or space comma
+            if w in {"in", "or", "me", "la", "co", "ma"}:
+                if re.search(r'\b,\s*' + w + r'\b', loc_lower):
+                    return True
+            else:
+                return True
+                
+    # If no negative indicators and it has remote/hybrid/onsite, and no other foreign words
+    non_generic_non_us = []
+    for w in words:
+        if (w not in ignored_words and 
+            w not in us_states_abbr and 
+            w not in us_states_full and 
+            w not in us_cities and 
+            w not in us_indicators):
+            non_generic_non_us.append(w)
+            
+    if non_generic_non_us:
+        return False
+        
+    return True
+
+
+def load_known_hashes(workspace_path):
+    approved_hashes = {}
+    failed_hashes = {}
+    
+    approved_path = workspace_path / "approved_jobs.json"
+    if approved_path.exists():
+        try:
+            jobs = json.loads(approved_path.read_text(encoding="utf-8"))
+            for j in jobs:
+                h = j.get("description_hash")
+                if not h and j.get("job_description"):
+                    h = compute_description_hash(j["job_description"])
+                if h:
+                    approved_hashes[h] = j
+        except Exception as e:
+            print(f"Error loading approved hashes: {e}")
+            
+    failed_path = workspace_path / "failed_candidate_jobs.json"
+    if failed_path.exists():
+        try:
+            jobs = json.loads(failed_path.read_text(encoding="utf-8"))
+            for j in jobs:
+                h = j.get("description_hash")
+                if not h and j.get("job_description"):
+                    h = compute_description_hash(j["job_description"])
+                if h:
+                    failed_hashes[h] = j
+        except Exception as e:
+            print(f"Error loading failed hashes: {e}")
+            
+    return approved_hashes, failed_hashes
 
 _scripts_dir = Path(__file__).resolve().parent
 _repo_root = _scripts_dir.parent
@@ -32,26 +177,26 @@ def clean_text(html_content):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return "\n".join(lines)
 
-def fetch_with_playwright(url):
+async def fetch_with_playwright(browser, url):
     try:
-        with sync_playwright() as p:
-            browser = p.webkit.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-            )
-            page = context.new_page()
-            page.goto(url, wait_until="commit", timeout=20000)
-            time.sleep(3)
-            html = page.content()
-            browser.close()
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+        )
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="commit", timeout=20000)
+            await asyncio.sleep(3)
+            html = await page.content()
             return html
+        finally:
+            await context.close()
     except Exception as e:
         print(f"Playwright WebKit error for {url}: {e}", flush=True)
         return None
 
-def scrape_weworkremotely(url):
+async def scrape_weworkremotely(browser, url):
     try:
-        html = fetch_with_playwright(url)
+        html = await fetch_with_playwright(browser, url)
         if not html:
             return None
         soup = BeautifulSoup(html, 'html.parser')
@@ -86,9 +231,9 @@ def scrape_weworkremotely(url):
         print(f"Failed to scrape We Work Remotely URL {url}: {e}")
         return None
 
-def scrape_remoteco(url):
+async def scrape_remoteco(browser, url):
     try:
-        html = fetch_with_playwright(url)
+        html = await fetch_with_playwright(browser, url)
         if not html:
             return None
         soup = BeautifulSoup(html, 'html.parser')
@@ -161,6 +306,18 @@ def scrape_remoteco(url):
         if locs:
             location = ", ".join(locs) if isinstance(locs, list) else locs
             
+        source_url = job_details.get("sourceUrl")
+        if source_url and isinstance(source_url, str):
+            source_url = source_url.strip().replace('"', '').replace("'", "")
+            if source_url.startswith("http://") or source_url.startswith("https://"):
+                url = source_url
+            else:
+                print(f"Skipping Remote.co URL {url} because sourceUrl is not a valid HTTP link.", flush=True)
+                return None
+        else:
+            print(f"Skipping Remote.co URL {url} because sourceUrl is paywalled or missing.", flush=True)
+            return None
+            
         return {
             "job_title": title,
             "company_name": company_name,
@@ -173,9 +330,9 @@ def scrape_remoteco(url):
         print(f"Failed to scrape Remote.co URL {url}: {e}")
         return None
 
-def scrape_linkedin(url):
+async def scrape_linkedin(browser, url):
     try:
-        html = fetch_with_playwright(url)
+        html = await fetch_with_playwright(browser, url)
         if not html:
             return None
         soup = BeautifulSoup(html, 'html.parser')
@@ -207,9 +364,9 @@ def scrape_linkedin(url):
         print(f"Failed to scrape LinkedIn URL {url}: {e}")
         return None
 
-def scrape_yc(url):
+async def scrape_yc(browser, url):
     try:
-        html = fetch_with_playwright(url)
+        html = await fetch_with_playwright(browser, url)
         if not html:
             return None
         soup = BeautifulSoup(html, 'html.parser')
@@ -243,7 +400,7 @@ def scrape_yc(url):
         print(f"Failed to scrape YC Work at a Startup URL {url}: {e}")
         return None
 
-def scrape_workday_via_api(url):
+async def scrape_workday_via_api(client, url):
     parsed = urlparse(url)
     host = parsed.netloc
     path = parsed.path
@@ -265,7 +422,7 @@ def scrape_workday_via_api(url):
     for tenant in tenant_choices:
         api_url = f"https://{host}/wday/cxs/{tenant}/{board_id}/job/{job_path}"
         try:
-            r = requests.get(api_url, headers=headers, timeout=10)
+            r = await client.get(api_url, headers=headers, timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 posting = data.get("jobPostingInfo", {})
@@ -292,9 +449,9 @@ def scrape_workday_via_api(url):
             pass
     return None
 
-def scrape_ashby(url):
+async def scrape_ashby(client, url):
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = await client.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return None
             
@@ -302,7 +459,7 @@ def scrape_ashby(url):
         
         parsed = urlparse(url)
         path_parts = [p for p in parsed.path.split('/') if p]
-        final_parsed = urlparse(response.url)
+        final_parsed = urlparse(str(response.url))
         final_path_parts = [p for p in final_parsed.path.split('/') if p]
         
         if len(final_path_parts) < len(path_parts) and len(final_path_parts) <= 1:
@@ -349,7 +506,7 @@ def scrape_ashby(url):
                     "job_description": description.strip(),
                     "location_work_type": f"{loc_str} (Remote/Hybrid)"
                 }
-            except Exception as e:
+            except Exception:
                 pass
                 
         title_elem = soup.find('title') or soup.find('h1') or soup.find('h2')
@@ -373,7 +530,7 @@ def scrape_ashby(url):
         print(f"Failed to scrape Ashby: {e}")
         return None
 
-def scrape_workable(url):
+async def scrape_workable(client, url):
     try:
         parsed = urlparse(url)
         path_parts = [p for p in parsed.path.split('/') if p]
@@ -392,14 +549,14 @@ def scrape_workable(url):
         if company_slug != "unknown":
             try:
                 acct_url = f"https://apply.workable.com/api/v1/accounts/{company_slug}"
-                acct_res = requests.get(acct_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                acct_res = await client.get(acct_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
                 if acct_res.status_code == 200:
                     company_name = acct_res.json().get("name", company_name)
             except Exception:
                 pass
                 
         api_url = f"https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{job_id}"
-        response = requests.get(api_url, headers=headers, timeout=10)
+        response = await client.get(api_url, headers=headers, timeout=10)
         if response.status_code != 200:
             return None
             
@@ -447,7 +604,7 @@ def scrape_workable(url):
         print(f"Failed to scrape Workable: {e}")
         return None
 
-def scrape_smartrecruiters(url):
+async def scrape_smartrecruiters(client, url):
     try:
         parsed = urlparse(url)
         path_parts = [p for p in parsed.path.split('/') if p]
@@ -460,7 +617,7 @@ def scrape_smartrecruiters(url):
             return None
             
         api_url = f"https://api.smartrecruiters.com/v1/companies/{company_slug}/postings/{posting_id}"
-        response = requests.get(api_url, headers=headers, timeout=10)
+        response = await client.get(api_url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
@@ -493,7 +650,7 @@ def scrape_smartrecruiters(url):
                 "location_work_type": f"{loc_str} (Remote/Hybrid)"
             }
             
-        response = requests.get(url, headers=headers, timeout=10)
+        response = await client.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return None
             
@@ -612,92 +769,128 @@ def check_red_flags(job):
     elif "desktop support" in title or "edi" in title:
         red_flags.append("Out of scope (Desktop support/EDI)")
         
+    # 5. Non-US Location check
+    loc_lower = job.get("location_work_type", "").lower()
+    non_us_countries_cities = [
+        "canada", "toronto", "vancouver", "montreal", "ottawa", "calgary", "edmonton", "quebec",
+        "united kingdom", " u.k.", ", uk", " u.k", "/uk", " london", "manchester",
+        "germany", "berlin", "munich", "frankfurt", "hamburg",
+        "india", "bangalore", "bengaluru", "pune", "mumbai", "hyderabad", "chennai", "delhi",
+        "australia", "sydney", "melbourne", "brisbane",
+        "france", "paris", "spain", "madrid", "barcelona",
+        "poland", "warsaw", "krakow", "netherlands", "amsterdam", "rotterdam",
+        "ireland", "dublin", "brazil", "mexico", "switzerland", "zurich", "geneva",
+        "sweden", "stockholm", "singapore", "philippines", "manila", "ukraine", "kyiv"
+    ]
+    
+    has_non_us_loc = False
+    if not is_us_location(loc_lower):
+        red_flags.append(f"Non-US Location restriction (location field '{loc_lower}' is not strictly US-based)")
+        has_non_us_loc = True
+    else:
+        for term in non_us_countries_cities:
+            if term in loc_lower:
+                red_flags.append(f"Non-US Location restriction (matched: {term} in location field)")
+                has_non_us_loc = True
+                break
+            
+    if not has_non_us_loc:
+        non_us_phrases = [
+            r"must be located in canada", r"must be based in canada",
+            r"must be based in the uk", r"must be located in the uk",
+            r"located in london", r"based in london",
+            r"located in germany", r"based in germany",
+            r"located in india", r"based in india",
+            r"must be resident of canada", r"must reside in canada",
+            r"eligible to work in canada", r"authorized to work in canada",
+            r"eligible to work in the uk", r"authorized to work in the uk"
+        ]
+        for phrase in non_us_phrases:
+            if re.search(phrase, desc):
+                red_flags.append(f"Non-US Location restriction (matched: {phrase} in description)")
+                break
+        
     return red_flags
 
-def main():
-    input_path = str(WORKSPACE / "scraped_jobs.json")
-    with open(input_path, 'r') as f:
-        jobs = json.load(f)
-        
-    print(f"Loaded {len(jobs)} scraped jobs. Validating active status and checking red flags...", flush=True)
-    
-    passed_jobs = []
-    failed_jobs = []
-    
-    for i, job in enumerate(jobs):
+async def process_single_job(semaphore, client, browser, job, i, total_jobs):
+    async with semaphore:
         url = job.get("job_url", "")
         domain = urlparse(url).netloc.lower()
         company = job.get("company_name", "Unknown")
         
-        print(f"[{i+1}/{len(jobs)}] Processing {company} - {url}...", flush=True)
-        time.sleep(1) # Sleep to avoid rate limiting
+        print(f"[{i+1}/{total_jobs}] Processing {company} - {url}...", flush=True)
+        
+        # Sleep to avoid aggressive hammering
+        await asyncio.sleep(random.uniform(0.5, 1.5))
         
         scraped_data = None
-        
-        if 'myworkdayjobs.com' in domain:
-            scraped_data = scrape_workday_via_api(url)
-            if not scraped_data:
-                print("  Failed to scrape via Workday REST API.", flush=True)
-                continue
-        elif 'workable.com' in domain:
-            scraped_data = scrape_workable(url)
-            if not scraped_data:
-                print("  Failed to scrape via Workable API.", flush=True)
-                continue
-        elif 'smartrecruiters.com' in domain:
-            scraped_data = scrape_smartrecruiters(url)
-            if not scraped_data:
-                print("  Failed to scrape via SmartRecruiters API.", flush=True)
-                continue
-        elif 'ashbyhq.com' in domain:
-            scraped_data = scrape_ashby(url)
-            if not scraped_data:
-                print("  Failed to scrape via Ashby JSON-LD.", flush=True)
-                continue
-        elif 'weworkremotely.com' in domain:
-            scraped_data = scrape_weworkremotely(url)
-            if not scraped_data:
-                print("  Failed to scrape via We Work Remotely Playwright.", flush=True)
-                continue
-        elif 'remote.co' in domain:
-            scraped_data = scrape_remoteco(url)
-            if not scraped_data:
-                print("  Failed to scrape via Remote.co Playwright.", flush=True)
-                continue
-        elif 'linkedin.com' in domain:
-            scraped_data = scrape_linkedin(url)
-            if not scraped_data:
-                print("  Failed to scrape via LinkedIn Playwright.", flush=True)
-                continue
-        elif 'workatastartup.com' in domain:
-            scraped_data = scrape_yc(url)
-            if not scraped_data:
-                print("  Failed to scrape via YC Playwright.", flush=True)
-                continue
-        else:
-            # Greenhouse or Lever
-            try:
-                r = requests.get(url, headers=headers, timeout=10)
-                final_url = r.url
+        try:
+            if 'myworkdayjobs.com' in domain:
+                scraped_data = await scrape_workday_via_api(client, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via Workday REST API: {url}", flush=True)
+                    return "skip", None
+            elif 'workable.com' in domain:
+                scraped_data = await scrape_workable(client, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via Workable API: {url}", flush=True)
+                    return "skip", None
+            elif 'smartrecruiters.com' in domain:
+                scraped_data = await scrape_smartrecruiters(client, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via SmartRecruiters API: {url}", flush=True)
+                    return "skip", None
+            elif 'ashbyhq.com' in domain:
+                scraped_data = await scrape_ashby(client, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via Ashby JSON-LD: {url}", flush=True)
+                    return "skip", None
+            elif 'weworkremotely.com' in domain:
+                scraped_data = await scrape_weworkremotely(browser, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via We Work Remotely Playwright: {url}", flush=True)
+                    return "skip", None
+            elif 'remote.co' in domain:
+                scraped_data = await scrape_remoteco(browser, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via Remote.co Playwright: {url}", flush=True)
+                    return "skip", None
+            elif 'linkedin.com' in domain:
+                scraped_data = await scrape_linkedin(browser, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via LinkedIn Playwright: {url}", flush=True)
+                    return "skip", None
+            elif 'workatastartup.com' in domain:
+                scraped_data = await scrape_yc(browser, url)
+                if not scraped_data:
+                    print(f"[{i+1}/{total_jobs}] Failed to scrape via YC Playwright: {url}", flush=True)
+                    return "skip", None
+            else:
+                # Greenhouse or Lever
+                r = await client.get(url, headers=headers, timeout=10)
+                if r.status_code != 200:
+                    print(f"[{i+1}/{total_jobs}] Failed to fetch job URL (status {r.status_code}): {url}", flush=True)
+                    return "skip", None
+                final_url = str(r.url)
                 parsed_final = urlparse(final_url)
                 
                 # Greenhouse redirect check
                 if "greenhouse.io" in parsed_final.netloc:
                     if "error=true" in final_url or "/jobs/" not in parsed_final.path:
-                        print(f"  Inactive: Greenhouse redirected to board.", flush=True)
-                        continue
+                        print(f"[{i+1}/{total_jobs}] Inactive: Greenhouse redirected to board: {url}", flush=True)
+                        return "skip", None
                         
                 # Lever redirect/board check
                 if "lever.co" in parsed_final.netloc:
                     path_parts = [p for p in parsed_final.path.split('/') if p]
                     if len(path_parts) < 2:
-                        print(f"  Inactive: Lever redirected to board.", flush=True)
-                        continue
+                        print(f"[{i+1}/{total_jobs}] Inactive: Lever redirected to board: {url}", flush=True)
+                        return "skip", None
                     soup = BeautifulSoup(r.text, 'html.parser')
                     title = soup.title.get_text() if soup.title else ""
                     if "Jobs at" in title or "Current Openings" in title:
-                        print(f"  Inactive: Lever board title.", flush=True)
-                        continue
+                        print(f"[{i+1}/{total_jobs}] Inactive: Lever board title: {url}", flush=True)
+                        return "skip", None
                         
                 soup = BeautifulSoup(r.text, 'html.parser')
                 true_title = ""
@@ -737,30 +930,106 @@ def main():
                     "job_description": desc_clean,
                     "location_work_type": job.get("location_work_type", "Remote")
                 }
-            except Exception as e:
-                print(f"  Error processing URL: {e}", flush=True)
-                continue
-                
+        except Exception as e:
+            print(f"[{i+1}/{total_jobs}] Error processing URL {url}: {e}", flush=True)
+            return "skip", None
+            
         if scraped_data:
-            # Check length of description
-            if len(scraped_data.get("job_description", "")) < 200:
-                print(f"  Inactive: Scraped description too short.", flush=True)
-                continue
+            if "scraped_at" in job:
+                scraped_data["scraped_at"] = job["scraped_at"]
                 
-            # Run red flag checks
+            if len(scraped_data.get("job_description", "")) < 200:
+                print(f"[{i+1}/{total_jobs}] Inactive: Scraped description too short: {url}", flush=True)
+                return "skip", None
+                
             red_flags = check_red_flags(scraped_data)
             if red_flags:
                 scraped_data["red_flags"] = red_flags
-                print(f"  FAILED RED FLAGS: {red_flags}", flush=True)
-                failed_jobs.append(scraped_data)
+                print(f"[{i+1}/{total_jobs}] FAILED RED FLAGS: {red_flags} for {company} - {url}", flush=True)
+                return "fail", scraped_data
             else:
                 scraped_data["red_flags"] = []
-                print(f"  PASSED RED FLAGS! Title: '{scraped_data['job_title']}'", flush=True)
-                passed_jobs.append(scraped_data)
+                print(f"[{i+1}/{total_jobs}] PASSED RED FLAGS! Title: '{scraped_data['job_title']}' for {company} - {url}", flush=True)
+                return "pass", scraped_data
+                
+        return "skip", None
+
+async def main():
+    input_path = str(WORKSPACE / "scraped_jobs.json")
+    with open(input_path, 'r') as f:
+        jobs = json.load(f)
+        
+    print(f"Loaded {len(jobs)} scraped jobs. Validating active status and checking red flags...", flush=True)
+    
+    approved_hashes, failed_hashes = load_known_hashes(WORKSPACE)
+    
+    passed_jobs = []
+    failed_jobs = []
+    miss_jobs = []
+    
+    # 1. Process Cache Hits first
+    for i, job in enumerate(jobs):
+        url = job.get("job_url", "")
+        company = job.get("company_name", "Unknown")
+        desc = job.get("job_description", "")
+        h = job.get("description_hash")
+        if not h and desc:
+            h = compute_description_hash(desc)
+            job["description_hash"] = h
+            
+        if h:
+            if h in approved_hashes and "remote.co" not in url and "remote.co" not in approved_hashes[h].get("job_url", ""):
+                matched = approved_hashes[h]
+                r_flags = check_red_flags(matched)
+                if not r_flags:
+                    print(f"[{i+1}/{len(jobs)}] Cache HIT (Approved) for {company} - {url}. Skipping filter.", flush=True)
+                    job["red_flags"] = []
+                    if "scraped_at" in matched:
+                        job["scraped_at"] = matched["scraped_at"]
+                    if matched.get("job_url"):
+                        job["job_url"] = matched["job_url"]
+                    passed_jobs.append(job)
+                    continue
+                else:
+                    print(f"[{i+1}/{len(jobs)}] Cache HIT (Approved but now failed red flags: {r_flags}) for {company} - {url}. Moving to failed.", flush=True)
+                    job["red_flags"] = r_flags
+                    failed_jobs.append(job)
+                    continue
+            elif h in failed_hashes:
+                print(f"[{i+1}/{len(jobs)}] Cache HIT (Failed) for {company} - {url}. Skipping filter.", flush=True)
+                matched = failed_hashes[h]
+                job["red_flags"] = matched.get("red_flags", ["Previously rejected"])
+                failed_jobs.append(job)
+                continue
+        
+        miss_jobs.append((job, i))
+        
+    # 2. Process Cache Misses in Parallel using asyncio
+    if miss_jobs:
+        print(f"Starting parallel validation for {len(miss_jobs)} cache misses with concurrency limit 5...", flush=True)
+        
+        semaphore = asyncio.Semaphore(5)
+        
+        async with async_playwright() as p:
+            browser = await p.webkit.launch(headless=True)
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                tasks = [
+                    process_single_job(semaphore, client, browser, job, idx, len(jobs))
+                    for job, idx in miss_jobs
+                ]
+                
+                results = await asyncio.gather(*tasks)
+                
+            await browser.close()
+                
+        for status, result in results:
+            if status == "pass":
+                passed_jobs.append(result)
+            elif status == "fail":
+                failed_jobs.append(result)
                 
     print(f"\nProcessing complete.\nPassed jobs: {len(passed_jobs)}\nFailed jobs: {len(failed_jobs)}", flush=True)
     
-    # Save candidate jobs
     with open(str(WORKSPACE / "active_candidate_jobs.json"), "w") as f:
         json.dump(passed_jobs, f, indent=2)
         
@@ -768,4 +1037,4 @@ def main():
         json.dump(failed_jobs, f, indent=2)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
