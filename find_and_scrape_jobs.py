@@ -9,12 +9,71 @@ import requests
 import hashlib
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, quote_plus, parse_qs
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
+
+def get_cdt_now_iso():
+    # CDT is UTC-5
+    cdt = timezone(timedelta(hours=-5))
+    return datetime.now(cdt).isoformat()
+
+def is_recent_date(val):
+    if not val:
+        return True
+    try:
+        import email.utils
+        
+        # Lever API createdAt is integer milliseconds
+        if isinstance(val, (int, float)):
+            dt = datetime.fromtimestamp(val / 1000.0, tz=timezone.utc)
+            now = datetime.now(timezone.utc)
+            return (now - dt).total_seconds() < 86400
+            
+        if isinstance(val, str):
+            val = val.strip()
+            # Try parsing RFC 2822 date (standard for RSS pubDate)
+            try:
+                dt = email.utils.parsedate_to_datetime(val)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(dt.tzinfo)
+                return (now - dt).total_seconds() < 86400
+            except Exception:
+                pass
+                
+            # Try parsing ISO 8601 date
+            iso_str = val.replace('Z', '+00:00')
+            try:
+                dt = datetime.fromisoformat(iso_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(dt.tzinfo)
+                return (now - dt).total_seconds() < 86400
+            except Exception:
+                pass
+                
+            # Try parsing YYYY-MM-DD
+            try:
+                dt = datetime.strptime(val[:10], "%Y-%m-%d")
+                dt = dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                return (now - dt).total_seconds() < 86400
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Error parsing date {val}: {e}")
+    return True
+
+SEARCH_STATE = {
+    "consecutive_failures": 0,
+    "consecutive_zero_yields": 0,
+    "aborted": False
+}
+
 USER_AGENTS = [
     # Chrome on Windows/Mac/Linux
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -78,16 +137,108 @@ def compute_description_hash(description):
     normalized = "".join(description.lower().split())
     return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
+def filter_discovered_links(links):
+    if not links:
+        return []
+    valid_links = []
+    for link in links:
+        try:
+            parsed = urlparse(link)
+            domain = parsed.netloc.lower()
+            if any(bad in domain for bad in ['duckduckgo.com', 'yahoo.com', 'google.com', 'bing.com']):
+                continue
+            if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
+                path_parts = [p for p in parsed.path.split('/') if p]
+                if 'greenhouse.io' in domain:
+                    if len(path_parts) >= 3 and path_parts[1] == 'jobs':
+                        valid_links.append(link)
+                elif 'lever.co' in domain:
+                    if len(path_parts) >= 2:
+                        valid_links.append(link)
+                elif 'myworkdayjobs.com' in domain:
+                    if 'job' in path_parts:
+                        valid_links.append(link)
+                elif 'ashbyhq.com' in domain:
+                    if len(path_parts) >= 2:
+                        valid_links.append(link)
+                elif 'workable.com' in domain:
+                    if len(path_parts) >= 3 and path_parts[1] == 'j':
+                        valid_links.append(link)
+                elif 'smartrecruiters.com' in domain:
+                    if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
+                        valid_links.append(link)
+                elif 'weworkremotely.com' in domain:
+                    if 'remote-jobs' in path_parts:
+                        valid_links.append(link)
+                elif 'remote.co' in domain:
+                    if 'job-details' in path_parts or 'job' in path_parts:
+                        valid_links.append(link)
+                elif 'linkedin.com' in domain:
+                    if 'view' in path_parts:
+                        valid_links.append(link)
+                elif 'workatastartup.com' in domain:
+                    if 'jobs' in path_parts:
+                        valid_links.append(link)
+        except Exception:
+            pass
+    return list(set(valid_links))
+
+def search_google_custom(query):
+    api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
+    cx = os.environ.get("GOOGLE_SEARCH_CX")
+    if not api_key or not cx:
+        return None
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": api_key,
+        "cx": cx,
+        "q": query,
+        "dateRestrict": "d1"
+    }
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            items = data.get("items", [])
+            return [item["link"] for item in items if "link" in item]
+        else:
+            log(f"Google Custom Search API returned status code {r.status_code}: {r.text}")
+    except Exception as e:
+        log(f"Google Custom Search API error: {e}")
+    return None
+
+def search_bing_api(query):
+    api_key = os.environ.get("BING_SEARCH_API_KEY")
+    if not api_key:
+        return None
+    url = "https://api.bing.microsoft.com/v7.0/search"
+    headers = {"Ocp-Apim-Subscription-Key": api_key}
+    params = {"q": query, "count": 10, "freshness": "Day"}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            web_pages = data.get("webPages", {}).get("value", [])
+            return [page["url"] for page in web_pages if "url" in page]
+        else:
+            log(f"Bing Search API returned status code {r.status_code}: {r.text}")
+    except Exception as e:
+        log(f"Bing Search API error: {e}")
+    return None
+
 def search_duckduckgo(query):
+    if SEARCH_STATE["aborted"]:
+        return []
     headers = {
         "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
-    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&df=d"
     links = []
     try:
-        r = http_get(url, headers=headers, timeout=15)
+        r = http_get(url, headers=headers, timeout=10)
         if r.status_code == 200:
+            SEARCH_STATE["consecutive_failures"] = 0
             soup = BeautifulSoup(r.text, 'html.parser')
             for a in soup.find_all('a', href=True):
                 href = a['href']
@@ -97,51 +248,18 @@ def search_duckduckgo(query):
                     actual_url = queries.get('uddg', [None])[0]
                     if actual_url:
                         href = actual_url
-                
-                if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
-                    links.append(href)
+                links.append(href)
+        else:
+            log(f"DuckDuckGo search error for '{query}': status code {r.status_code}")
+            SEARCH_STATE["consecutive_failures"] += 1
     except Exception as e:
         log(f"DuckDuckGo search error for '{query}': {e}")
-    
-    valid_links = []
-    for link in links:
-        parsed = urlparse(link)
-        domain = parsed.netloc.lower()
-        if any(bad in domain for bad in ['duckduckgo.com']):
-            continue
-        if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
-            path_parts = [p for p in parsed.path.split('/') if p]
-            if 'greenhouse.io' in domain:
-                if len(path_parts) >= 3 and path_parts[1] == 'jobs':
-                    valid_links.append(link)
-            elif 'lever.co' in domain:
-                if len(path_parts) >= 2:
-                    valid_links.append(link)
-            elif 'myworkdayjobs.com' in domain:
-                if 'job' in path_parts:
-                    valid_links.append(link)
-            elif 'ashbyhq.com' in domain:
-                if len(path_parts) >= 2:
-                    valid_links.append(link)
-            elif 'workable.com' in domain:
-                if len(path_parts) >= 3 and path_parts[1] == 'j':
-                    valid_links.append(link)
-            elif 'smartrecruiters.com' in domain:
-                if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
-                    valid_links.append(link)
-            elif 'weworkremotely.com' in domain:
-                if 'remote-jobs' in path_parts:
-                    valid_links.append(link)
-            elif 'remote.co' in domain:
-                if 'job-details' in path_parts or 'job' in path_parts:
-                    valid_links.append(link)
-            elif 'linkedin.com' in domain:
-                if 'view' in path_parts:
-                    valid_links.append(link)
-            elif 'workatastartup.com' in domain:
-                if 'jobs' in path_parts:
-                    valid_links.append(link)
-    return list(set(valid_links))
+        SEARCH_STATE["consecutive_failures"] += 1
+        
+    if SEARCH_STATE["consecutive_failures"] >= 5:
+        log("Aborting search discovery stage early: reached 5 consecutive connection/DNS/server failures.")
+        SEARCH_STATE["aborted"] = True
+    return links
 
 def extract_job_with_gemini(url, html, api_key):
     if not api_key:
@@ -242,7 +360,7 @@ def _setup_run_logging():
 log = _setup_run_logging().info
 
 
-def http_get(url, headers=None, timeout=10, attempts=3):
+def http_get(url, headers=None, timeout=10, attempts=2):
     """GET with simple exponential backoff on connection errors, proxy and User-Agent rotation."""
     last_exc = None
     for i in range(attempts):
@@ -258,15 +376,10 @@ def http_get(url, headers=None, timeout=10, attempts=3):
             return requests.get(url, headers=h, proxies=proxies, timeout=timeout)
         except (requests.RequestException, OSError) as e:
             last_exc = e
-            time.sleep(min(2 ** i, 8))
+            if i < attempts - 1:
+                time.sleep(min(2 ** i, 8))
     if last_exc:
         raise last_exc
-    h = (headers or {}).copy()
-    if "User-Agent" not in h:
-        h["User-Agent"] = get_random_user_agent()
-    proxy_str = get_random_proxy()
-    proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
-    return requests.get(url, headers=h, proxies=proxies, timeout=timeout)
 
 
 def clean_text(html_content):
@@ -425,6 +538,18 @@ def scrape_remoteco(url):
         location = "Remote"
         if locs:
             location = ", ".join(locs) if isinstance(locs, list) else locs
+            
+        source_url = job_details.get("sourceUrl")
+        if source_url and isinstance(source_url, str):
+            source_url = source_url.strip().replace('"', '').replace("'", "")
+            if source_url.startswith("http://") or source_url.startswith("https://"):
+                url = source_url
+            else:
+                log(f"Skipping Remote.co URL {url} because sourceUrl is not a valid HTTP link.")
+                return None
+        else:
+            log(f"Skipping Remote.co URL {url} because sourceUrl is paywalled or missing.")
+            return None
             
         return {
             "job_title": title,
@@ -986,15 +1111,18 @@ def scrape_yc(url):
         return None
 
 def search_yahoo(query):
+    if SEARCH_STATE["aborted"]:
+        return []
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
-    url = f"https://search.yahoo.com/search?p={quote_plus(query)}"
+    url = f"https://search.yahoo.com/search?p={quote_plus(query)}&btf=d"
     links = []
     try:
-        r = http_get(url, headers=headers, timeout=15)
+        r = http_get(url, headers=headers, timeout=10)
         if r.status_code == 200:
+            SEARCH_STATE["consecutive_failures"] = 0
             soup = BeautifulSoup(r.text, 'html.parser')
             for a in soup.find_all('a', href=True):
                 href = a['href']
@@ -1006,58 +1134,17 @@ def search_yahoo(query):
                         links.append(actual_url)
                     else:
                         links.append(href)
+        else:
+            log(f"Yahoo search error for '{query}': status code {r.status_code}")
+            SEARCH_STATE["consecutive_failures"] += 1
     except Exception as e:
         log(f"Yahoo search error for '{query}': {e}")
-    
-    # Filter valid links
-    valid_links = []
-    for link in links:
-        parsed = urlparse(link)
-        domain = parsed.netloc.lower()
-        if any(bad in domain for bad in ['search.yahoo.com', 'scout.yahoo.com', 'login.yahoo.com']):
-            continue
-        if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
-            path_parts = [p for p in parsed.path.split('/') if p]
-            if 'greenhouse.io' in domain:
-                # Job pages look like /company/jobs/12345
-                if len(path_parts) >= 3 and path_parts[1] == 'jobs':
-                    valid_links.append(link)
-            elif 'lever.co' in domain:
-                # Job pages look like /company/uuid
-                if len(path_parts) >= 2:
-                    valid_links.append(link)
-            elif 'myworkdayjobs.com' in domain:
-                # Job pages look like /company/job/details
-                if 'job' in path_parts:
-                    valid_links.append(link)
-            elif 'ashbyhq.com' in domain:
-                # Job pages look like /company/job-uuid
-                if len(path_parts) >= 2:
-                    valid_links.append(link)
-            elif 'workable.com' in domain:
-                # Job pages look like /company/j/job-shortcode/
-                if len(path_parts) >= 3 and path_parts[1] == 'j':
-                    valid_links.append(link)
-            elif 'smartrecruiters.com' in domain:
-                # Job pages look like /company/posting-id-slug
-                # Skip main lists (which have no hyphen or posting id)
-                if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
-                    valid_links.append(link)
-            elif 'weworkremotely.com' in domain:
-                # Job pages look like /remote-jobs/slug
-                if 'remote-jobs' in path_parts:
-                    valid_links.append(link)
-            elif 'remote.co' in domain:
-                # Job pages look like /job-details/slug
-                if 'job-details' in path_parts or 'job' in path_parts:
-                    valid_links.append(link)
-            elif 'linkedin.com' in domain:
-                if 'view' in path_parts:
-                    valid_links.append(link)
-            elif 'workatastartup.com' in domain:
-                if 'jobs' in path_parts:
-                    valid_links.append(link)
-    return list(set(valid_links))
+        SEARCH_STATE["consecutive_failures"] += 1
+        
+    if SEARCH_STATE["consecutive_failures"] >= 5:
+        log("Aborting search discovery stage early: reached 5 consecutive connection/DNS/server failures.")
+        SEARCH_STATE["aborted"] = True
+    return links
 
 def normalize_job_url(url):
     if not url:
@@ -1233,12 +1320,51 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
     urls_to_scrape = []
     
     for query in queries:
-        log(f"Searching: {query}")
-        urls = search_yahoo(query)
+        if SEARCH_STATE["aborted"]:
+            break
+        
+        urls = None
+        using_api = False
+        
+        has_google = bool(os.environ.get("GOOGLE_SEARCH_API_KEY") and os.environ.get("GOOGLE_SEARCH_CX"))
+        has_bing = bool(os.environ.get("BING_SEARCH_API_KEY"))
+        
+        if has_google:
+            using_api = True
+            log(f"Searching Google Custom Search API: {query}")
+            urls = search_google_custom(query)
+        elif has_bing:
+            using_api = True
+            log(f"Searching Bing Search API: {query}")
+            urls = search_bing_api(query)
+            
+        if not urls and not SEARCH_STATE["aborted"]:
+            using_api = False
+            log(f"Searching Yahoo: {query}")
+            urls = search_yahoo(query)
+            if not urls and not SEARCH_STATE["aborted"]:
+                log(f"Yahoo search returned 0 results for '{query}'. Falling back to DuckDuckGo...")
+                urls = search_duckduckgo(query)
+        
+        if SEARCH_STATE["aborted"]:
+            break
+            
         if not urls:
-            log(f"Yahoo search returned 0 results for '{query}'. Falling back to DuckDuckGo...")
-            urls = search_duckduckgo(query)
-        time.sleep(2)
+            SEARCH_STATE["consecutive_zero_yields"] += 1
+        else:
+            SEARCH_STATE["consecutive_zero_yields"] = 0
+            
+        if SEARCH_STATE["consecutive_zero_yields"] >= 10:
+            log("Aborting search discovery stage early: 10 consecutive search engine queries returned 0 results (likely rate-limited or blocked).")
+            SEARCH_STATE["aborted"] = True
+            break
+            
+        if using_api:
+            delay = random.uniform(1.5, 3.0)
+        else:
+            delay = random.uniform(8.0, 15.0)
+        log(f"Sleeping for {delay:.2f} seconds...")
+        time.sleep(delay)
 
         for href in urls:
             nu = normalize_job_url(href)
@@ -1267,7 +1393,7 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
                     if job_data and job_data.get("job_description"):
                         if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
                             log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
-                            job_data["scraped_at"] = datetime.utcnow().isoformat()
+                            job_data["scraped_at"] = get_cdt_now_iso()
                             keyword_scraped_jobs.append(job_data)
                         else:
                             log(f"Discarded (No Requirement ID): {url}")
@@ -1286,63 +1412,104 @@ def is_us_location(location_str):
         return False
     loc_lower = location_str.lower()
     
-    # Negative indicators - exclude if matched and no positive US indicators are present
-    negative_indicators = [
-        "europe", "uk", "london", "india", "germany", "france", "canada", "latam", 
-        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil", 
-        "spain", "poland", "ukraine", "philippines", "ireland", "tokyo", "japan",
-        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne", 
-        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo", 
-        "amsterdam", "krakow", "mexico", "sweden", "stockholm", "zurich"
-    ]
-    has_negative = any(ni in loc_lower for ni in negative_indicators)
+    # 1. Clean and tokenize into words
+    words = re.findall(r'\b[a-z]+\b', loc_lower)
     
-    # Positive indicators
-    us_indicators = ["united states", "us", "u.s.", "usa", "u.s.a", "remote - us", "remote us", "remote, us", "america"]
-    has_positive = any(ind in loc_lower for ind in us_indicators)
+    # 2. Ignored generic terms
+    ignored_words = {
+        "remote", "hybrid", "onsite", "work", "from", "home", "anywhere", "location", 
+        "timezone", "time", "zone", "eastern", "pacific", "central", "mountain", 
+        "et", "pt", "ct", "mt", "hours", "day", "days", "week", "weeks", "flexible", 
+        "office", "and", "or", "in", "at", "the", "with", "option", "applicants", 
+        "applicable", "global", "worldwide", "only", "based", "located", "reside",
+        "resident", "residents", "us-based", "us-remote", "remote-us", "state", "states",
+        "united", "america", "americas", "columbia", "district"
+    }
     
-    if has_positive:
-        return True
-        
-    # Check major US cities
-    us_cities = [
+    # 3. Positive US indicators
+    us_indicators = {"us", "usa", "u.s.", "u.s.a", "united states", "america"}
+    
+    # 4. US states (names and postal codes)
+    us_states_abbr = {
+        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
+        "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+        "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy"
+    }
+    us_states_full = {
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida", 
+        "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", 
+        "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", 
+        "nevada", "new hampshire", "new jersey", "new mexico", "new york", "north carolina", "north dakota", 
+        "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota", "tennessee", 
+        "texas", "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming"
+    }
+    
+    # 5. Major US cities
+    us_cities = {
         "san francisco", "sf", "seattle", "new york", "nyc", "austin", "chicago", "boston", 
         "denver", "los angeles", "la", "atlanta", "dallas", "houston", "miami", "philadelphia", 
         "phoenix", "san diego", "san jose", "sunnyvale", "mountain view", "palo alto", "redmond", 
         "bellevue", "oakland", "detroit", "minneapolis", "portland", "salt lake city", "pittsburgh", 
         "washington", "arlington", "boulder", "cambridge", "raleigh", "durham", "charlotte", 
         "nashville", "salt lake", "las vegas", "orlando", "tampa", "tempe", "culver city",
-        "menlo park", "cupertino", "santa clara", "redwood city", "irvine", "berkeley"
-    ]
-    if any(city in loc_lower for city in us_cities):
-        if not has_negative:
-            return True
-            
-    # Check words for "us" or "usa"
-    words = re.findall(r'\b[a-z]+\b', loc_lower)
-    if "us" in words or "usa" in words or "america" in words:
+        "menlo park", "cupertino", "santa clara", "redwood city", "irvine", "berkeley", "columbus"
+    }
+    
+    # Check for direct negative indicator match (e.g. EMEA, Canada, Europe, UK, etc.)
+    negative_indicators = {
+        "europe", "uk", "london", "india", "germany", "france", "canada", "latam", 
+        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil", 
+        "spain", "poland", "ukraine", "philippines", "ireland", "tokyo", "japan",
+        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne", 
+        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo", 
+        "amsterdam", "krakow", "mexico", "sweden", "stockholm", "zurich",
+        "pakistan", "lahore", "karachi", "islamabad", "italy", "rome", "milan",
+        "portugal", "lisbon", "madrid", "barcelona", "china", "beijing",
+        "shanghai", "hong kong", "taiwan", "taipei", "vietnam", "thailand", "bangkok",
+        "croatia", "zagreb", "czech", "republic", "türkiye", "turkey", "noida",
+        "argentina", "ankara", "mississauga", "copenhagen", "denmark", "south korea",
+        "korea", "belgrade", "serbia", "yerevan", "armenia"
+    }
+    
+    has_negative = any(ni in loc_lower for ni in negative_indicators)
+    if has_negative:
+        return False
+        
+    has_positive = any(pi in loc_lower for pi in us_indicators)
+    if has_positive:
         return True
         
-    # State postal codes
-    us_states = {
-        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
-        "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
-        "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy"
-    }
-    for word in words:
-        if word in us_states:
-            if word in ["in", "or", "me", "la", "ma", "co"]:
-                match = re.search(r'\b,\s*' + word + r'\b', loc_lower)
-                if match:
+    has_city = any(city in loc_lower for city in us_cities)
+    has_state_full = any(state in loc_lower for state in us_states_full)
+    
+    if has_city or has_state_full:
+        return True
+        
+    # Check individual words for states
+    for w in words:
+        if w in us_states_abbr:
+            # Avoid matching common words like "in", "or", "me", "la", "co" as states unless prefixed by a comma or space comma
+            if w in {"in", "or", "me", "la", "co", "ma"}:
+                if re.search(r'\b,\s*' + w + r'\b', loc_lower):
                     return True
             else:
                 return True
                 
-    # If no negative indicators and it has "remote", "anywhere", "worldwide", let's allow it
-    if not has_negative and any(term in loc_lower for term in ["remote", "anywhere", "worldwide"]):
-        return True
+    # If no negative indicators and it has remote/hybrid/onsite, and no other foreign words
+    non_generic_non_us = []
+    for w in words:
+        if (w not in ignored_words and 
+            w not in us_states_abbr and 
+            w not in us_states_full and 
+            w not in us_cities and 
+            w not in us_indicators):
+            non_generic_non_us.append(w)
+            
+    if non_generic_non_us:
+        return False
         
-    return False
+    return True
+
 
 
 def is_target_job(job_title, target_titles):
@@ -1429,6 +1596,11 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                 raw_title = title_elem.text.strip()
                 job_url = link_elem.text.strip()
                 
+                pub_date_elem = item.find("pubDate")
+                pub_date_str = pub_date_elem.text.strip() if pub_date_elem else None
+                if not is_recent_date(pub_date_str):
+                    continue
+                
                 if not is_target_job(raw_title, target_titles):
                     continue
                 
@@ -1489,8 +1661,7 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                         hq_loc = hq_match.group(1).strip()
                         location = f"{hq_loc} (Remote)"
                         if not is_us_location(hq_loc) and not any(ind in desc_lower for ind in ["united states", "us", "u.s.", "usa"]):
-                            if "worldwide" not in desc_lower and "anywhere" not in desc_lower:
-                                continue
+                            continue
                 
                 parsed_url = urlparse(job_url)
                 path_parts = [p for p in parsed_url.path.split('/') if p]
@@ -1511,7 +1682,8 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                     "job_description": jd_text,
                     "location_work_type": f"{location} (Remote)",
                     "description_hash": desc_hash,
-                    "scraped_at": datetime.utcnow().isoformat()
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": pub_date_str if pub_date_str else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error parsing RSS feed {feed_name}: {e}")
@@ -1549,6 +1721,10 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
             for job in jobs:
                 title = job.get("title", "").strip()
                 if not is_target_job(title, target_titles):
+                    continue
+                
+                updated_at_str = job.get("updated_at")
+                if not is_recent_date(updated_at_str):
                     continue
                 
                 location_name = job.get("location", {}).get("name", "").strip()
@@ -1593,7 +1769,8 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                     "job_description": jd_text,
                     "location_work_type": f"{location_name} (Remote/Hybrid/Onsite)",
                     "description_hash": desc_hash,
-                    "scraped_at": datetime.utcnow().isoformat()
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": updated_at_str if updated_at_str else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error querying Greenhouse board '{company}': {e}")
@@ -1618,6 +1795,10 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
             for job in jobs:
                 title = job.get("text", "").strip()
                 if not is_target_job(title, target_titles):
+                    continue
+                
+                created_at_ms = job.get("createdAt")
+                if not is_recent_date(created_at_ms):
                     continue
                 
                 country = job.get("country", "")
@@ -1694,7 +1875,8 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                     "job_description": jd_text,
                     "location_work_type": f"{location_work}",
                     "description_hash": desc_hash,
-                    "scraped_at": datetime.utcnow().isoformat()
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": datetime.fromtimestamp(created_at_ms / 1000.0, tz=timezone.utc).isoformat() if created_at_ms else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error querying Lever board '{company}': {e}")
@@ -1729,6 +1911,10 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
             for job in jobs:
                 title = job.get("title", "").strip()
                 if not is_target_job(title, target_titles):
+                    continue
+                
+                published_at_str = job.get("publishedAt")
+                if not is_recent_date(published_at_str):
                     continue
                 
                 location = job.get("location")
@@ -1795,7 +1981,8 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
                     "job_description": jd_text,
                     "location_work_type": loc_str,
                     "description_hash": desc_hash,
-                    "scraped_at": datetime.utcnow().isoformat()
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": published_at_str if published_at_str else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error querying Ashby board '{company}': {e}")
@@ -1832,6 +2019,10 @@ def fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls):
             for job in jobs:
                 title = job.get("title", "").strip()
                 if not is_target_job(title, target_titles):
+                    continue
+                
+                published_at_str = job.get("published")
+                if not is_recent_date(published_at_str):
                     continue
                 
                 location_dict = job.get("location", {}) or {}
@@ -1901,7 +2092,8 @@ def fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls):
                     "job_description": jd_text,
                     "location_work_type": loc_str,
                     "description_hash": desc_hash,
-                    "scraped_at": datetime.utcnow().isoformat()
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": published_at_str if published_at_str else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error querying Workable Global Search for '{title_query}': {e}")
@@ -1935,6 +2127,10 @@ def fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls):
         for job in results:
             title = job.get("name", "").strip()
             if not is_target_job(title, target_titles):
+                continue
+                
+            pub_date_str = job.get("publication_date")
+            if not is_recent_date(pub_date_str):
                 continue
                 
             locations_list = job.get("locations", []) or []
@@ -1984,7 +2180,8 @@ def fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls):
                 "job_description": jd_text,
                 "location_work_type": loc_str,
                 "description_hash": desc_hash,
-                "scraped_at": datetime.utcnow().isoformat()
+                "scraped_at": get_cdt_now_iso(),
+                "posted_at": pub_date_str if pub_date_str else get_cdt_now_iso()
             })
     except Exception as e:
         log(f"Error querying The Muse API: {e}")
@@ -2019,6 +2216,10 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
             for job in jobs:
                 title = job.get("name", "").strip()
                 if not is_target_job(title, target_titles):
+                    continue
+                    
+                released_date_str = job.get("releasedDate")
+                if not is_recent_date(released_date_str):
                     continue
                     
                 loc_dict = job.get("location", {}) or {}
@@ -2095,7 +2296,8 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
                     "job_description": jd_text,
                     "location_work_type": loc_str,
                     "description_hash": desc_hash,
-                    "scraped_at": datetime.utcnow().isoformat()
+                    "scraped_at": get_cdt_now_iso(),
+                    "posted_at": released_date_str if released_date_str else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error querying SmartRecruiters board '{company}': {e}")
@@ -2214,7 +2416,7 @@ def main(dry_run=False):
     merged_by_url = {}
     if merge_previous and SCRAPED_OUTPUT.exists():
         try:
-            mtime = datetime.utcfromtimestamp(SCRAPED_OUTPUT.stat().st_mtime).isoformat()
+            mtime = datetime.fromtimestamp(SCRAPED_OUTPUT.stat().st_mtime, tz=timezone(timedelta(hours=-5))).isoformat()
             for j in json.loads(SCRAPED_OUTPUT.read_text(encoding="utf-8")):
                 u = j.get("job_url")
                 if u:
@@ -2271,6 +2473,9 @@ def main(dry_run=False):
     synonyms_map = expand_target_titles_with_gemini(target_titles, api_key)
 
     for title in target_titles:
+        if SEARCH_STATE["aborted"]:
+            log("Search discovery stage has been aborted. Skipping remaining target titles.")
+            break
         log(f"Processing target title: '{title}'")
         new_jobs, urls_found = search_and_scrape_for_keyword(title, search_cfg, found_urls, dry_run, dry_urls)
         scraped_jobs.extend(new_jobs)
@@ -2282,6 +2487,8 @@ def main(dry_run=False):
             if syns:
                 log(f"Yield of {current_yield} for '{title}' is below threshold of {yield_threshold}. Triggering query expansion with synonyms: {syns}")
                 for synonym in syns:
+                    if SEARCH_STATE["aborted"]:
+                        break
                     log(f"Executing expanded search for synonym: '{synonym}' (original: '{title}')")
                     syn_jobs, syn_urls_found = search_and_scrape_for_keyword(synonym, search_cfg, found_urls, dry_run, dry_urls)
                     scraped_jobs.extend(syn_jobs)
@@ -2306,16 +2513,21 @@ def main(dry_run=False):
             final_map[normalize_job_url(u)] = j
     out_list = list(final_map.values())
     
-    # Extract salary data
+    # Extract salary and benefits data
     try:
         from salary_extractor import extract_salary
+        from benefits_extractor import extract_benefits
         for j in out_list:
+            if "posted_at" not in j or not j["posted_at"]:
+                j["posted_at"] = j.get("scraped_at") or get_cdt_now_iso()
             if not j.get("salary_text"):
                 sal_info = extract_salary(j.get("job_description", ""), j.get("job_title", ""))
                 if sal_info:
                     j.update(sal_info)
+            if not j.get("benefits"):
+                j["benefits"] = extract_benefits(j.get("job_description", ""))
     except Exception as e:
-        log(f"Warning: Failed to extract salary data: {e}")
+        log(f"Warning: Failed to extract salary/benefits/posted_at data: {e}")
 
     SCRAPED_OUTPUT.write_text(json.dumps(out_list, indent=2), encoding="utf-8")
 

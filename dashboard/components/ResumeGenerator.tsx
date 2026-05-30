@@ -57,8 +57,9 @@ export default function ResumeGenerator({ jd, jobTitle, companyName, compact = f
       setResume(data.resume);
       setStats(data.stats);
       setIsOpen(true);
-    } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred.');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
@@ -216,7 +217,7 @@ export default function ResumeGenerator({ jd, jobTitle, companyName, compact = f
                       <p style={{ fontSize: '12px', color: '#fbbf24', margin: '0 0 4px 0', fontWeight: 500 }}>
                         {stats.long_bullets.length} bullet(s) over 24 words — Workday will truncate these
                       </p>
-                      {stats.long_bullets.map((b: any, i: number) => (
+                      {stats.long_bullets.map((b: { bullet: string; words: number }, i: number) => (
                         <p key={i} style={{ fontSize: '11px', color: '#f59e0b', margin: '2px 0',
                                             fontFamily: 'monospace' }}>
                           [{b.words}w] {b.bullet}...

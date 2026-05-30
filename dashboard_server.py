@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import requests
 
 from jobsearch_paths import workspace_root
+from benefits_extractor import extract_benefits
+from near_dedup import group_and_flag_duplicates
 from jobsearch_webhook import effective_webhook_url, public_config_for_api
 from notion_sqlite_mirror import upsert_notion_job_report, ensure_notion_mirror_schema
 from services.resume_service import generate_resume
@@ -525,6 +527,14 @@ def load_all_jobs():
         except Exception as e:
             print(f"Error reading failed candidates: {e}")
 
+    # Retroactively extract benefits if missing
+    for j in jobs:
+        if "benefits" not in j:
+            j["benefits"] = extract_benefits(j.get("job_description", ""))
+            
+    # Group and flag duplicates
+    jobs = group_and_flag_duplicates(jobs)
+
     return jobs
 
 def calculate_analytics():
@@ -666,6 +676,17 @@ def override_job_on_disk(updated_job):
     red_flags = updated_job.get("red_flags", [])
     if decision == "APPLY":
         red_flags = []
+        
+    allowed_categories = {
+        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering", 
+        "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps", 
+        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)", 
+        "System Engineer", "Cloud Network Engineer", "Data Platform Engineer", 
+        "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
+    }
+    label = updated_job.get("strongest_label", target_job.get("strongest_label", "DevOps Engineer") if target_job else "DevOps Engineer")
+    if decision == "APPLY" and label not in allowed_categories:
+        return False, f"Category '{label}' is not allowed under the active MAAS classifier policy guidelines."
         
     target_job.update({
         "job_url": url,

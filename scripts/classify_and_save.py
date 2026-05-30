@@ -52,6 +52,7 @@ _repo_root = _scripts_dir.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 from jobsearch_paths import workspace_root
+from benefits_extractor import extract_benefits
 
 WORKSPACE = workspace_root()
 load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
@@ -89,42 +90,27 @@ def get_job_classifications():
     
     # Candidate 2: Cambiumlearning - Senior Database Engineer II
     classifications[2] = {
-        "apply_decision": "APPLY",
-        "strongest_label": "Cloud Database Engineer",
-        "confidence_score": 95,
-        "red_flags": [],
+        "apply_decision": "DO_NOT_APPLY",
+        "strongest_label": "OutOfScope",
+        "confidence_score": 100,
+        "red_flags": ["Out of scope"],
         "req_id_override": "REQ-4234",
-        "rationale": "The role focuses on SQL Server development and administration in AWS (RDS, EC2) with 5+ years of experience. Responsibilities include schema design, performance tuning, and optimizing data access from microservices in AWS.",
+        "rationale": "The role is for a Senior Database Engineer II focusing on SQL Server development and administration, which is out of scope for the MAAS engineering categories.",
         "payload": {
-            "all_labels": ["Cloud Database Engineer", "Database Engineer"],
-            "strongest_label": "Cloud Database Engineer",
-            "other_labels": ["Database Engineer"],
-            "apply_decision": "APPLY",
-            "red_flags": [],
+            "all_labels": ["OutOfScope"],
+            "strongest_label": "OutOfScope",
+            "other_labels": [],
+            "apply_decision": "DO_NOT_APPLY",
+            "red_flags": ["Out of scope"],
             "filters": {"domain_specialization": False},
-            "confidence_score": 95,
-            "cloud": {"is_cloud_role": True, "primary_cloud": "AWS", "cloud_providers": ["AWS"]},
-            "domain_scores": {
-                "database": 5, "cloud_database": 6, "network": 0, "infrastructure": 0, "platform": 0, "automation": 0, "devops": 0, "cicd": 0, "sre": 0, "security": 0, "devsecops": 0, "system": 0, "data": 0, "mlops": 0, "aiops": 0
-            },
-            "dominant_domains": ["cloud_database", "database"],
-            "dominant_signals": {
-                "database": ["SQL Server development", "stored procedures", "triggers", "stored functions", "schema design", "performance tuning", "backup and recovery"],
-                "network": [],
-                "infrastructure": [],
-                "platform": [],
-                "automation": ["deployment and rollback scripts"],
-                "devops": [],
-                "sre": []
-            },
-            "decision_trace": {"top_score": 6, "runner_up_score": 5, "tie_break_applied": False, "priority_rule_used": "", "strong_signal_override": False},
-            "rationale": "The role focuses on SQL Server development and administration in AWS (RDS, EC2) with 5+ years of experience. Responsibilities include schema design, performance tuning, and optimizing data access from microservices in AWS.",
-            "rationale_formatted": [
-                "5+ years of SQL Server development and database administration experience",
-                "Strong focus on AWS database platforms (RDS for SQL Server, EC2)",
-                "Handles data modeling, schema design, and microservices integration in AWS",
-                "No red flags or sponsorship restrictions detected"
-            ]
+            "confidence_score": 100,
+            "cloud": {"is_cloud_role": False, "primary_cloud": "", "cloud_providers": []},
+            "domain_scores": {k: 0 for k in ["database", "cloud_database", "network", "infrastructure", "platform", "automation", "devops", "cicd", "sre", "security", "devsecops", "system", "data", "mlops", "aiops"]},
+            "dominant_domains": [],
+            "dominant_signals": {},
+            "decision_trace": {"top_score": 0},
+            "rationale": "The role is for a Senior Database Engineer II focusing on SQL Server development and administration, which is out of scope for the MAAS engineering categories.",
+            "rationale_formatted": ["Database engineering/DBA focus", "Not in scope for MAAS engineering categories"]
         }
     }
     
@@ -668,7 +654,8 @@ Return a JSON object conforming exactly to the following structure:
     "aiops": 0-10
   }},
   "primary_cloud": "AWS" | "Azure" | "GCP" | "",
-  "cloud_providers": ["AWS", "Azure", "GCP", ...]
+  "cloud_providers": ["AWS", "Azure", "GCP", ...],
+  "benefits": ["list of benefit names matched, e.g. Health Insurance, Dental Insurance, Vision Insurance, 401(k), PTO / Vacation, Equity / Stock Options, Parental Leave, Stipend / Allowance, Tuition / Learning Budget"]
 }}
 """
     
@@ -692,6 +679,10 @@ Return a JSON object conforming exactly to the following structure:
         primary_cloud = result.get("primary_cloud", "")
         cloud_providers = result.get("cloud_providers", [])
         
+        benefits = result.get("benefits", [])
+        if not benefits or not isinstance(benefits, list):
+            benefits = extract_benefits(description)
+        
         # Reconstruct full payload
         payload = {
             "all_labels": [strongest_label],
@@ -711,7 +702,8 @@ Return a JSON object conforming exactly to the following structure:
             "dominant_signals": {},
             "decision_trace": {"top_score": max(domain_scores.values()) if domain_scores else 0},
             "rationale": rationale,
-            "rationale_formatted": rationale_formatted
+            "rationale_formatted": rationale_formatted,
+            "benefits": benefits
         }
         
         return {
@@ -720,7 +712,8 @@ Return a JSON object conforming exactly to the following structure:
             "confidence_score": confidence,
             "red_flags": red_flags,
             "rationale": rationale,
-            "payload": payload
+            "payload": payload,
+            "benefits": benefits
         }
     except Exception as e:
         print(f"Gemini API classification failed: {e}. Falling back to rule-based classification.", flush=True)
@@ -823,6 +816,7 @@ def classify_job_dynamically(job):
     if red_flags:
         rationale += f" Red flags detected: {', '.join(red_flags)}."
         
+    benefits = extract_benefits(job.get("job_description", ""))
     payload = {
         "all_labels": [top_label],
         "strongest_label": top_label,
@@ -837,7 +831,8 @@ def classify_job_dynamically(job):
         "dominant_signals": {},
         "decision_trace": {"top_score": top_score},
         "rationale": rationale,
-        "rationale_formatted": [rationale]
+        "rationale_formatted": [rationale],
+        "benefits": benefits
     }
     
     return {
@@ -846,7 +841,8 @@ def classify_job_dynamically(job):
         "confidence_score": confidence,
         "red_flags": red_flags,
         "rationale": rationale,
-        "payload": payload
+        "payload": payload,
+        "benefits": benefits
     }
 
 def normalize_url(url):
@@ -890,6 +886,8 @@ def main():
         cls = None
         if cls_idx:
             cls = classifications.get(cls_idx)
+            if cls and "benefits" not in cls:
+                cls["benefits"] = extract_benefits(job.get("job_description", ""))
             
         h = job.get("description_hash")
         if not cls and h:
@@ -904,6 +902,7 @@ def main():
                     "rationale": matched.get("rationale", ""),
                     "payload": matched.get("apply_decision_payload", {})
                 }
+                cls["benefits"] = matched.get("benefits") if "benefits" in matched else extract_benefits(matched.get("job_description", ""))
                 if "requirement_id" in matched:
                     cls["req_id_override"] = matched["requirement_id"]
                 # Copy pipeline & salary fields to prevent wiping them out during runs
@@ -921,6 +920,7 @@ def main():
                     "rationale": matched.get("rationale", "Previously rejected cache hit."),
                     "payload": matched.get("apply_decision_payload", {})
                 }
+                cls["benefits"] = matched.get("benefits") if "benefits" in matched else extract_benefits(matched.get("job_description", ""))
                 # Copy pipeline & salary fields for failed cache hits too
                 for key in ["pipeline_stage", "min_salary", "max_salary", "is_hourly", "salary_text"]:
                     if key in matched:
@@ -928,10 +928,14 @@ def main():
             
         if not cls:
             # Try LLM-driven classification if API key is present
+            global api_key
             if api_key:
                 print(f"  Classifying '{job.get('job_title')}' dynamically using Gemini API...", flush=True)
                 time.sleep(4)
                 cls = classify_job_with_gemini(job)
+                if not cls:
+                    print("  Gemini classification failed/quota exceeded. Disabling Gemini for the rest of this run to avoid sleep delays.", flush=True)
+                    api_key = None
                 
             if not cls:
                 # Fall back to dynamic rule-based classifier
@@ -944,20 +948,45 @@ def main():
         job["red_flags"] = cls["red_flags"]
         job["rationale"] = cls["rationale"]
         job["apply_decision_payload"] = cls["payload"]
+        job["benefits"] = cls.get("benefits", [])
         
         # Override requirement ID if needed
         if "req_id_override" in cls:
             job["requirement_id"] = cls["req_id_override"]
             
         # Notion save gate
+        allowed_categories = {
+            "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering", 
+            "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps", 
+            "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)", 
+            "System Engineer", "Cloud Network Engineer", "Data Platform Engineer", 
+            "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
+        }
         if (job["apply_decision"] == "APPLY" and 
             len(job["red_flags"]) == 0 and 
-            job["strongest_label"] != "OutOfScope" and
+            job["strongest_label"] in allowed_categories and
             job["job_url"] and
             job["requirement_id"] and
             job["requirement_id"] != "Unknown"):
             approved_jobs.append(job)
             
+    # Final sanity check: ensure no invalid jobs are written to approved_jobs.json
+    from scripts.scrape_and_filter_candidates import check_red_flags
+    allowed_categories = {
+        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering", 
+        "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps", 
+        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)", 
+        "System Engineer", "Cloud Network Engineer", "Data Platform Engineer", 
+        "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
+    }
+    approved_jobs = [
+        j for j in approved_jobs
+        if j.get("apply_decision") == "APPLY" and
+           len(j.get("red_flags", [])) == 0 and
+           j.get("strongest_label") in allowed_categories and
+           len(check_red_flags(j)) == 0
+    ]
+    
     # Write to approved_jobs.json
     output_path = str(WORKSPACE / "approved_jobs.json")
     with open(output_path, "w") as f:

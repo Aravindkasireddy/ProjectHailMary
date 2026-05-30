@@ -62,6 +62,7 @@ interface Job {
   synced?: boolean;
   synced_data?: unknown;
   scraped_at?: string;
+  posted_at?: string;
   stale?: boolean;
   archived?: boolean;
   cloud?: string;
@@ -184,7 +185,6 @@ export default function Dashboard() {
   const [tailoredCoverLetter, setTailoredCoverLetter] = useState<string>('');
   const [tailoredResumeBullets, setTailoredResumeBullets] = useState<Array<{original_bullet: string, suggested_bullet: string, rationale: string}>>([]);
   const [isTailorModalOpen, setIsTailorModalOpen] = useState<boolean>(false);
-  const [tailoredJobUrl, setTailoredJobUrl] = useState<string>('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
   const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
@@ -387,7 +387,6 @@ export default function Dashboard() {
 
   const generateTailoring = async (jobUrl: string) => {
     setTailoringLoading(true);
-    setTailoredJobUrl(jobUrl);
     setTailoredCoverLetter('');
     setTailoredResumeBullets([]);
     setIsTailorModalOpen(true);
@@ -596,7 +595,6 @@ export default function Dashboard() {
   // Initial load
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
@@ -2186,7 +2184,9 @@ export default function Dashboard() {
                             >
                               <div className="flex justify-between items-start">
                                 <span className="text-[10px] font-bold text-violet-400 tracking-wider truncate max-w-[150px]">{job.company_name}</span>
-                                <span className="text-[10px] font-mono text-slate-500">{formatScrapedDate(job.scraped_at || '')}</span>
+                                <span className="text-[10px] font-mono text-slate-500 shrink-0" title={`Posted: ${job.posted_at ? formatScrapedDate(job.posted_at) : 'N/A'}\nScraped: ${formatScrapedDate(job.scraped_at || '')}`}>
+                                  {job.posted_at ? formatScrapedDate(job.posted_at) : formatScrapedDate(job.scraped_at || '')}
+                                </span>
                               </div>
                               <h4 className="text-xs font-bold text-slate-200 line-clamp-2 leading-snug group-hover:text-white transition-colors">{job.job_title}</h4>
                               
@@ -2270,7 +2270,7 @@ export default function Dashboard() {
                         </div>
 
                         {/* Location / Req ID details */}
-                        <div className={`mt-3 grid ${job.salary_text ? 'grid-cols-4' : 'grid-cols-3'} gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40`}>
+                        <div className={`mt-3 grid ${job.salary_text ? 'grid-cols-5' : 'grid-cols-4'} gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40`}>
                           <div>
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Location</span>
@@ -2296,6 +2296,15 @@ export default function Dashboard() {
                             </div>
                             <span className="mt-0.5 block truncate text-slate-300 font-medium" title={job.scraped_at}>
                               {job.scraped_at ? formatScrapedDate(job.scraped_at) : 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Posted At</span>
+                              {job.posted_at && <CopyButton text={job.posted_at} />}
+                            </div>
+                            <span className="mt-0.5 block truncate text-slate-300 font-medium" title={job.posted_at}>
+                              {job.posted_at ? formatScrapedDate(job.posted_at) : 'N/A'}
                             </span>
                           </div>
                           {job.salary_text && (
