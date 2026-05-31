@@ -1127,13 +1127,17 @@ def search_yahoo(query):
             for a in soup.find_all('a', href=True):
                 href = a['href']
                 if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
+                    actual_url = href
                     m = re.search(r'RU=([^/]+)', href)
                     if m:
                         from urllib.parse import unquote
                         actual_url = unquote(m.group(1))
-                        links.append(actual_url)
-                    else:
-                        links.append(href)
+                    
+                    parsed_actual = urlparse(actual_url)
+                    domain_actual = parsed_actual.netloc.lower()
+                    if not any(se in domain_actual for se in ['yahoo.com', 'yahoo.co', 'google.com', 'bing.com', 'duckduckgo.com']):
+                        if any(tgt in actual_url for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
+                            links.append(actual_url)
         else:
             log(f"Yahoo search error for '{query}': status code {r.status_code}")
             SEARCH_STATE["consecutive_failures"] += 1
