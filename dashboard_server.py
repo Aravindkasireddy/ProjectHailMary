@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime, date
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
 import requests
 
@@ -2294,7 +2294,7 @@ def main():
     sched_thread = threading.Thread(target=scheduler_loop, daemon=True)
     sched_thread.start()
     
-    server = HTTPServer(('0.0.0.0', PORT), DashboardHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)
     print(f"MAAS Job Sourcing Agent Dashboard running at: http://localhost:{PORT}")
     try:
         server.serve_forever()
