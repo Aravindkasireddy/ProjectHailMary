@@ -248,7 +248,13 @@ def search_duckduckgo(query):
                     actual_url = queries.get('uddg', [None])[0]
                     if actual_url:
                         href = actual_url
-                links.append(href)
+                
+                # Filter to ensure it belongs to one of our target job boards and isn't a search engine URL
+                if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
+                    parsed_actual = urlparse(href)
+                    domain_actual = parsed_actual.netloc.lower()
+                    if not any(se in domain_actual for se in ['yahoo.com', 'yahoo.co', 'google.com', 'bing.com', 'duckduckgo.com']):
+                        links.append(href)
         else:
             log(f"DuckDuckGo search error for '{query}': status code {r.status_code}")
             SEARCH_STATE["consecutive_failures"] += 1
