@@ -129,12 +129,39 @@ const CATEGORIES = [
   "OutOfScope"
 ];
 
+const copyToClipboard = (text: string): boolean => {
+  if (typeof window === 'undefined') return false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text);
+    return true;
+  }
+  // Fallback for insecure contexts (HTTP over IP address)
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.top = "0";
+  textArea.style.left = "0";
+  textArea.style.position = "fixed";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  let success = false;
+  try {
+    success = document.execCommand('copy');
+  } catch (err) {
+    console.error('Fallback copy failed', err);
+  }
+  document.body.removeChild(textArea);
+  return success;
+};
+
 const CopyButton = ({ text }: { text: string }) => {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    const success = copyToClipboard(text);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
   return (
     <button
@@ -3032,7 +3059,7 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => {
-                          navigator.clipboard.writeText(tailoredCoverLetter);
+                          copyToClipboard(tailoredCoverLetter);
                           showStatus('Cover letter copied to clipboard!', 'success');
                         }}
                         className="inline-flex items-center px-3 py-1.5 bg-slate-850 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-800 transition-colors"
@@ -3076,7 +3103,7 @@ export default function Dashboard() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    navigator.clipboard.writeText(s.suggested_bullet);
+                                    copyToClipboard(s.suggested_bullet);
                                     showStatus(`Suggested bullet ${idx + 1} copied!`, 'success');
                                   }}
                                   className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-all"
