@@ -33,7 +33,7 @@ export default function ResumeGenerator({ jd, jobTitle, companyName, compact = f
   const [copied, setCopied] = useState<boolean>(false);
   const [isOpen, setIsOpen] = useState<boolean>(false);
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const API_BASE = 'http://100.124.212.55:8080';
 
   const handleGenerate = async () => {
     setLoading(true);

@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import ResumeGenerator from '../../components/ResumeGenerator';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE = 'http://100.124.212.55:8080';
 
 interface DecisionPayload {
   apply_decision?: string;
