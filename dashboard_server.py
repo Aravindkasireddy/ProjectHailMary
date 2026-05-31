@@ -170,6 +170,24 @@ def archive_job_on_disk(url):
             
     found = False
     
+    # Check SQLite database mirror first
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    try:
+        ensure_notion_mirror_schema(WORKSPACE_DIR)
+        db_file = db_path(WORKSPACE_DIR)
+        if os.path.exists(db_file):
+            import sqlite3
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
+            row = cursor.execute("SELECT 1 FROM notion_job_reports WHERE job_url = ?", (url,)).fetchone()
+            if row:
+                conn.execute("UPDATE notion_job_reports SET archived = 1 WHERE job_url = ?", (url,))
+                conn.commit()
+                found = True
+            conn.close()
+    except Exception as e:
+        print(f"Error archiving job in SQLite mirror: {e}")
+    
     for j in approved:
         if j.get("job_url") == url:
             j["archived"] = True
@@ -195,9 +213,10 @@ def archive_job_on_disk(url):
             json.dump(failed, f, indent=2)
         with open(ACTIVE_PATH, 'w') as f:
             json.dump(active, f, indent=2)
-        return True, "Job successfully archived."
     except Exception as e:
-        return False, f"Failed to save changes: {str(e)}"
+        return False, f"Failed to save archived state: {e}"
+        
+    return True, "Job archived successfully."
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
@@ -425,6 +444,86 @@ def load_all_jobs():
         from salary_extractor import extract_salary
     except ImportError:
         extract_salary = None
+
+    # Load synced jobs from local SQLite database (Notion mirror)
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    try:
+        ensure_notion_mirror_schema(WORKSPACE_DIR)
+        db_file = db_path(WORKSPACE_DIR)
+        if os.path.exists(db_file):
+            import sqlite3
+            conn = sqlite3.connect(str(db_file))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM notion_job_reports")
+            rows = cursor.fetchall()
+            for row in rows:
+                url = row['job_url']
+                if not url:
+                    continue
+                
+                red_flags = []
+                if row['red_flags_json']:
+                    try:
+                        red_flags = json.loads(row['red_flags_json'])
+                    except Exception:
+                        pass
+                
+                payload = {}
+                if row['apply_decision_payload_json']:
+                    try:
+                        payload = json.loads(row['apply_decision_payload_json'])
+                    except Exception:
+                        pass
+                
+                confidence = row['confidence_score']
+                if confidence is not None:
+                    if confidence <= 1.0:
+                        confidence = confidence * 100.0
+                else:
+                    confidence = 100.0
+
+                j = {
+                    "job_title": row['job_title'] or "Unknown Title",
+                    "company_name": row['company_name'] or "Unknown",
+                    "job_url": url,
+                    "requirement_id": row['requirement_id'] or "Unknown",
+                    "job_description": row['job_description'] or "",
+                    "location_work_type": row['location_work_type'] or "Remote",
+                    "scraped_at": row['date_added'] or datetime.utcnow().strftime("%Y-%m-%d"),
+                    "red_flags": red_flags,
+                    "apply_decision": row['apply_decision'] or "APPLY",
+                    "strongest_label": row['strongest_label'] or "DevOps Engineer",
+                    "confidence_score": confidence,
+                    "rationale": row['rationale'] or "",
+                    "apply_decision_payload": payload,
+                    "benefits": payload.get("benefits", []),
+                    "status": "approved",
+                    "synced": True,
+                    "synced_data": {
+                        "page_id": row['notion_page_id'],
+                        "synced_at": row['synced_at']
+                    },
+                    "source_file": "notion_job_reports.db",
+                    "pipeline_stage": row['pipeline_stage'] or 'Approved',
+                    "min_salary": row['min_salary'],
+                    "max_salary": row['max_salary'],
+                    "is_hourly": bool(row['is_hourly']),
+                    "salary_text": row['salary_text'],
+                    "archived": bool(row['archived'])
+                }
+                
+                # Retroactive salary parsing
+                if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                    sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
+                    if sal_info:
+                        j.update(sal_info)
+                        
+                approved_urls.add(url)
+                jobs.append(j)
+            conn.close()
+    except Exception as e:
+        print(f"Error loading jobs from SQLite mirror: {e}")
     
     # Load approved jobs
     if os.path.exists(APPROVED_PATH):
@@ -433,10 +532,15 @@ def load_all_jobs():
                 app_jobs = json.load(f)
                 for j in app_jobs:
                     url = j.get('job_url')
+                    if url in approved_urls:
+                        continue
                     j['status'] = 'approved'
                     j['synced'] = url in synced_jobs
                     j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'approved_jobs.json'
+                    
+                    if 'archived' not in j:
+                        j['archived'] = False
                     
                     # Set default pipeline stage
                     if 'pipeline_stage' not in j:
@@ -1635,6 +1739,74 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         target_job = j
                         found_list = failed
                         break
+            if not target_job:
+                # Check SQLite database mirror
+                from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+                try:
+                    ensure_notion_mirror_schema(WORKSPACE_DIR)
+                    db_file = db_path(WORKSPACE_DIR)
+                    if os.path.exists(db_file):
+                        import sqlite3
+                        conn = sqlite3.connect(str(db_file))
+                        conn.row_factory = sqlite3.Row
+                        cursor = conn.cursor()
+                        row = cursor.execute("SELECT * FROM notion_job_reports WHERE job_url = ?", (url,)).fetchone()
+                        if row:
+                            red_flags = []
+                            if row['red_flags_json']:
+                                try:
+                                    red_flags = json.loads(row['red_flags_json'])
+                                except Exception:
+                                    pass
+                            payload_data = {}
+                            if row['apply_decision_payload_json']:
+                                try:
+                                    payload_data = json.loads(row['apply_decision_payload_json'])
+                                except Exception:
+                                    pass
+                            
+                            confidence = row['confidence_score']
+                            if confidence is not None:
+                                if confidence <= 1.0:
+                                    confidence = confidence * 100.0
+                            else:
+                                confidence = 100.0
+
+                            target_job = {
+                                "job_title": row['job_title'] or "Unknown Title",
+                                "company_name": row['company_name'] or "Unknown",
+                                "job_url": url,
+                                "requirement_id": row['requirement_id'] or "Unknown",
+                                "job_description": row['job_description'] or "",
+                                "location_work_type": row['location_work_type'] or "Remote",
+                                "scraped_at": row['date_added'],
+                                "red_flags": red_flags,
+                                "apply_decision": row['apply_decision'] or "APPLY",
+                                "strongest_label": row['strongest_label'] or "DevOps Engineer",
+                                "confidence_score": confidence,
+                                "rationale": row['rationale'] or "",
+                                "apply_decision_payload": payload_data,
+                                "benefits": payload_data.get("benefits", []),
+                                "status": "approved",
+                                "synced": True,
+                                "synced_data": {
+                                    "page_id": row['notion_page_id'],
+                                    "synced_at": row['synced_at']
+                                },
+                                "source_file": "notion_job_reports.db",
+                                "pipeline_stage": new_stage,
+                                "min_salary": row['min_salary'],
+                                "max_salary": row['max_salary'],
+                                "is_hourly": bool(row['is_hourly']),
+                                "salary_text": row['salary_text'],
+                                "archived": bool(row['archived'])
+                            }
+                            # Update the stage in SQLite
+                            conn.execute("UPDATE notion_job_reports SET pipeline_stage = ? WHERE job_url = ?", (new_stage, url))
+                            conn.commit()
+                        conn.close()
+                except Exception as e:
+                    print(f"Error checking/updating SQLite mirror in update-pipeline-stage: {e}")
                         
             if not target_job:
                 self.wfile.write(json.dumps({"success": False, "message": "Job not found."}).encode('utf-8'))
@@ -1916,6 +2088,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                             updated_count += 1
                                         found = True
                                         break
+                                        
+                            # Also update in the SQLite database mirror
+                            from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+                            try:
+                                ensure_notion_mirror_schema(WORKSPACE_DIR)
+                                db_file = db_path(WORKSPACE_DIR)
+                                if os.path.exists(db_file):
+                                    import sqlite3
+                                    conn = sqlite3.connect(str(db_file))
+                                    cursor = conn.cursor()
+                                    row = cursor.execute("SELECT apply_decision FROM notion_job_reports WHERE job_url = ?", (url,)).fetchone()
+                                    if row:
+                                        if row[0] != decision:
+                                            conn.execute("UPDATE notion_job_reports SET apply_decision = ? WHERE job_url = ?", (decision, url))
+                                            conn.commit()
+                                            if not found:
+                                                updated_count += 1
+                                    conn.close()
+                            except Exception as e:
+                                print(f"Error updating SQLite mirror in two-way sync: {e}")
                                         
                 except Exception as e:
                     errors += 1

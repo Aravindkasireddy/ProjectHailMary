@@ -53,7 +53,8 @@ def _init(conn: sqlite3.Connection) -> None:
             min_salary REAL,
             max_salary REAL,
             is_hourly INTEGER,
-            salary_text TEXT
+            salary_text TEXT,
+            archived INTEGER DEFAULT 0
         )
         """
     )
@@ -73,6 +74,8 @@ def _init(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE notion_job_reports ADD COLUMN is_hourly INTEGER")
     if "salary_text" not in columns:
         conn.execute("ALTER TABLE notion_job_reports ADD COLUMN salary_text TEXT")
+    if "archived" not in columns:
+        conn.execute("ALTER TABLE notion_job_reports ADD COLUMN archived INTEGER DEFAULT 0")
         
     conn.commit()
 
@@ -118,8 +121,8 @@ def upsert_notion_job_report(
                 job_title, company_name, location_work_type, job_description,
                 apply_decision, strongest_label, confidence_score, rationale,
                 apply_decision_payload_json, red_flags_json, date_added, synced_at, was_duplicate,
-                pipeline_stage, min_salary, max_salary, is_hourly, salary_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                pipeline_stage, min_salary, max_salary, is_hourly, salary_text, archived
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_url) DO UPDATE SET
                 notion_page_id = excluded.notion_page_id,
                 notion_database_id = excluded.notion_database_id,
@@ -141,7 +144,8 @@ def upsert_notion_job_report(
                 min_salary = excluded.min_salary,
                 max_salary = excluded.max_salary,
                 is_hourly = excluded.is_hourly,
-                salary_text = excluded.salary_text
+                salary_text = excluded.salary_text,
+                archived = excluded.archived
             """,
             (
                 job.get("job_url") or "",
@@ -166,6 +170,7 @@ def upsert_notion_job_report(
                 job.get("max_salary"),
                 1 if job.get("is_hourly") else 0,
                 job.get("salary_text"),
+                1 if job.get("archived") else 0,
             ),
         )
         conn.commit()
