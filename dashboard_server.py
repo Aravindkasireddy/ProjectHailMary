@@ -6,6 +6,7 @@ import urllib.parse
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
@@ -21,6 +22,15 @@ from services.resume_service import generate_resume
 # Load env variables from repo root
 WORKSPACE_DIR = str(workspace_root())
 load_dotenv(dotenv_path=os.path.join(WORKSPACE_DIR, ".env"))
+
+# Authentication passwords
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+USER_PASSWORD = os.environ.get("USER_PASSWORD", "user123")
+if ADMIN_PASSWORD == "admin123" and USER_PASSWORD == "user123":
+    print("WARNING: Using default fallback credentials ('admin123' and 'user123'). Please set ADMIN_PASSWORD and USER_PASSWORD in your .env file.")
+
+# In-memory session store: token -> role ('admin' or 'user')
+active_sessions = {}
 
 # HTTP API + dashboard backend (default 8080). Override if port is busy:
 #   JOBSEARCH_DASHBOARD_PORT=8081 python3 dashboard_server.py
@@ -1352,7 +1362,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Private-Network", "true")
 
     def do_OPTIONS(self):
@@ -1360,8 +1370,53 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_cors_headers()
         self.end_headers()
 
+    def get_auth_role(self):
+        auth_header = self.headers.get("Authorization")
+        if not auth_header:
+            return None
+        
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+            return active_sessions.get(token)
+            
+        return None
+
+    def check_authenticated(self):
+        role = self.get_auth_role()
+        if role in ["admin", "user"]:
+            return True
+        
+        # Return 401 Unauthorized
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_cors_headers()
+        self.end_headers()
+        res = {"success": False, "message": "Unauthorized. Please log in."}
+        self.wfile.write(json.dumps(res).encode('utf-8'))
+        return False
+
+    def check_admin(self):
+        role = self.get_auth_role()
+        if role == "admin":
+            return True
+            
+        # Return 403 Forbidden
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.send_cors_headers()
+        self.end_headers()
+        res = {"success": False, "message": "Forbidden. Admin access required."}
+        self.wfile.write(json.dumps(res).encode('utf-8'))
+        return False
+
     def do_GET(self):
         parsed_url = urllib.parse.urlparse(self.path)
+        
+        # Authenticate all API endpoints (excluding static page rendering and 404s)
+        if parsed_url.path.startswith("/api/"):
+            if not self.check_authenticated():
+                return
         
         # API: Get all jobs
         if parsed_url.path == "/api/jobs":
@@ -1602,6 +1657,52 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = json.loads(post_data) if post_data else {}
         except Exception:
             payload = {}
+
+        # Protect all API endpoints (excluding login) and require admin role
+        if parsed_url.path.startswith("/api/"):
+            if parsed_url.path != "/api/login":
+                if not self.check_admin():
+                    return
+
+        # API: Login
+        if parsed_url.path == "/api/login":
+            password = payload.get("password")
+            if not password:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": "Missing password"}).encode('utf-8'))
+                return
+                
+            role = None
+            if password == ADMIN_PASSWORD:
+                role = "admin"
+            elif password == USER_PASSWORD:
+                role = "user"
+                
+            if role:
+                token = str(uuid.uuid4())
+                active_sessions[token] = role
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "token": token,
+                    "role": role
+                }).encode('utf-8'))
+            else:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "message": "Invalid password"
+                }).encode('utf-8'))
+            return
 
         # API: Save settings config
         if parsed_url.path == "/api/config":

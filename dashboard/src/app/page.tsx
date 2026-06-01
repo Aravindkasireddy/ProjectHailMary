@@ -28,7 +28,9 @@ import {
   ListOrdered,
   Link2,
   Type,
-  FileText
+  FileText,
+  Lock,
+  LogOut
 } from 'lucide-react';
 import ResumeGenerator from '../../components/ResumeGenerator';
 
@@ -182,6 +184,14 @@ const CopyButton = ({ text }: { text: string }) => {
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
 
+  // Authentication States
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authRole, setAuthRole] = useState<'admin' | 'user' | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [loginError, setLoginError] = useState<string>('');
+  const [loginLoading, setLoginLoading] = useState<boolean>(false);
+
   // Analytics and Policy States
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -280,6 +290,80 @@ export default function Dashboard() {
     setStatusMessage({ text, type });
     setTimeout(() => setStatusMessage(null), 5000);
   };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setLoginLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginPassword }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.token && data.role) {
+        localStorage.setItem('maas_auth_token', data.token);
+        localStorage.setItem('maas_auth_role', data.role);
+        setAuthToken(data.token);
+        setAuthRole(data.role as 'admin' | 'user');
+        setLoginPassword('');
+        showStatus(`Welcome, logged in as ${data.role === 'admin' ? 'Admin' : 'Read-Only User'}.`, 'success');
+      } else {
+        setLoginError(data.message || 'Invalid password.');
+      }
+    } catch (err) {
+      setLoginError('Error connecting to authentication server.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('maas_auth_token');
+    localStorage.removeItem('maas_auth_role');
+    setAuthToken(null);
+    setAuthRole(null);
+    showStatus('Logged out successfully.', 'info');
+  };
+
+  // Restore session from localStorage on mount & intercept fetch
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedToken = localStorage.getItem('maas_auth_token');
+      const savedRole = localStorage.getItem('maas_auth_role');
+      if (savedToken && savedRole) {
+        setAuthToken(savedToken);
+        setAuthRole(savedRole as 'admin' | 'user');
+      }
+      setIsAuthChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const originalFetch = window.fetch;
+      window.fetch = async (input, init) => {
+        const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : '';
+        if (urlStr.startsWith(API_BASE) && !urlStr.endsWith('/api/login')) {
+          const token = localStorage.getItem('maas_auth_token');
+          const headers = new Headers(init?.headers || {});
+          if (token) {
+            headers.set('Authorization', `Bearer ${token}`);
+          }
+          const res = await originalFetch(input, { ...init, headers });
+          if (res.status === 401) {
+            handleLogout();
+          }
+          return res;
+        }
+        return originalFetch(input, init);
+      };
+      return () => {
+        window.fetch = originalFetch;
+      };
+    }
+  }, []);
 
   const checkStaleStatus = async () => {
     try {
@@ -521,7 +605,7 @@ export default function Dashboard() {
       }
     };
 
-    if (isLogsExpanded) {
+    if (isLogsExpanded && authToken) {
       fetchLogs();
       interval = setInterval(fetchLogs, 3000);
     }
@@ -587,6 +671,10 @@ export default function Dashboard() {
 
   // Tab change handler replacing side-effect useEffect
   const handleTabChange = (tab: 'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy' | 'resume') => {
+    if (authRole !== 'admin' && ['policy', 'resume', 'settings'].includes(tab)) {
+      showStatus('Admin role required to access this tab.', 'error');
+      return;
+    }
     setActiveTab(tab);
     setSelectedRoleFilter('all');
     if (tab === 'analytics') {
@@ -602,7 +690,7 @@ export default function Dashboard() {
   // Poll scraper status when it is running
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (scraperStatus.status === 'running') {
+    if (scraperStatus.status === 'running' && authToken) {
       interval = setInterval(() => {
         checkScraperStatus();
         // Periodically refresh jobs list too
@@ -617,13 +705,15 @@ export default function Dashboard() {
       }, 2000);
     }
     return () => clearInterval(interval);
-  }, [scraperStatus.status]);
+  }, [scraperStatus.status, authToken]);
 
   // Initial load
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (!isAuthChecking && authToken) {
+      fetchData();
+    }
+  }, [isAuthChecking, authToken]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   // Start scraper
@@ -672,7 +762,7 @@ export default function Dashboard() {
   // Poll stale check status when it is running
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (staleCheckStatus.status === 'running') {
+    if (staleCheckStatus.status === 'running' && authToken) {
       interval = setInterval(() => {
         checkStaleStatus();
         // Periodically refresh jobs list too
@@ -687,7 +777,7 @@ export default function Dashboard() {
       }, 2000);
     }
     return () => clearInterval(interval);
-  }, [staleCheckStatus.status]);
+  }, [staleCheckStatus.status, authToken]);
 
   // Delete / Archive Job
   const deleteJob = async (job_url: string) => {
@@ -1080,6 +1170,88 @@ export default function Dashboard() {
     }
   };
 
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full filter blur-[80px] pointer-events-none animate-pulse" />
+        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-600/10 rounded-full filter blur-[80px] pointer-events-none animate-pulse" />
+        <div className="flex flex-col items-center space-y-4">
+          <div className="p-3 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-2xl shadow-xl shadow-violet-500/20 animate-bounce">
+            <Briefcase className="w-8 h-8 text-white" />
+          </div>
+          <p className="text-sm font-medium text-slate-400 animate-pulse">Initializing secure connection...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authToken) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 px-4 relative overflow-hidden">
+        {/* Background gradients */}
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full filter blur-[80px] pointer-events-none" />
+        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-600/10 rounded-full filter blur-[80px] pointer-events-none" />
+
+        <div className="w-full max-w-md bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-8 shadow-2xl relative z-10 animate-in fade-in zoom-in-95 duration-300">
+          <div className="flex flex-col items-center space-y-6">
+            <div className="p-4 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-2xl shadow-xl shadow-violet-500/10 flex items-center justify-center">
+              <Lock className="w-8 h-8 text-white" />
+            </div>
+            
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+                MAAS Sourcing Agent
+              </h2>
+              <p className="text-sm text-slate-400">Master Classifier Policy Dashboard</p>
+            </div>
+
+            <form onSubmit={handleLogin} className="w-full space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Access Password
+                </label>
+                <input
+                  type="password"
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-600/50 focus:border-violet-500 transition-all"
+                  required
+                />
+              </div>
+
+              {loginError && (
+                <div className="flex items-center space-x-2 bg-rose-950/30 border border-rose-800/50 rounded-xl p-3 text-rose-400 text-sm animate-in shake duration-200">
+                  <XCircle className="w-4 h-4 shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loginLoading}
+                className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed group"
+              >
+                {loginLoading ? (
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                ) : (
+                  <>
+                    <span>Authenticate</span>
+                    <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="text-xs text-slate-500 text-center border-t border-slate-800/60 pt-4 w-full">
+              Tailscale compatibility mode enabled. Secure endpoint authorization.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-violet-600/30">
 
@@ -1103,6 +1275,29 @@ export default function Dashboard() {
 
         {/* Integration Status Badges */}
         <div className="flex items-center space-x-4">
+
+          {/* Role Status Pill */}
+          <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 shadow-inner">
+            <Shield className={`w-3.5 h-3.5 ${authRole === 'admin' ? 'text-violet-400' : 'text-slate-400'}`} />
+            <span className="text-xs font-medium text-slate-300">Role:</span>
+            <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full border ${
+              authRole === 'admin' 
+                ? 'text-violet-400 bg-violet-950/40 border-violet-800/50' 
+                : 'text-slate-400 bg-slate-950/40 border-slate-800/50'
+            }`}>
+              {authRole === 'admin' ? 'Admin' : 'Read-Only'}
+            </span>
+          </div>
+
+          {/* Logout Button */}
+          <button
+            onClick={handleLogout}
+            className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-full transition-colors active:scale-95"
+            title="Log out"
+          >
+            <LogOut className="w-3.5 h-3.5 mr-1.5" />
+            Logout
+          </button>
 
           {/* Notion Status */}
           <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 shadow-inner">
@@ -1163,30 +1358,34 @@ export default function Dashboard() {
           )}
 
           {/* Stale Check button */}
-          <button
-            onClick={triggerStaleCheck}
-            disabled={staleCheckStatus.status === 'running'}
-            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${staleCheckStatus.status === 'running'
-                ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
-              }`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${staleCheckStatus.status === 'running' ? 'animate-spin' : ''}`} />
-            Check Closed Jobs
-          </button>
+          {authRole === 'admin' && (
+            <button
+              onClick={triggerStaleCheck}
+              disabled={staleCheckStatus.status === 'running'}
+              className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${staleCheckStatus.status === 'running'
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                  : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
+                }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${staleCheckStatus.status === 'running' ? 'animate-spin' : ''}`} />
+              Check Closed Jobs
+            </button>
+          )}
 
           {/* Manual Run button */}
-          <button
-            onClick={triggerScrape}
-            disabled={scraperStatus.status === 'running'}
-            className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${scraperStatus.status === 'running'
-                ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-violet-600/10 border border-violet-500/20 active:scale-95'
-              }`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${scraperStatus.status === 'running' ? 'animate-spin' : ''}`} />
-            Run Sourcing Agent
-          </button>
+          {authRole === 'admin' && (
+            <button
+              onClick={triggerScrape}
+              disabled={scraperStatus.status === 'running'}
+              className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${scraperStatus.status === 'running'
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-violet-600/10 border border-violet-500/20 active:scale-95'
+                }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${scraperStatus.status === 'running' ? 'animate-spin' : ''}`} />
+              Run Sourcing Agent
+            </button>
+          )}
         </div>
       </header>
 
@@ -1321,71 +1520,77 @@ export default function Dashboard() {
                 <BarChart3 className="w-3.5 h-3.5 mr-1" />
                 Analytics
               </button>
-              <button
-                onClick={() => handleTabChange('policy')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'policy'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                <Shield className="w-3.5 h-3.5 mr-1" />
-                Classifier Policy
-              </button>
-              <button
-                onClick={() => handleTabChange('resume')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'resume'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                <FileText className="w-3.5 h-3.5 mr-1" />
-                Base Resume
-              </button>
-              <button
-                onClick={() => handleTabChange('settings')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'settings'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                <SettingsIcon className="w-3.5 h-3.5 mr-1" />
-                Settings
-              </button>
+              {authRole === 'admin' && (
+                <>
+                  <button
+                    onClick={() => handleTabChange('policy')}
+                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'policy'
+                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <Shield className="w-3.5 h-3.5 mr-1" />
+                    Classifier Policy
+                  </button>
+                  <button
+                    onClick={() => handleTabChange('resume')}
+                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'resume'
+                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <FileText className="w-3.5 h-3.5 mr-1" />
+                    Base Resume
+                  </button>
+                  <button
+                    onClick={() => handleTabChange('settings')}
+                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'settings'
+                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    <SettingsIcon className="w-3.5 h-3.5 mr-1" />
+                    Settings
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Notion Sync Actions */}
-            <div className="flex items-center gap-2 self-start lg:self-auto">
-              <button
-                type="button"
-                onClick={syncAllToNotion}
-                disabled={notionSyncLoading || !notionConnection.connected}
-                className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
-                  notionSyncLoading
-                    ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
-                    : !notionConnection.connected
-                    ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 border-violet-500/20 text-white shadow-md shadow-violet-500/10'
-                }`}
-              >
-                <Database className={`w-3.5 h-3.5 mr-1.5 ${notionSyncLoading ? 'animate-spin' : ''}`} />
-                {notionSyncLoading ? 'Syncing...' : 'Sync to Notion'}
-              </button>
-              <button
-                type="button"
-                onClick={syncStatusFromNotion}
-                disabled={notionStatusSyncLoading || !notionConnection.connected}
-                className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
-                  notionStatusSyncLoading
-                    ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
-                    : !notionConnection.connected
-                    ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
-                    : 'bg-slate-900/90 hover:bg-slate-800 border-slate-700 hover:border-slate-600 text-slate-200'
-                }`}
-              >
-                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${notionStatusSyncLoading ? 'animate-spin' : ''}`} />
-                {notionStatusSyncLoading ? 'Pulling...' : 'Pull Notion Status'}
-              </button>
-            </div>
+            {authRole === 'admin' && (
+              <div className="flex items-center gap-2 self-start lg:self-auto">
+                <button
+                  type="button"
+                  onClick={syncAllToNotion}
+                  disabled={notionSyncLoading || !notionConnection.connected}
+                  className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
+                    notionSyncLoading
+                      ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
+                      : !notionConnection.connected
+                      ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 border-violet-500/20 text-white shadow-md shadow-violet-500/10'
+                  }`}
+                >
+                  <Database className={`w-3.5 h-3.5 mr-1.5 ${notionSyncLoading ? 'animate-spin' : ''}`} />
+                  {notionSyncLoading ? 'Syncing...' : 'Sync to Notion'}
+                </button>
+                <button
+                  type="button"
+                  onClick={syncStatusFromNotion}
+                  disabled={notionStatusSyncLoading || !notionConnection.connected}
+                  className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
+                    notionStatusSyncLoading
+                      ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
+                      : !notionConnection.connected
+                      ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-900/90 hover:bg-slate-800 border-slate-700 hover:border-slate-600 text-slate-200'
+                  }`}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${notionStatusSyncLoading ? 'animate-spin' : ''}`} />
+                  {notionStatusSyncLoading ? 'Pulling...' : 'Pull Notion Status'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Bottom Row: Search bar & Category filter */}
@@ -2225,16 +2430,22 @@ export default function Dashboard() {
                               )}
                               
                               <div className="flex items-center justify-between pt-2 border-t border-slate-900/60">
-                                <select
-                                  value={job.pipeline_stage || 'Approved'}
-                                  onClick={e => e.stopPropagation()}
-                                  onChange={e => updatePipelineStage(job.job_url, e.target.value)}
-                                  className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[9px] text-slate-300 focus:outline-none cursor-pointer"
-                                >
-                                  {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
-                                    <option key={s} value={s}>{s}</option>
-                                  ))}
-                                </select>
+                                {authRole === 'admin' ? (
+                                  <select
+                                    value={job.pipeline_stage || 'Approved'}
+                                    onClick={e => e.stopPropagation()}
+                                    onChange={e => updatePipelineStage(job.job_url, e.target.value)}
+                                    className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[9px] text-slate-300 focus:outline-none cursor-pointer"
+                                  >
+                                    {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
+                                      <option key={s} value={s}>{s}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="inline-flex items-center text-[9px] font-semibold text-violet-400 bg-violet-950/40 px-2 py-0.5 rounded border border-violet-900/30">
+                                    {job.pipeline_stage || 'Approved'}
+                                  </span>
+                                )}
                                 <span className="text-[9px] text-slate-500">{getJobSource(job.job_url)}</span>
                               </div>
                             </div>
@@ -2409,7 +2620,7 @@ export default function Dashboard() {
                         </a>
 
                         <div className="flex items-center space-x-2">
-                          {activeTab === 'approved' && (
+                          {activeTab === 'approved' && authRole === 'admin' && (
                             <>
                               <button
                                 type="button"
@@ -2428,15 +2639,21 @@ export default function Dashboard() {
                             </>
                           )}
                           {activeTab === 'approved' && (
-                            <select
-                              value={job.pipeline_stage || 'Approved'}
-                              onChange={e => updatePipelineStage(job.job_url, e.target.value)}
-                              className="bg-slate-900 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-300 focus:outline-none cursor-pointer hover:border-slate-700 transition-colors"
-                            >
-                              {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
-                                <option key={s} value={s}>{s}</option>
-                              ))}
-                            </select>
+                            authRole === 'admin' ? (
+                              <select
+                                value={job.pipeline_stage || 'Approved'}
+                                onChange={e => updatePipelineStage(job.job_url, e.target.value)}
+                                className="bg-slate-900 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-300 focus:outline-none cursor-pointer hover:border-slate-700 transition-colors"
+                              >
+                                {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
+                                  <option key={s} value={s}>{s}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="inline-flex items-center text-xs font-semibold text-violet-400 bg-violet-950/40 px-2.5 py-1.5 rounded-xl border border-violet-900/30">
+                                {job.pipeline_stage || 'Approved'}
+                              </span>
+                            )
                           )}
 
                           {/* Inspect details button */}
@@ -2445,71 +2662,77 @@ export default function Dashboard() {
                             className="inline-flex items-center px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition-colors"
                           >
                             <Edit3 className="w-3 h-3 mr-1" />
-                            Inspect & Edit
+                            {authRole === 'admin' ? 'Inspect & Edit' : 'Inspect'}
                           </button>
 
                           {/* Action specific buttons */}
                           {activeTab === 'approved' ? (
-                            <button
-                              onClick={() => syncJob(job)}
-                              disabled={job.synced || syncingJobUrl === job.job_url}
-                              className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all ${job.synced
-                                  ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-800/40 cursor-not-allowed'
-                                  : syncingJobUrl === job.job_url
-                                    ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/10 border border-emerald-500/20 active:scale-95'
-                                }`}
-                            >
-                              {job.synced ? (
-                                <>
-                                  <Check className="w-3 h-3 mr-1.5" />
-                                  Synced
-                                </>
-                              ) : syncingJobUrl === job.job_url ? (
-                                'Syncing...'
-                              ) : (
-                                <>
-                                  <Database className="w-3 h-3 mr-1.5" />
-                                  Sync Notion
-                                </>
-                              )}
-                            </button>
+                            authRole === 'admin' && (
+                              <button
+                                onClick={() => syncJob(job)}
+                                disabled={job.synced || syncingJobUrl === job.job_url}
+                                className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all ${job.synced
+                                    ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-800/40 cursor-not-allowed'
+                                    : syncingJobUrl === job.job_url
+                                      ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/10 border border-emerald-500/20 active:scale-95'
+                                  }`}
+                              >
+                                {job.synced ? (
+                                  <>
+                                    <Check className="w-3 h-3 mr-1.5" />
+                                    Synced
+                                  </>
+                                ) : syncingJobUrl === job.job_url ? (
+                                  'Syncing...'
+                                ) : (
+                                  <>
+                                    <Database className="w-3 h-3 mr-1.5" />
+                                    Sync Notion
+                                  </>
+                                )}
+                              </button>
+                            )
                           ) : (
                             /* If rejected or candidate, show quick Approve Override */
-                            <button
-                              onClick={() => {
-                                setSelectedJob(job);
-                                setEditTitle(job.job_title);
-                                setEditCompany(job.company_name);
-                                setEditReqId(job.requirement_id);
-                                setEditLocation(job.location_work_type);
-                                setEditDecision('APPLY');
-                                setEditLabel(job.strongest_label === 'OutOfScope' ? 'DevOps Engineer' : job.strongest_label);
-                                setEditScore(85);
-                                setEditRationale('Manual override approved by user.');
-                                setEditDesc(job.job_description);
-                                // Open modal to review before override
-                                openModal({
-                                  ...job,
-                                  apply_decision: 'APPLY',
-                                  strongest_label: job.strongest_label === 'OutOfScope' ? 'DevOps Engineer' : job.strongest_label,
-                                  rationale: 'Manual override approved by user.'
-                                });
-                              }}
-                              className="inline-flex items-center px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold border border-violet-500/20 active:scale-95 shadow-md shadow-violet-500/10 transition-all"
-                            >
-                              Approve Override
-                            </button>
+                            authRole === 'admin' && (
+                              <button
+                                onClick={() => {
+                                  setSelectedJob(job);
+                                  setEditTitle(job.job_title);
+                                  setEditCompany(job.company_name);
+                                  setEditReqId(job.requirement_id);
+                                  setEditLocation(job.location_work_type);
+                                  setEditDecision('APPLY');
+                                  setEditLabel(job.strongest_label === 'OutOfScope' ? 'DevOps Engineer' : job.strongest_label);
+                                  setEditScore(85);
+                                  setEditRationale('Manual override approved by user.');
+                                  setEditDesc(job.job_description);
+                                  // Open modal to review before override
+                                  openModal({
+                                    ...job,
+                                    apply_decision: 'APPLY',
+                                    strongest_label: job.strongest_label === 'OutOfScope' ? 'DevOps Engineer' : job.strongest_label,
+                                    rationale: 'Manual override approved by user.'
+                                  });
+                                }}
+                                className="inline-flex items-center px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold border border-violet-500/20 active:scale-95 shadow-md shadow-violet-500/10 transition-all"
+                              >
+                                Approve Override
+                              </button>
+                            )
                           )}
 
                           {/* Delete/Archive Button */}
-                          <button
-                            onClick={() => deleteJob(job.job_url)}
-                            className="inline-flex items-center p-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 rounded-xl text-xs font-semibold border border-rose-800/40 transition-colors shrink-0"
-                            title="Delete / Archive job posting"
-                          >
-                            <XCircle className="w-4 h-4" />
-                          </button>
+                          {authRole === 'admin' && (
+                            <button
+                              onClick={() => deleteJob(job.job_url)}
+                              className="inline-flex items-center p-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 rounded-xl text-xs font-semibold border border-rose-800/40 transition-colors shrink-0"
+                              title="Delete / Archive job posting"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -2589,11 +2812,13 @@ export default function Dashboard() {
             <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
               <div className="flex items-center space-x-2">
                 <Sliders className="w-5 h-5 text-violet-400" />
-                <h3 className="text-base font-bold text-white">Inspect Candidate & Apply Manual Override</h3>
+                <h3 className="text-base font-bold text-white">
+                  {authRole === 'admin' ? 'Inspect Candidate & Apply Manual Override' : 'Inspect Candidate'}
+                </h3>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-xs font-bold px-2.5"
+                className="p-1 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 rounded-lg transition-colors text-xs font-bold px-2.5"
               >
                 Close
               </button>
@@ -2615,7 +2840,8 @@ export default function Dashboard() {
                   placeholder="Role title"
                   value={editTitle}
                   onChange={e => setEditTitle(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                  readOnly={authRole !== 'admin'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 read-only:text-slate-400"
                 />
               </div>
 
@@ -2632,7 +2858,8 @@ export default function Dashboard() {
                   placeholder="e.g., REQ-12345"
                   value={editReqId}
                   onChange={e => setEditReqId(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 font-mono"
+                  readOnly={authRole !== 'admin'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 font-mono read-only:text-slate-400"
                 />
               </div>
 
@@ -2649,7 +2876,8 @@ export default function Dashboard() {
                   placeholder="https://careers.example.com/job/123"
                   value={editUrl}
                   onChange={e => setEditUrl(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                  readOnly={authRole !== 'admin'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 read-only:text-slate-400"
                 />
               </div>
 
@@ -2666,7 +2894,8 @@ export default function Dashboard() {
                   placeholder="Company name"
                   value={editCompany}
                   onChange={e => setEditCompany(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                  readOnly={authRole !== 'admin'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 read-only:text-slate-400"
                 />
               </div>
 
@@ -2683,7 +2912,8 @@ export default function Dashboard() {
                   placeholder="e.g., Dallas, TX — Hybrid"
                   value={editLocation}
                   onChange={e => setEditLocation(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                  readOnly={authRole !== 'admin'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 read-only:text-slate-400"
                 />
               </div>
 
@@ -2698,7 +2928,8 @@ export default function Dashboard() {
                   <select
                     value={editCloud}
                     onChange={e => setEditCloud(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer"
+                    disabled={authRole !== 'admin'}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
                   >
                     <option value="Not specified">Not specified</option>
                     <option value="AWS">AWS</option>
@@ -2718,7 +2949,8 @@ export default function Dashboard() {
                   <select
                     value={editSeniority}
                     onChange={e => setEditSeniority(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer"
+                    disabled={authRole !== 'admin'}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
                   >
                     <option value="Not specified">Not specified</option>
                     <option value="Junior">Junior</option>
@@ -2740,7 +2972,8 @@ export default function Dashboard() {
                   <select
                     value={editSource}
                     onChange={e => setEditSource(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer"
+                    disabled={authRole !== 'admin'}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
                   >
                     <option value="Not specified">Not specified</option>
                     <option value="Yahoo Sourced">Yahoo Sourced</option>
@@ -2767,86 +3000,88 @@ export default function Dashboard() {
                 <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950 flex flex-col focus-within:border-violet-600/70 transition-colors">
 
                   {/* Toolbar */}
-                  <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-900 border-b border-slate-800">
-                    <button
-                      type="button"
-                      onClick={handleUndo}
-                      disabled={historyIndex <= 0}
-                      className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
-                      title="Undo"
-                    >
-                      <Undo className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleRedo}
-                      disabled={historyIndex >= descHistory.length - 1}
-                      className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
-                      title="Redo"
-                    >
-                      <Redo className="w-4 h-4" />
-                    </button>
-                    <div className="w-px h-4 bg-slate-800 mx-1" />
+                  {authRole === 'admin' && (
+                    <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-900 border-b border-slate-800">
+                      <button
+                        type="button"
+                        onClick={handleUndo}
+                        disabled={historyIndex <= 0}
+                        className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
+                        title="Undo"
+                      >
+                        <Undo className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRedo}
+                        disabled={historyIndex >= descHistory.length - 1}
+                        className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
+                        title="Redo"
+                      >
+                        <Redo className="w-4 h-4" />
+                      </button>
+                      <div className="w-px h-4 bg-slate-800 mx-1" />
 
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('bold')}
-                      className="p-1.5 text-slate-400 hover:text-white font-bold rounded transition-colors"
-                      title="Bold"
-                    >
-                      <Bold className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('italic')}
-                      className="p-1.5 text-slate-400 hover:text-white italic rounded transition-colors"
-                      title="Italic"
-                    >
-                      <Italic className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('underline')}
-                      className="p-1.5 text-slate-400 hover:text-white underline rounded transition-colors"
-                      title="Underline"
-                    >
-                      <Underline className="w-4 h-4" />
-                    </button>
-                    <div className="w-px h-4 bg-slate-800 mx-1" />
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('bold')}
+                        className="p-1.5 text-slate-400 hover:text-white font-bold rounded transition-colors"
+                        title="Bold"
+                      >
+                        <Bold className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('italic')}
+                        className="p-1.5 text-slate-400 hover:text-white italic rounded transition-colors"
+                        title="Italic"
+                      >
+                        <Italic className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('underline')}
+                        className="p-1.5 text-slate-400 hover:text-white underline rounded transition-colors"
+                        title="Underline"
+                      >
+                        <Underline className="w-4 h-4" />
+                      </button>
+                      <div className="w-px h-4 bg-slate-800 mx-1" />
 
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('bullet')}
-                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
-                      title="Bullet List"
-                    >
-                      <List className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('number')}
-                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
-                      title="Numbered List"
-                    >
-                      <ListOrdered className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('link')}
-                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
-                      title="Insert Link"
-                    >
-                      <Link2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToolbarClick('clear')}
-                      className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
-                      title="Clear Formatting"
-                    >
-                      <Type className="w-4 h-4" />
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('bullet')}
+                        className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                        title="Bullet List"
+                      >
+                        <List className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('number')}
+                        className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                        title="Numbered List"
+                      >
+                        <ListOrdered className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('link')}
+                        className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                        title="Insert Link"
+                      >
+                        <Link2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToolbarClick('clear')}
+                        className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
+                        title="Clear Formatting"
+                      >
+                        <Type className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Textarea */}
                   <textarea
@@ -2856,7 +3091,8 @@ export default function Dashboard() {
                     value={editDesc}
                     onChange={e => setEditDesc(e.target.value)}
                     onBlur={e => updateDescWithHistory(e.target.value)}
-                    className="w-full bg-transparent px-4 py-3 text-sm text-slate-300 focus:outline-none resize-y placeholder-slate-700 min-h-[180px] leading-relaxed"
+                    readOnly={authRole !== 'admin'}
+                    className="w-full bg-transparent px-4 py-3 text-sm text-slate-300 focus:outline-none resize-y placeholder-slate-700 min-h-[180px] leading-relaxed read-only:text-slate-400"
                   />
 
                   {/* Status Bar */}
@@ -2895,7 +3131,8 @@ export default function Dashboard() {
                         rows={8}
                         value={editPayload}
                         onChange={e => setEditPayload(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-600/70 font-mono leading-relaxed placeholder-slate-700"
+                        readOnly={authRole !== 'admin'}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-600/70 font-mono leading-relaxed placeholder-slate-700 read-only:text-slate-400"
                         placeholder='{ "apply_decision": "APPLY", "strongest_label": "...", ... }'
                       />
                     </div>
@@ -2914,7 +3151,8 @@ export default function Dashboard() {
                     <select
                       value={editDecision}
                       onChange={e => setEditDecision(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
+                      disabled={authRole !== 'admin'}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 disabled:text-slate-400 disabled:cursor-not-allowed"
                     >
                       <option value="APPLY">APPLY (Approve)</option>
                       <option value="DO_NOT_APPLY">DO_NOT_APPLY (Reject)</option>
@@ -2926,7 +3164,8 @@ export default function Dashboard() {
                     <select
                       value={editLabel}
                       onChange={e => setEditLabel(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
+                      disabled={authRole !== 'admin'}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 disabled:text-slate-400 disabled:cursor-not-allowed"
                     >
                       {CATEGORIES.map(cat => (
                         <option key={cat} value={cat}>{cat}</option>
@@ -2946,7 +3185,8 @@ export default function Dashboard() {
                         max="100"
                         value={editScore}
                         onChange={e => setEditScore(Number(e.target.value))}
-                        className="flex-1 accent-violet-600 bg-slate-950 h-2 rounded-lg appearance-none cursor-pointer"
+                        disabled={authRole !== 'admin'}
+                        className="flex-1 accent-violet-600 bg-slate-950 h-2 rounded-lg appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <input
                         type="number"
@@ -2954,7 +3194,8 @@ export default function Dashboard() {
                         max="100"
                         value={editScore}
                         onChange={e => setEditScore(Number(e.target.value))}
-                        className="w-16 bg-slate-950 border border-slate-800 rounded-xl px-2 py-1 text-center text-xs text-slate-200 focus:outline-none focus:border-violet-600/70"
+                        readOnly={authRole !== 'admin'}
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-xl px-2 py-1 text-center text-xs text-slate-200 focus:outline-none focus:border-violet-600/70 read-only:text-slate-400"
                       />
                     </div>
                   </div>
@@ -2965,7 +3206,8 @@ export default function Dashboard() {
                       rows={3}
                       value={editRationale}
                       onChange={e => setEditRationale(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700"
+                      readOnly={authRole !== 'admin'}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 placeholder-slate-700 read-only:text-slate-400"
                       placeholder="Write details explaining the manual approval or classification adjustments..."
                     />
                   </div>
@@ -2976,7 +3218,7 @@ export default function Dashboard() {
 
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-slate-800 flex justify-end items-center space-x-3 bg-slate-950/50">
-              {selectedJob.apply_decision === 'APPLY' && (
+              {selectedJob.apply_decision === 'APPLY' && authRole === 'admin' && (
                 <div className="mr-auto flex items-center space-x-2">
                   <button
                     type="button"
@@ -3001,15 +3243,17 @@ export default function Dashboard() {
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition-all"
               >
-                Cancel
+                {authRole === 'admin' ? 'Cancel' : 'Close'}
               </button>
-              <button
-                onClick={submitOverride}
-                className="inline-flex items-center px-6 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold border border-violet-500/20 active:scale-95 shadow-md shadow-violet-500/10 transition-all"
-              >
-                <Check className="w-4 h-4 mr-2" />
-                Apply Override Changes
-              </button>
+              {authRole === 'admin' && (
+                <button
+                  onClick={submitOverride}
+                  className="inline-flex items-center px-6 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold border border-violet-500/20 active:scale-95 shadow-md shadow-violet-500/10 transition-all"
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  Apply Override Changes
+                </button>
+              )}
             </div>
 
           </div>
