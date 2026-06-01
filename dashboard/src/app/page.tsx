@@ -187,10 +187,13 @@ export default function Dashboard() {
   // Authentication States
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authRole, setAuthRole] = useState<'admin' | 'user' | null>(null);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+  const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginPassword, setLoginPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
   const [loginLoading, setLoginLoading] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
   // Analytics and Policy States
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
@@ -296,21 +299,32 @@ export default function Dashboard() {
     setLoginError('');
     setLoginLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/login`, {
+      const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
+      const bodyPayload = { email: loginEmail, password: loginPassword };
+      
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: loginPassword }),
+        body: JSON.stringify(bodyPayload),
       });
       const data = await res.json();
-      if (res.ok && data.success && data.token && data.role) {
-        localStorage.setItem('maas_auth_token', data.token);
-        localStorage.setItem('maas_auth_role', data.role);
-        setAuthToken(data.token);
-        setAuthRole(data.role as 'admin' | 'user');
-        setLoginPassword('');
-        showStatus(`Welcome, logged in as ${data.role === 'admin' ? 'Admin' : 'Read-Only User'}.`, 'success');
+      if (res.ok && data.success) {
+        if (authMode === 'login') {
+          localStorage.setItem('maas_auth_token', data.token);
+          localStorage.setItem('maas_auth_role', data.role);
+          localStorage.setItem('maas_auth_email', data.email || loginEmail);
+          setAuthToken(data.token);
+          setAuthRole(data.role as 'admin' | 'user');
+          setAuthEmail(data.email || loginEmail);
+          setLoginPassword('');
+          setLoginEmail('');
+          showStatus(`Welcome, logged in as ${data.role === 'admin' ? 'Admin' : 'Read-Only User'}.`, 'success');
+        } else {
+          setAuthMode('login');
+          showStatus('Account created successfully! Please log in.', 'success');
+        }
       } else {
-        setLoginError(data.message || 'Invalid password.');
+        setLoginError(data.message || (authMode === 'login' ? 'Invalid credentials.' : 'Registration failed.'));
       }
     } catch (err) {
       setLoginError('Error connecting to authentication server.');
@@ -322,8 +336,10 @@ export default function Dashboard() {
   const handleLogout = () => {
     localStorage.removeItem('maas_auth_token');
     localStorage.removeItem('maas_auth_role');
+    localStorage.removeItem('maas_auth_email');
     setAuthToken(null);
     setAuthRole(null);
+    setAuthEmail(null);
     showStatus('Logged out successfully.', 'info');
   };
 
@@ -332,9 +348,11 @@ export default function Dashboard() {
     if (typeof window !== 'undefined') {
       const savedToken = localStorage.getItem('maas_auth_token');
       const savedRole = localStorage.getItem('maas_auth_role');
+      const savedEmail = localStorage.getItem('maas_auth_email');
       if (savedToken && savedRole) {
         setAuthToken(savedToken);
         setAuthRole(savedRole as 'admin' | 'user');
+        setAuthEmail(savedEmail || 'user@hailmary.ai');
       }
       setIsAuthChecking(false);
     }
@@ -1208,7 +1226,21 @@ export default function Dashboard() {
             <form onSubmit={handleLogin} className="w-full space-y-4">
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  Access Password
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  placeholder="name@example.com"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-600/50 focus:border-violet-500 transition-all"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Password
                 </label>
                 <input
                   type="password"
@@ -1236,11 +1268,24 @@ export default function Dashboard() {
                   <RefreshCw className="w-5 h-5 animate-spin" />
                 ) : (
                   <>
-                    <span>Authenticate</span>
+                    <span>{authMode === 'login' ? 'Authenticate' : 'Create Account'}</span>
                     <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
                   </>
                 )}
               </button>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === 'login' ? 'register' : 'login');
+                    setLoginError('');
+                  }}
+                  className="text-xs text-violet-400 hover:text-violet-300 font-medium transition-colors"
+                >
+                  {authMode === 'login' ? "Don't have an account? Create one" : 'Already have an account? Sign in'}
+                </button>
+              </div>
             </form>
 
             <div className="text-xs text-slate-500 text-center border-t border-slate-800/60 pt-4 w-full">
@@ -1285,7 +1330,7 @@ export default function Dashboard() {
                 ? 'text-violet-400 bg-violet-950/40 border-violet-800/50' 
                 : 'text-slate-400 bg-slate-950/40 border-slate-800/50'
             }`}>
-              {authRole === 'admin' ? 'Admin' : 'Read-Only'}
+              {authRole === 'admin' ? 'Admin' : 'Read-Only'}{authEmail ? ` (${authEmail})` : ''}
             </span>
           </div>
 

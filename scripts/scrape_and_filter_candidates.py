@@ -126,7 +126,7 @@ def load_known_hashes(workspace_path):
     approved_hashes = {}
     failed_hashes = {}
     
-    approved_path = workspace_path / "approved_jobs.json"
+    approved_path = resolve_path(workspace_path / "approved_jobs.json")
     if approved_path.exists():
         try:
             jobs = json.loads(approved_path.read_text(encoding="utf-8"))
@@ -139,7 +139,7 @@ def load_known_hashes(workspace_path):
         except Exception as e:
             print(f"Error loading approved hashes: {e}")
             
-    failed_path = workspace_path / "failed_candidate_jobs.json"
+    failed_path = resolve_path(workspace_path / "failed_candidate_jobs.json")
     if failed_path.exists():
         try:
             jobs = json.loads(failed_path.read_text(encoding="utf-8"))
@@ -161,6 +161,16 @@ if str(_repo_root) not in sys.path:
 from jobsearch_paths import workspace_root
 
 WORKSPACE = workspace_root()
+
+def resolve_path(base_path):
+    import os
+    email = os.environ.get("MAAS_USER_EMAIL")
+    if not email:
+        return base_path
+    import re
+    suffix = re.sub(r'[^a-zA-Z0-9_.-]', '_', email)
+    p = Path(base_path)
+    return p.parent / f"{p.stem}_{suffix}{p.suffix}"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -955,7 +965,7 @@ async def process_single_job(semaphore, client, browser, job, i, total_jobs):
         return "skip", None
 
 async def main():
-    input_path = str(WORKSPACE / "scraped_jobs.json")
+    input_path = str(resolve_path(WORKSPACE / "scraped_jobs.json"))
     with open(input_path, 'r') as f:
         jobs = json.load(f)
         
@@ -1030,10 +1040,10 @@ async def main():
                 
     print(f"\nProcessing complete.\nPassed jobs: {len(passed_jobs)}\nFailed jobs: {len(failed_jobs)}", flush=True)
     
-    with open(str(WORKSPACE / "active_candidate_jobs.json"), "w") as f:
+    with open(str(resolve_path(WORKSPACE / "active_candidate_jobs.json")), "w") as f:
         json.dump(passed_jobs, f, indent=2)
         
-    with open(str(WORKSPACE / "failed_candidate_jobs.json"), "w") as f:
+    with open(str(resolve_path(WORKSPACE / "failed_candidate_jobs.json")), "w") as f:
         json.dump(failed_jobs, f, indent=2)
 
 if __name__ == '__main__':
