@@ -1,92 +1,17 @@
 [
   {
-    "job_title": "AI Automation Engineer",
-    "company_name": "Prop Firm Match Global \u2013 FZCO",
-    "job_url": "https://jobs.workable.com/view/aUTfLxQhw2oT7DrieizFdA/remote-ai-automation-engineer-in-united-states-at-prop-firm-match-global-%E2%80%93-fzco",
-    "requirement_id": "504482c1-5e7e-4df8-b7ce-8c76b2c4b76e",
-    "job_description": "About Prop Firm Match Global FZCO\nProp Firm Match Global FZCO is the leading platform for discovering, comparing, and selecting proprietary trading firms. We help traders make confident, informed decisions by offering side-by-side comparisons, verified reviews, and data-backed insights from the top prop firms worldwide. Our mission is to bring transparency, access, and clarity to the prop trading space.\nRole Mission\nBuild, maintain, and scale reliable automations and AI-powered workflows that streamline operations across Prop Firm Match. This role turns ideas into production-grade systems using n8n, Python/TS, and API integrations, ensuring high reliability, observability, and measurable business impact.\nRequirements\nTop 6 Performance Objectives\n1. Deliver high-impact automations for core workflows (first 60\u201390 days; ongoing)\nTake 3\u20135 priority processes from scoping to production automation (Ops, Growth, Content, CS, Risk).\nBuild using n8n + Python/TS/JavaScript logic modules.\nDeliver MVP versions fast, iterate based on feedback.\nOutcome:\nAt least 3 production workflows live within 90 days, saving time or reducing errors by measurable %.\n2. Build robust, modular, and well-architected workflows (ongoing)\nTranslate business rules into modular, reusable workflow components with a clear separation of concerns.\nImplement retries, structured error handling, alerting, and idempotency across all critical workflow paths.\nOutcome:\nAll new workflows are understandable, reusable, and extendable by peers within 20\u201330 minutes.\n3. Own API integrations end-to-end (first 90\u2013120 days; ongoing)\nBuild and maintain integrations with internal and external APIs (REST/GraphQL/OAuth/webhooks).\nHandle dynamic data structures, pagination, rate limits, and authentication refresh.\nMonitor upstream failures and design fallback strategies.\nOutcome:\nIntegrations run with > 99% uptime and zero silent failures.\n4. Implement observability & monitoring for all automations (first 120 days)\nSet standards for logging, structured error messages, and monitoring.\nBuild basic dashboards or alerting (Slack alerts, logs dashboards, error queues).\nOutcome:\nIssues are detected early - no black-box workflows.\n5. Maintain documentation, run books, and clear SOPs (ongoing)\nDocument workflows: purpose, logic, variables, failure modes, key integration points.\nCreate simple run books for non-technical stakeholders to triage basic failures.\nOutcome:\nAnyone can understand the system state within 15 minutes.\n6. Collaborate with business stakeholders to refine requirements (ongoing)\nParticipate in discovery to clarify vague automation ideas (\u201cwe need to automate X\u201d) into clear specifications.\nSuggest pragmatic approaches that maximize ROI and reduce complexity.\nProvide continuous feedback to improve architectural standards.\nOutcome:\nAutomations delivered match business outcomes, not just technical specs.\nMust-Have Qualifications\nCandidates must demonstrate real accomplishments in:\n1. Automation & Workflow Engineering: Built production-grade automations in n8n or similar tools (Make, Zapier, Tray.io, Airflow, Prefect). Experience structuring workflows into reusable components.\n2. API Integration: Built reliable API integrations with advanced requirements (pagination, auth refresh, rate limits, error fallback).\n3. Software Engineering Foundation: Strong hands-on experience with Python or TypeScript (ideally both) Experience with CI/CD, Git workflows, debugging, testing.\n4. Reliability & Observability: Implemented logs, alerts, dashboards, or monitoring systems.\n5. Ownership Mindset: Successfully took projects from vague idea \u2192 spec \u2192 implementation \u2192 production support.\nSoft Skills / On-the-Job Behaviors\nQuietly reliable \u2014 things you build \u201cjust work\u201d consistently.\nSystems thinker: sees cause\u2013effect chains, avoids messy hacks.\nClear written communicator (async-friendly).\nPragmatic and fast \u2014 focuses on ROI, not over-engineering.\nComfortable pushing back when requirements are unclear or suboptimal.\nBefore applying, please take into account that:\nIf you don\u2019t meet every single qualification but believe you can excel in the role based on what it requires \u2014 we encourage you to apply.\nWe are an equal opportunity employer and welcome applicants from all backgrounds, experiences, and perspectives.\nEven if it\u2019s not listed as a formal requirement, we truly value candidates who have clear familiarity with the prop trading industry and us, our mission and what we do.\nHiring stages\nWe keep the process structured, respectful of your time, and focused on real skills.\nHere\u2019s what to expect:\n1.\nApplication questionnaire - Self-Paced\n: A short, structured assessment to understand your background. (Async; ~10 minutes)\n2.\nHR Deep Dive\n: A conversation focused on your motivation, ownership style, culture fit, and your past accomplishments.\n3.\nTechnical Interview with Head of Engineering & CTO\n: A 60\u201375 minute session focused on:\nReal-world reasoning\nAutomation thinking\nSystem design approach Including a Live Demo: You\u2019ll be asked to show how you would build or troubleshoot a workflow using n8n or code - focusing on your thought process, not perfection.\n4.\nTechnical Assignment\n: A more advanced automation + API + reliability challenge, designed to reflect real work at PFM. We review code quality, modularity, error-handling, clarity, and overall architecture.\n5. (Optional / On-Demand)\nInterview with Top Management:\nA strategic conversation to align expectations, understand long-term contribution, and ensure cultural alignment with PFM leadership.\n6.\nOffer Stage\n: If successful, we begin with an informal offer discussion, followed by a formal written offer.\nBenefits\nWhy Join Prop Firm Match Global FZCO?\n\u25b8\u00a0 Contribute to a growing platform shaping the future of proprietary trading\n\u25b8\u00a0 Work within a flat, collaborative team where your input is valued\n\u25b8\u00a0 Competitive compensation, including base pay and benefits\n\u25b8\u00a0 100% medical, dental, and vision coverage (U.S. only), including gender-affirming care\n\u25b8\u00a0 Flexible PTO including sick time, holidays, refresh days, and sabbatical leave after five years\n\u25b8\u00a0 Work remotely with the flexibility you need to maintain balance and focus.\n\u25b8\u00a0 A professional, transparent, and healthy work environment that values both results and people.",
-    "location_work_type": "United States (Remote)",
-    "scraped_at": "2026-05-31T20:55:57.306459-05:00",
-    "red_flags": [],
-    "apply_decision": "APPLY",
-    "strongest_label": "Cloud Automation Engineer",
-    "confidence_score": 85,
-    "rationale": "The role's primary mission is to \"Build, maintain, and scale reliable automations and AI-powered workflows\" using n8n, Python/TypeScript, and API integrations. It heavily emphasizes \"Automation & Workflow Engineering\", explicitly mentioning tools like n8n, Make, Zapier, Tray.io, Airflow, and Prefect, which are strong indicators for workflow automation. The focus on modularity, reusability, API integration, and owning the end-to-end lifecycle of these automations aligns perfectly with a Cloud Automation Engineer profile. While the role incorporates aspects of reliability (logging, monitoring, error handling), often associated with SRE, and foundational CI/CD skills, these are applied in the context of the core automation delivery. The 'AI' in the title refers to leveraging AI within workflows rather than building the underlying AI/ML platform infrastructure, making MLOps or AI Platform Engineer unsuitable. The depth of automation ownership differentiates it from a broader DevOps Engineer role.",
-    "apply_decision_payload": {
-      "all_labels": [
-        "Cloud Automation Engineer"
-      ],
-      "strongest_label": "Cloud Automation Engineer",
-      "other_labels": [],
-      "apply_decision": "APPLY",
-      "red_flags": [],
-      "filters": {
-        "domain_specialization": false
-      },
-      "confidence_score": 85,
-      "cloud": {
-        "is_cloud_role": false,
-        "primary_cloud": "",
-        "cloud_providers": []
-      },
-      "domain_scores": {
-        "database": 0,
-        "cloud_database": 0,
-        "network": 0,
-        "infrastructure": 0,
-        "platform": 0,
-        "automation": 8,
-        "devops": 3,
-        "cicd": 3,
-        "sre": 4,
-        "security": 0,
-        "devsecops": 0,
-        "system": 0,
-        "data": 0,
-        "mlops": 0,
-        "aiops": 0
-      },
-      "dominant_domains": [
-        "Cloud Automation Engineer"
-      ],
-      "dominant_signals": {},
-      "decision_trace": {
-        "top_score": 8
-      },
-      "rationale": "The role's primary mission is to \"Build, maintain, and scale reliable automations and AI-powered workflows\" using n8n, Python/TypeScript, and API integrations. It heavily emphasizes \"Automation & Workflow Engineering\", explicitly mentioning tools like n8n, Make, Zapier, Tray.io, Airflow, and Prefect, which are strong indicators for workflow automation. The focus on modularity, reusability, API integration, and owning the end-to-end lifecycle of these automations aligns perfectly with a Cloud Automation Engineer profile. While the role incorporates aspects of reliability (logging, monitoring, error handling), often associated with SRE, and foundational CI/CD skills, these are applied in the context of the core automation delivery. The 'AI' in the title refers to leveraging AI within workflows rather than building the underlying AI/ML platform infrastructure, making MLOps or AI Platform Engineer unsuitable. The depth of automation ownership differentiates it from a broader DevOps Engineer role.",
-      "rationale_formatted": [
-        "Primary focus on building and scaling \"reliable automations and AI-powered workflows\" to streamline operations.",
-        "Extensive use of n8n, Python/TypeScript, and API integrations for workflow development and maintenance.",
-        "Explicit requirement for experience with workflow orchestration tools like Airflow and Prefect.",
-        "Strong emphasis on robust, modular, and reusable workflow architecture with clear error handling, retries, and idempotency.",
-        "Responsibilities include implementing observability, monitoring, logging, and alerting specifically for these automations.",
-        "Foundational software engineering skills like CI/CD and Git workflows are required, but not the primary delivery scope.",
-        "The term \"AI-powered workflows\" refers to utilizing AI within the automations, not developing or managing core AI/ML platforms."
-      ],
-      "benefits": [
-        "Health Insurance",
-        "Dental Insurance",
-        "Vision Insurance",
-        "PTO / Vacation",
-        "Equity / Stock Options"
-      ]
-    },
-    "benefits": [
-      "Health Insurance",
-      "Dental Insurance",
-      "Vision Insurance",
-      "PTO / Vacation",
-      "Equity / Stock Options"
-    ]
-  },
-  {
     "job_title": "Site Reliability Engineer (4024)",
     "company_name": "GBG",
     "job_url": "https://jobs.workable.com/view/nMyghzLFoSyKoby5Jhki4h/hybrid-site-reliability-engineer-(4024)-in-kuala-lumpur-at-gbg",
     "requirement_id": "b06c43be-b894-43ad-a920-cefa38c2e95a",
     "job_description": "Enabling safe and rewarding digital lives for genuine people, everywhere\nWe make it our mission to ensure more genuine people have digital access to opportunities, and businesses have access to more genuine people. Our technology draws on diverse and reliable data to create a single point of truth for identity and address verification.\nWith over 30 years of experience behind us our team and technology are focused on enabling safe and rewarding digital lives for everyone. Regardless of age, location or background, genuine people everywhere should be able to digitally prove who they are and where they live.\nAbout the team and role\nGlobal Fraud Solutions\nThe team provides decision support solutions to address business objectives in risk prevention and fraud detection. We deliver software solutions and offer client support using our expertise and a client-focused approach.\nSite Reliability Engineer\nThe SRE will build and operate the reliability, observability, and operational excellence infrastructure underpinning the GFS managed fraud detection platforms. You will work across deployment pipelines, cloud infrastructure, monitoring, and incident management \u2014 ensuring GBG can deliver on high availability SLAs for banking and fintech customers who depend on real-time fraud detection at scale.\nWhat you will do\nDesign and operate the SRE practice for Managed oferings, including on-call processes, SLA frameworks, incident response playbooks, and post-incident review (PIR) processes.\nBuild and maintain observability infrastructure: centralised logging (correlation IDs), metrics dashboards, distributed tracing, and alerting for the Predator/Instinct platform stack.\nDefine and track SLOs (Service Level Objectives) and error budgets for real-time transaction processing pipelines, targeting high TPS and low round-trip latency.\nManage cloud infrastructure provisioning and configuration using IaC tooling (Terraform, Helm), supporting both AWS/Azure cloud deployments and on-premises customer environments.\nImplement and maintain CI/CD pipelines for GFS solutions (Jenkins, etc.)\nWork with Engineering teams to ensure security and compliance readiness for Managed services \u2014 including PCI DSS, ISO 27001, SOC 1/2/3, PDPA/GDPR \u2014 in close coordination with InfoSec teams.\nDrive platform resilience improvements: high availability, auto-scaling, disaster recovery, backup/restore procedures, and chaos engineering practices.\nManage secrets, certificate rotation, identity/access controls (OAuth/RBAC), and vulnerability management for the hosted environment.\nSupport performance testing methodology and baseline establishment for our products.\nContribute to the Architecture Review Committee (ARC) with SRE and operational perspectives on technology choices.\nCollaborate with engineering squads to embed reliability and DevSecOps practices across the SDLC.\nSkills we\u2019re looking for\nMinimum 5 years of solid hands-on experience in a Site Reliability, Platform Engineering, or DevOps role, ideally supporting mission-critical real-time processing systems in banking, payments, or fintech.\nStrong proficiency with cloud platforms (AWS preferred; Azure/GCP acceptable) including networking, compute, storage, and managed services.\nDeep expertise with containerisation and orchestration: Docker, Kubernetes (EKS/AKS/GKE), Helm, and associated tooling.\nInfrastructure as Code experience: Terraform (required), and familiarity with Ansible or Pulumi.\nObservability stack proficiency: Prometheus, Grafana, ELK/OpenSearch, Jaeger/Zipkin, or equivalent enterprise-grade tooling.\nCI/CD pipeline design and management: GitHub Actions, Jenkins, ArgoCD, or equivalent.\nExperience with security and compliance frameworks applicable to hosted financial services: PCI DSS, ISO 27001, SOC 1/2/3, GDPR/PDPA.\nFamiliarity with database reliability practices for SQL Server, PostgreSQL, and Oracle \u2014 including replication, read replicas, and failover.\nWorking knowledge of secrets management (HashiCorp Vault, AWS Secrets Manager) and zero-trust identity principles.\nExperience supporting real-time streaming or event-driven architectures (Kafka, RisingWave, or similar) in production environments.\nScripting and automation proficiency: Python, Bash, or Go for operational tooling.\nStrong sense of operational ownership and accountability \u2014 comfortable being on-call and driving incidents to resolution.\nExcellent communication skills \u2014 able to produce clear incident reports, runbooks, and architecture documentation for both technical and executive audiences.\nProactive mindset: identifies reliability risks before they become incidents and champions a culture of blameless post-mortems.\nCollaborative and effective working with software engineers, product managers, and InfoSec teams.\nContinuous improvement orientation \u2014 always looking to reduce toil, automate repetitive tasks, and improve platform resilience.\nFlexible and adaptable \u2014 able to support a globally distributed product with customers across multiple time zones.\nTo find out more\nAs an equal opportunity employer, we are dedicated to creating a diverse and inclusive workplace where everyone feels valued and empowered. Please inform your GBG Talent Attraction Partner if you require any reasonable adjustments to the interview process.\nTo chat to the Talent Attraction team and find out more about our benefits and why we\u2019re a great place to work, drop an email to\nbehired@gbgplc.com\nand we\u2019ll be in touch. You can also find out more about careers at GBG and check out our current opportunities at\ngbgplc.com/careers.",
-    "location_work_type": "Kuala Lumpur, Malaysia (Hybrid)",
+    "location_work_type": "Kuala Lumpur, Federal Territory of Kuala Lumpur, Malaysia (Hybrid)",
+    "description_hash": "f4d44f95e481e17b53d12d504fd97d27e44bfef85ffadf3f3ce687e69ca9da38",
     "scraped_at": "2026-05-31T20:55:57.608752-05:00",
+    "posted_at": "2026-06-02T10:44:19.072734-05:00",
+    "benefits": [
+      "Equity / Stock Options"
+    ],
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "Site Reliability Engineer (SRE)",
@@ -150,86 +75,7 @@
       "benefits": [
         "Equity / Stock Options"
       ]
-    },
-    "benefits": [
-      "Equity / Stock Options"
-    ]
-  },
-  {
-    "job_title": "Cloud Infrastructure Engineer",
-    "company_name": "Security Risk Advisors",
-    "job_url": "https://jobs.workable.com/view/4KTs3XYrhd883ChwpUxECw/cloud-infrastructure-engineer-in-philadelphia-at-security-risk-advisors",
-    "requirement_id": "1e6c1ad1-87df-478b-8b53-d214c5cb8e96",
-    "job_description": "JOB DESCRIPTION\nSRA\u2019s mission is to\u00a0level up every day to protect our clients and their customers. This begins with our team members and their experience. SRA prides itself on\u00a0maintaining\u00a0a culture where team members have a shared sense of support and belonging, consistent with\u00a0our It\u2019s\u00a0Personal company value. At SRA, we prioritize transparent career pathing, varied DEI programming and community groups, competitive benefits including mental health support, and an emphasis on a sustainable, healthy, and engaging work culture. SRA has twice been named\u00a0a Best\u00a0Place to Work by the Philadelphia Business Journal.\nThese Essential Functions, Requirements, and Skills are guidelines. If you are a candidate who does not meet this exact job description but can\u00a0demonstrate\u00a0excellent organization, attention to detail, professionalism, flexibility, and self-direction in your professional background, we hope you apply. SRA values a diverse workplace and strongly encourages women, people of color, LGBTQ+ individuals, people with disabilities, members of ethnic minorities, and veterans to apply.\nSummary/Objective\nSecurity Risk Advisors Intl., LLC (SRA) is offering a Cloud Infrastructure Engineer position with a focus on Microsoft Azure. This role\u00a0is responsible for\u00a0designing, building, and\u00a0operating\u00a0secure, scalable, and resilient cloud infrastructure, including networking, identity integrations, compute, storage, and platform services. The Cloud Infrastructure Engineer partners with internal IT, security, and engineering teams to standardize Azure landing zones, automate deployments using infrastructure-as-code, and ensure environments meet reliability, performance, and cost\u00a0objectives.\nEssential Functions\nDesign, build, and\u00a0maintain\u00a0Azure infrastructure using best practices for reliability, scalability, and operational excellence.\nImplement and\u00a0operate\u00a0Azure landing zones, subscriptions, management groups, and governance controls (RBAC, Azure Policy, tagging, resource organization).\nEngineer Azure networking solutions (VNets, subnets, NSGs, route tables, Private Link/private endpoints, VPN/ExpressRoute, Azure Firewall) to meet connectivity and segmentation requirements.\nAutomate provisioning and configuration using infrastructure-as-code (Terraform and/or Bicep/ARM) and integrate into CI/CD pipelines.\nOperate Azure\u00a0compute\u00a0and platform services (VMs, VMSS, AKS, App Service, Functions) including scaling, patching, upgrades, and lifecycle management.\nDesign and manage Azure storage and data platform components (Storage Accounts, Azure Files, managed disks, backup targets) with\u00a0appropriate performance\u00a0and resiliency.\nImplement monitoring, logging, and alerting using Azure Monitor, Log Analytics, and Application Insights; improve observability and reduce mean time to recover.\nPartner with security teams to implement identity, key management, and baseline controls (Entra ID, PIM, Key Vault, Defender for Cloud) as part of the infrastructure standard.\nSupport incident response and problem management for Azure services, including root cause analysis and implementation of corrective and preventative actions.\nCreate and\u00a0maintain\u00a0technical documentation, diagrams, and runbooks for Azure\u00a0architectures, operational procedures, and standards.\nDrive cost optimization and capacity planning efforts (e.g., right-sizing, reservations/savings plans, storage tiering) and provide clear recommendations to stakeholders.\nPlan and test business continuity and disaster recovery capabilities for Azure workloads (backup, restore, replication, failover) and\u00a0validate\u00a0RTO/RPO requirements.\nRequirements\nCompetencies\nIn-depth understanding of:\nMicrosoft Azure core services and architecture (subscriptions, resource groups, compute, storage, PaaS offerings) and how to design for scale and resiliency\nAzure networking concepts and services (VNets, NSGs, load balancing, DNS, Private Link, VPN/ExpressRoute, Azure Firewall)\nAzure governance and identity fundamentals (Azure Policy, RBAC, management groups, Entra ID, PIM) and practical application of least privilege\nReliability engineering principles (high availability, fault domains, scaling, observability) and secure-by-default infrastructure patterns\nWorking knowledge of:\nInfrastructure-as-code and configuration management practices, including Terraform and/or Bicep/ARM templates\nAzure DevOps/GitHub-based CI/CD for infrastructure and platform deployments (pipelines, approvals, environments, secrets management)\nMonitoring, logging, and troubleshooting in Azure using Azure Monitor, Log Analytics, Application Insights, and KQL\nBackup, recovery, and resiliency tooling (Azure Backup, Recovery Services Vault, Site Recovery) and practical DR testing\nBasic experience with:\nOperating production cloud platforms, including\u00a0on-call/incident response, root cause analysis, and continuous improvement\nContainer and platform operations experience (AKS and related ecosystem: ingress, certificates, secrets, node pools, upgrades)\nCloud cost management and optimization practices (Azure Cost Management, budgeting, tagging discipline, forecasting)\nModerate experience with:\nScripting and automation using Python, PowerShell, or Bash\nAutomation using Azure-native services such as Azure Automation, Logic Apps, Functions, and Event Grid\nSupervisory Responsibility\nNone\nWork Environment\nThis job\u00a0operates\u00a0in a professional office environment\u00a0or remotely as needed/required. This role routinely uses standard office equipment.\nThis job\u00a0operates\u00a0in a professional office environment, and all co-ops are expected to work in the office every day. This role routinely uses standard office equipment.\nPhysical Demands\nThe physical demands described here are representative of those that must be met by an employee to successfully perform the essential functions of this job. While performing the duties of this job, the employee\u00a0is regularly required to\u00a0talk and hear; use hands to finger, handle, or feel; and reach with hands and arms. The employee\u00a0frequently\u00a0is required to\u00a0stand and walk. This is a\u00a0largely sedentary\u00a0role.\nCandidates with disabilities are encouraged to apply and email\ncareers@sra.io\nwith any questions. Reasonable accommodations may be made to enable disabled individuals to perform the essential functions of this role.\nPosition Type/Expected Hours of Work\nThis is a full-time\u00a0position\u00a0and hours of work and days are Monday through Friday 8:30am to 5pm.\u00a0Occasional evening and weekend work may be\u00a0required\u00a0as job duties demand.\nTravel\nLess than 5%.\nRequired Education and Experience\nPunctuality and\u00a0timely\u00a0attendance to external client and internal stakeholder needs.\nA\u00a0bachelor's degree in Information Technology, Computer Science, or a similar field of study, or equivalent experience.\n3+ years of hands-on experience engineering and operating cloud infrastructure, with strong, recent experience in Microsoft Azure (networking,\u00a0compute, storage, and governance).\nRelevant certifications preferred (e.g., AZ-104, AZ-305, AZ-400;\u00a0HashiCorp\u00a0Terraform Associate). Security certifications (e.g., AZ-500) are a plus.\nA passion\u00a0for learning about Azure services, cloud infrastructure patterns, automation, and\u00a0operational best\u00a0practices.\nExcellent verbal and written communication skills.\nStrong time management and organizational skills.\nOther Duties\nPlease\u00a0note\u00a0this job description is not designed to cover or\u00a0contain\u00a0a comprehensive listing of activities, duties or responsibilities that are\u00a0required of\u00a0the employee for this job. Duties, responsibilities, and activities may change at any time with or without notice.\nEEO Statement\nSecurity Risk Advisors\u00a0is\u00a0an Equal Opportunity Employer and prohibits discrimination or harassment of any kind. All employment decisions at SRA are based on business needs, job requirements, and individual qualifications, without regard to race, color, sex, sexual orientation, gender identity or expression, age, religion, national origin, disability, marital or family status, veteran status, medical condition, or any similar category protected under federal, state, or local laws.\nBenefits\nWork with Experts: Robust internal training program, plus Company-paid external training. SRA recognizes the value of professional development for employees. Therefore, we encourage our employees to pursue continuing education and role-specific training. Every SRA employee is eligible to attend one training per year paid for by SRA.\nMental Health Services: SRA has partnered with BetterHelp to provide SRA employees with free mental health support. BetterHelp connects individuals with licensed therapists for chat, video, and phone sessions.\nMedical / Dental / Other (regular full-time employees only)\nGenerous medical, dental, and vision benefits at different price points.\nCompany-paid disability and life insurance.\nCompany 401(k) plan including annual 3% safe harbor contribution.\nFree patient advocacy service that helps find care providers and resolve insurance queries.\nFree financial advising.\nGenerous parental leave, sick leave, and vacation policies.\nPossibility to work remotely or with a flexible schedule when needed and approved.\nCompany-paid cell phone with discounted accessories.\n1-2-3 Give Program: 1. SRA will give $1,000 to a charity of your choice. 2. If you give an additional amount (up to $1,000), then 3. SRA will match that amount up to $1,000.\nOther discounted, employee-paid benefits including pet insurance, legal support, and voluntary life insurance.\n(Subject to change)",
-    "location_work_type": "Philadelphia, United States (On_site)",
-    "scraped_at": "2026-05-31T20:55:57.912384-05:00",
-    "red_flags": [],
-    "apply_decision": "APPLY",
-    "strongest_label": "Cloud Infrastructure Engineer",
-    "confidence_score": 85,
-    "rationale": "This job was dynamically classified as Cloud Infrastructure Engineer using rule-based keyword signals matching the target role profile.",
-    "apply_decision_payload": {
-      "all_labels": [
-        "Cloud Infrastructure Engineer"
-      ],
-      "strongest_label": "Cloud Infrastructure Engineer",
-      "other_labels": [],
-      "apply_decision": "APPLY",
-      "red_flags": [],
-      "filters": {
-        "domain_specialization": false
-      },
-      "confidence_score": 85,
-      "cloud": {
-        "is_cloud_role": true,
-        "primary_cloud": "",
-        "cloud_providers": []
-      },
-      "domain_scores": {
-        "DevOps Engineer": 1,
-        "Cloud Automation Engineer": 0,
-        "Platform Engineering": 0,
-        "Cloud Infrastructure Engineer": 10,
-        "Cloud Security Engineer": 1,
-        "DevSecOps": 0,
-        "Site Reliability Engineer (SRE)": 2,
-        "Continuous Integration (CI/CD)": 1,
-        "System Engineer": 0,
-        "Cloud Network Engineer": 0,
-        "Data Platform Engineer": 0,
-        "Machine Learning Engineer (MLOps)": 0,
-        "AI Platform Engineer (AIOps)": 0
-      },
-      "dominant_domains": [
-        "Cloud Infrastructure Engineer"
-      ],
-      "dominant_signals": {},
-      "decision_trace": {
-        "top_score": 10
-      },
-      "rationale": "This job was dynamically classified as Cloud Infrastructure Engineer using rule-based keyword signals matching the target role profile.",
-      "rationale_formatted": [
-        "This job was dynamically classified as Cloud Infrastructure Engineer using rule-based keyword signals matching the target role profile."
-      ],
-      "benefits": [
-        "Health Insurance",
-        "Dental Insurance",
-        "Vision Insurance",
-        "401(k)",
-        "PTO / Vacation",
-        "Parental Leave",
-        "Tuition / Learning Budget"
-      ]
-    },
-    "benefits": [
-      "Health Insurance",
-      "Dental Insurance",
-      "Vision Insurance",
-      "401(k)",
-      "PTO / Vacation",
-      "Parental Leave",
-      "Tuition / Learning Budget"
-    ]
+    }
   },
   {
     "job_title": "DevSecOps Engineer (Remote)",
@@ -238,7 +84,12 @@
     "requirement_id": "5312dd06-8222-4fae-8f32-512b43d5a85a",
     "job_description": "FP Markets Group of Companies\nis a well-established multi-regulated broker, found in Australia, offering traders access to CFD trading on Forex, Indices, Commodities, Stocks and Cryptocurrencies. We are growing and looking to recruit a Full-time\nDevSecOps Engineer,\nworking Remotely.\nWe are looking for a hands-on DevSecOps Engineer who can independently design and build full-cycle infrastructure from scratch, including high-level architecture design, security integration, automation, and scalable cloud/network solutions. The ideal candidate should be able to confidently explain technical decisions, assemble complex systems from different components, and take ownership of DevSecOps infrastructure end-to-end.\nResponsibilities:\nBuild and maintain CI/CD pipelines for automated testing and deployment of infrastructure services\nDesign and manage AWS infrastructure using Terraform\nAutomate network and server configuration with Ansible\nOptimize cloud resources and implement cost-effective solutions\nMonitor system performance and troubleshoot issues\nImplement security best practices and compliance automation\nCollaborate with development and operations teams\nCandidate Profile:\n3+ hands-on experience with\nAWS\nservices\n1+ years of experience\nSIEM\n,\nEDR\n(splunk, wazuh, crowdstrike)\n3+ with Ansible for configuration management and automation\n3+ years experience in networking including\nL2/L3 concepts, VLANs, VXLAN, switching, and routing\n3+ years experience in scripting for automation\n(Python, Bash)\nSolid experience with\nTerraform\nfor Infrastructure as Code in cloud and onprem\nExperience in vulnerability management\nExperience with overlay network technologies and software-defined networking (\nZeroTrust, Wireguard, Zero-Tier, Netbird, Tailscale)\nExperience with network automation and programmability (\nFortiGate, Aruba)\nHands-on experience with\nCI/CD tools (Jenkins, GitLab CI, etc.)\nProficiency in\nDocker and Kubernetes\nExperience designing and building DevSecOps infrastructure from scratch, including high-level system architecture and full lifecycle implementation\nAbility to independently design infrastructure solutions and explain architectural decisions\nNice to Have\nAWS certifications (e.g., AWS Certified DevOps Engineer)\nExperience with monitoring tools (Prometheus, Grafana)\nExperience with SSO, Keycloak, Hashicorp Vault\nOur Offer:\nWelcoming, young and multicultural team with approachable leadership\nAbility to contribute to dynamic business at a growth phase\nHigh level of autonomy, support of ideas and putting your expertise into the best practices for the company\nContinuous personal development, training budget, growth with the company and opportunity to learn from industry leaders\nCompetitive remuneration, regular salary reviews and performance-based incentive schemes\nVibrant company life: from team activities to global celebrations\nFully remote work\nCorporate Equipment\nJourney to FP Markets:\nInterview with HR 30 - 45 min\nTechnical Interview 60 min with hiring manager\nOnline case study interview 60 min\nJoin our team and be a part of a professional, rapidly-growing company operating in a multicultural environment!",
     "location_work_type": "Georgia (Remote)",
+    "description_hash": "d1a97d57521bb67a304c03c069a29b2bfda716b4166d703ae011ed24c2c10f23",
     "scraped_at": "2026-05-31T20:55:58.542218-05:00",
+    "posted_at": "2026-05-31T20:55:58.542230-05:00",
+    "benefits": [
+      "Equity / Stock Options"
+    ],
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "DevSecOps",
@@ -290,9 +141,362 @@
       "benefits": [
         "Equity / Stock Options"
       ]
+    }
+  },
+  {
+    "job_title": "Senior Data Platform Engineer",
+    "company_name": "Pepperstone",
+    "job_url": "https://jobs.workable.com/view/vQzFUSywwzxpgLHC8DMF5a/hybrid-senior-data-platform-engineer-in-limassol-at-pepperstone",
+    "requirement_id": "f1a17baf-9478-4c20-a1d7-6e34dca7daa5",
+    "job_description": "The Pepperstone story started in 2010. We know what it\u2019s like to trade the world\u2019s markets. Our team describes us as a place for the curious and the driven, and we like to do things a little differently; as a transformative global fintech we\u2019re digital, nimble, connected, and united in our vision to create a better way to trade.\nWe thrive on progress \u2013 for our clients and for ourselves. Our organisational culture is ever-evolving, vibrant, diverse, global and results focused. You\u2019ll find our\n700+\nteam across\n12\nregions and\n9\ntime zones.\nProduct and team context\nThis role sits on the\nPepperstone Trading App\nengineering thread within\nTrading Experience (TREX)\n. Related capabilities in the wider group include Mobile Platform, integrations (connectors), and the trading platform (Centrum). Department shape includes Mobile Platform plus Trading Experience teams (e.g. TREX-EVO, TREX-NOVA); exact team assignment and names are confirmed with your manager.\nThe Trading App is a proprietary\niOS and Android\nclient for\nCFD\ntrading and portfolio monitoring\u2014charts, watchlists, execution, margin and P&L, funding, and multi-account types (e.g. Razor / Standard). It\ncomplements\nMetaTrader and cTrader; it does not replace them. The app connects to Centrum and other back-office systems via connectors, and integrates services such as SCA, Auth0, Segment, notifications, and others as the stack evolves.\nDelivery runs in\ntwo-week Scrum\nincrements. A typical squad includes a tech lead or release captain, on the order of four developers and two manual QA engineers, with test automation as a parallel track. Engineering outcomes should reflect\nCFD\nrealities: margin and leverage, contract-based P&L and financing, broker as counterparty, and region-specific regulation (e.g. FCA, ASIC, CySEC) affecting flows and copy.\nThe Role\nThe Senior Data Platform Engineer is a technical leader who empowers data, analytics and product teams across Pepperstone by building and operating the Enterprise Data Platform,\u00a0ensuring it meets the demanding requirements of high-frequency trading environments and regulatory compliance in financial markets.\nThis role is hands-on across our modern AWS-native stack: real-time change data capture with Debezium, event streaming on Kafka (MSK), stream processing with Apache Flink, cloud data warehousing on Snowflake, integration to Alation ,\u00a0\u00a0all delivered through Terraform, GitHub and GitHub Actions using infrastructure-as-code and CI/CD best practice.\nEngaging with the wider Enterprise Data team and business stakeholders, the Senior Data Platforms Engineer gathers requirements and delivers tailored, scalable solutions. They act as a technical advisor in data platform engineering and drive the adoption of best practice across the business. They proactively collaborate with other members of the Data Platform team and directly contribute to optimising operational efficiency, balancing cost and performance, and delivering resilient, secure platform services. The role includes periodic out-of-hours support for internal stakeholders.\nKey Responsibilities\nWork with the Data Platform team to design, implement and maintain scalable, secure and resilient services across the Pepperstone Enterprise Data Platform.\nOwn and operate core streaming infrastructure \u2014 Debezium (CDC), Kafka (MSK), and Apache Flink \u2014 ensuring reliability, performance, and availability for consuming teams.\nOptimise critical Data platform services including data lakes, data warehouses, stream processing (Kafka, Flink), and real-time analytics platforms on AWS.\nDesign, provision, and manage cloud infrastructure using Terraform \u2014 including Snowflake environments, AWS data services, networking, IAM, and supporting services, with a self-service platform provisioning mindset.\nImplement and enforce AWS resource tagging strategies, cost allocation policies, and FinOps practices to drive cloud cost transparency and optimisation across the EDP.\nDrive technical initiatives from conception to delivery, managing stakeholder expectations and coordinating cross-functional efforts with both technical and business teams.\nDesign and implement sophisticated monitoring, alerting, and observability solutions for data platform services, leading incident response and post-mortem analysis.\nCollaborate closely with the data governance team to design and implement robust governance frameworks, including Snowflake data sharing, masking policies, and row-level security.\nIntegrate AI-assisted tooling and Model Context Protocol (MCP) capabilities into data platform workflows to enhance developer productivity and data discoverability.\nAssist the Data Platform Lead in evaluating and integrating third-party vendors and technologies, conducting proof-of-concepts and making build-vs-buy recommendations based on technical and business criteria.\nStay at the forefront of industry trends, emerging technologies, and market changes in data platforms, cloud services, and the broader fintech landscape.\nThis role reports to the\nData Platform Lead in Melbourne\n. We support flexible working. This position can be performed from both a mix of at our office and from home. Your manager will share details and expectations of your team\u2019s regular cadence of working locations.\nAbout you\nBachelor's degree in computer science, engineering, or equivalent extensive professional experience in data platform engineering\nMinimum 5 years\u2019 experience in a data platform, data engineering, cloud or DevOps role, with at least 3 years building production workloads on AWS.\nStrong hands-on experience with infrastructure-as-code tooling for managing cloud and data infrastructure, including module design, state management, and multi-environment promotion.\nProficient with source control and CI/CD practices; comfortable designing reusable pipelines and enforcing quality gates.\nProduction experience with event streaming and stream processing platforms, including operational tuning and resilience patterns.\nHands-on experience with cloud data warehousing platforms, including architecture, performance optimisation, and governance features.\nSolid understanding of core cloud services relevant to data platforms: compute, storage, networking, IAM, managed databases, secrets management, and observability.\nAbility to design cost-aware architectures and clearly communicate cost trade-offs to engineering and business stakeholders.\nProficiency in at least one programming language used in data platform work (Python, Java or Scala); SQL fluency is essential.\nExperience operating production data services \u2014 observability, alerting, incident response and post-incident review.\nExcellent written and verbal communication and the ability to present to both technical and nontechnical stakeholders.\nAble to work independently, self-organise, scope work and adapt to changing requirements in a fast-paced environment.\nDesirable\nHands-on experience with AWS and its data-adjacent services (e.g. MSK, EKS, RDS, S3, DMS, KMS, CloudWatch, Secrets Manager).\nProduction experience with Apache Kafka and Apache Flink, including stateful processing, exactly once patterns, and schema design.\nExperience implementing change data capture against relational sources and integrating with streaming platforms.\nDeep expertise in Snowflake, including Snowpark, data sharing, virtual warehouse sizing, and governance features (masking policies, row-level security, object tagging).\nFamiliarity with AWS resource tagging strategies, cost allocation tags, and FinOps tooling.\nUnderstanding of Model Context Protocol (MCP) and how it enables AI agents to interact with data platform services to automate workflows and accelerate platform operations.\nExperience with data catalogue or metadata management tooling (e.g. Alation or equivalent).\nWhy you will enjoy working with us\nCompetitive salary structure including company bonus scheme\nFlexible and hybrid working\nRemote working option - work from anywhere for up to 4 weeks per year\n10 days of Company paid sick leave annually\n21 days of paid vacation within the first year of employment, increasing to 25 days after one year\n3 paid volunteering days per year & Workplace Giving Program\nComprehensive medical insurance with coverage for your healthcare needs\nPension fund\nEmployee referral bonuses for referring top talent to the company\nOngoing personal development & learning opportunities\nPeriodic recognition and reward programs for outstanding performance and achievements\nFrequent events and celebrations\nGenuinely collaborative and friendly culture\nEmployee Assistance Program & Wellbeing Initiatives\nConvenient and cozy office located near the Limassol Municipal Garden\nMore about Pepperstone\nWe\u2019re a regulated online Forex and CFD trading platform. With the scale of a global fintech and the agility of a start-up, we arm our clients with everything they need to take on the global markets with confidence. You will be part of a wider passionate and friendly team, and whilst things may not always go to plan, we learn quickly and move forward with impact. To learn even more visit\nPepperstonecareers.com\nand\nwww.linkedin.com/company/pepperstone/\nWe understand it\u2019s important to do due diligence on a prospective employer, and see what our team is saying on\nGlassdoor\n. We respect our team members\u2019 experiences and will never pay to remove a negative review.\nPepperstone is an equal-opportunity employer. We are passionate about building a diverse workplace and strongly encourage applications from any background.\n\u201cWe are a 2025 Circle Back Initiative Employer \u2013 we respond to every applicant\u201d.\nWe will be reviewing applications as they come through, so if this is an opportunity that excites you, don't wait. Express your interest by clicking the apply button below as soon as possible.\nNote to external agencies: While we appreciate the efforts of external recruitment agencies, we prefer to engage directly with applicants for this opportunity.",
+    "location_work_type": "Limassol, Limassol, Cyprus (Hybrid)",
+    "description_hash": "474e6c14f143bb6fdf76e38e7fd9bb76f8390151006f770b0cf346c1ce365381",
+    "scraped_at": "2026-06-02T10:44:22.375871-05:00",
+    "posted_at": "2026-06-02T10:44:22.375883-05:00",
+    "benefits": [
+      "Health Insurance",
+      "Vision Insurance",
+      "PTO / Vacation"
+    ],
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Data Platform Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Data Platform Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Data Platform Engineer"
+      ],
+      "strongest_label": "Data Platform Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 1,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 1,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 1,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 17,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Data Platform Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 17
+      },
+      "rationale": "This job was dynamically classified as Data Platform Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Data Platform Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Health Insurance",
+        "Vision Insurance",
+        "PTO / Vacation"
+      ]
+    }
+  },
+  {
+    "job_title": "DevOps Engineer",
+    "company_name": "Teleport",
+    "job_url": "https://jobs.workable.com/view/3xPbo8niNJQohMpHNJH242/hybrid-devops-engineer-in-kuala-lumpur-at-teleport",
+    "requirement_id": "14a368c6-57c4-4f62-a6f7-5d36b53c3c5b",
+    "job_description": "ABOUT US\nAs Southeast Asia\u2019s #1 integrated logistics provider, Teleport is all about making logistics fast, affordable and reliable.\nOur mission? To move things across Southeast Asia better than anyone else. We\u2019re focused on making next-day delivery a reality for all.\n#TeamTeleport is guided by our values: Move with urgency \u2014 because time is crucial; Aim to pioneer \u2014 constantly innovating to stay ahead; Do it with intent \u2014 delivering with purpose and precision; and Keep it real \u2014 maintaining authenticity and transparency in all we do.\nLearn more about Teleport here:\nhttps://www.teleport.it/\nA DAY IN A LIFE\nAt Teleport, we\u2019re building toward IPO \u2014 and that means doing the boring things well. Execution, discipline, and follow-through matter as much as big ideas. Your day will be varied, often crossing functions, but most of your time will focus on delivering results, owning your scope end-to-end, making fast, data-informed decisions, and following through on fundamentals like reporting, documentation, and processes. How we work matters as much as what we achieve. Doing the basics right, every time, sets us up for success.\nMost of your time will be spent driving impact through:\nMulti-Cloud Infrastructure & Kubernetes Management: Own, deploy, scale, and maintain our multi-cloud architecture across Tencent Cloud, Alibaba Cloud, and GCP. You will manage containerised workloads end-to-end using TKE, ACK, and GKE clusters to ensure high availability for both China domestic and global operations.\nAutomated CI/CD & Infrastructure as Code (IaC): Design, build, and optimise robust CI/CD pipelines using Jenkins, GitLab CI, or GitHub Actions. Develop and maintain reusable Terraform modules to standardise infrastructure deployments globally.\nCompliance, Monitoring & Operational Excellence: Ensure absolute compliance with China\u2019s data residency, domestic CDN requirements, and ICP regulations. Implement proactive observability (Prometheus, Grafana), participate in daytime on-call rotations, and integrate alerts with regional collaboration tools (WeChat Work, DingTalk, Feishu).\nRequirements\nThese are minimum-requirement skills and a \u2018must-have\u2019 for the role:\nProven Multi-Cloud & Kubernetes Expertise: At least 3 years of overall cloud experience, featuring a strict minimum of 1 year each of hands-on experience with Tencent Cloud (TKE, VPC, CLB), Alibaba Cloud (ACK, ROS, SLB), and GCP (GKE, IAM, Cloud Run). Production-level experience with Kubernetes is mandatory..\nStrong Automation, IaC & Scripting Skills: Proven track record of developing Terraform modules for multi-cloud environments alongside experience building pipelines in Jenkins, GitLab CI, or GitHub Actions. Proficient in automation via Python, Go, or Shell scripting.\nBilingual Fluency & China Compliance Knowledge: Native or business-level fluency in Mandarin (to interface with domestic platforms and teams) and English proficiency for technical documentation. You must possess a solid understanding of China's ICP registration and domestic CDN frameworks.\nBenefits\nAt Teleport, we\u2019re all about creating a diverse and inclusive team where everyone feels valued. We believe that different perspectives make us stronger and help us do logistics better across Southeast Asia. We welcome people from all walks of life and celebrate what makes each of us unique. If you\u2019re passionate about making a difference, we\u2019d love to hear from you!\nWork-Life at #TeamTeleport\nUnlimited training -You will have access to a wide range of learning resources including Notion!\nDitch the Suit & Tie - Be comfortable as you are, express your inner Fashionista\u2026 as long as it's not a birthday suit!\nVacation and time away - Sometimes you need to recharge and come back energized! That\u2019s why you will get 90% off flights to destinations within AirAsia's network, 10%-15% discounts on selected eateries at KLIA2.\nGrowth opportunities - We embrace and take on opportunities to learn and grow at Teleport as we reimagine the way we do things. Yes, we meet the challenge head on as a team, and we celebrate together with you when you succeed and reap the rewards when the hard work pays off!",
+    "location_work_type": "Kuala Lumpur, Malaysia (Hybrid)",
+    "scraped_at": "2026-05-31T20:55:56.995083-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "DevOps Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "DevOps Engineer"
+      ],
+      "strongest_label": "DevOps Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 5,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 1,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 1,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 2,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "DevOps Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 5
+      },
+      "rationale": "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "PTO / Vacation"
+      ]
     },
     "benefits": [
+      "PTO / Vacation"
+    ]
+  },
+  {
+    "job_title": "AI Automation Engineer",
+    "company_name": "Prop Firm Match Global \u2013 FZCO",
+    "job_url": "https://jobs.workable.com/view/aUTfLxQhw2oT7DrieizFdA/remote-ai-automation-engineer-in-united-states-at-prop-firm-match-global-%E2%80%93-fzco",
+    "requirement_id": "504482c1-5e7e-4df8-b7ce-8c76b2c4b76e",
+    "job_description": "About Prop Firm Match Global FZCO\nProp Firm Match Global FZCO is the leading platform for discovering, comparing, and selecting proprietary trading firms. We help traders make confident, informed decisions by offering side-by-side comparisons, verified reviews, and data-backed insights from the top prop firms worldwide. Our mission is to bring transparency, access, and clarity to the prop trading space.\nRole Mission\nBuild, maintain, and scale reliable automations and AI-powered workflows that streamline operations across Prop Firm Match. This role turns ideas into production-grade systems using n8n, Python/TS, and API integrations, ensuring high reliability, observability, and measurable business impact.\nRequirements\nTop 6 Performance Objectives\n1. Deliver high-impact automations for core workflows (first 60\u201390 days; ongoing)\nTake 3\u20135 priority processes from scoping to production automation (Ops, Growth, Content, CS, Risk).\nBuild using n8n + Python/TS/JavaScript logic modules.\nDeliver MVP versions fast, iterate based on feedback.\nOutcome:\nAt least 3 production workflows live within 90 days, saving time or reducing errors by measurable %.\n2. Build robust, modular, and well-architected workflows (ongoing)\nTranslate business rules into modular, reusable workflow components with a clear separation of concerns.\nImplement retries, structured error handling, alerting, and idempotency across all critical workflow paths.\nOutcome:\nAll new workflows are understandable, reusable, and extendable by peers within 20\u201330 minutes.\n3. Own API integrations end-to-end (first 90\u2013120 days; ongoing)\nBuild and maintain integrations with internal and external APIs (REST/GraphQL/OAuth/webhooks).\nHandle dynamic data structures, pagination, rate limits, and authentication refresh.\nMonitor upstream failures and design fallback strategies.\nOutcome:\nIntegrations run with > 99% uptime and zero silent failures.\n4. Implement observability & monitoring for all automations (first 120 days)\nSet standards for logging, structured error messages, and monitoring.\nBuild basic dashboards or alerting (Slack alerts, logs dashboards, error queues).\nOutcome:\nIssues are detected early - no black-box workflows.\n5. Maintain documentation, run books, and clear SOPs (ongoing)\nDocument workflows: purpose, logic, variables, failure modes, key integration points.\nCreate simple run books for non-technical stakeholders to triage basic failures.\nOutcome:\nAnyone can understand the system state within 15 minutes.\n6. Collaborate with business stakeholders to refine requirements (ongoing)\nParticipate in discovery to clarify vague automation ideas (\u201cwe need to automate X\u201d) into clear specifications.\nSuggest pragmatic approaches that maximize ROI and reduce complexity.\nProvide continuous feedback to improve architectural standards.\nOutcome:\nAutomations delivered match business outcomes, not just technical specs.\nMust-Have Qualifications\nCandidates must demonstrate real accomplishments in:\n1. Automation & Workflow Engineering: Built production-grade automations in n8n or similar tools (Make, Zapier, Tray.io, Airflow, Prefect). Experience structuring workflows into reusable components.\n2. API Integration: Built reliable API integrations with advanced requirements (pagination, auth refresh, rate limits, error fallback).\n3. Software Engineering Foundation: Strong hands-on experience with Python or TypeScript (ideally both) Experience with CI/CD, Git workflows, debugging, testing.\n4. Reliability & Observability: Implemented logs, alerts, dashboards, or monitoring systems.\n5. Ownership Mindset: Successfully took projects from vague idea \u2192 spec \u2192 implementation \u2192 production support.\nSoft Skills / On-the-Job Behaviors\nQuietly reliable \u2014 things you build \u201cjust work\u201d consistently.\nSystems thinker: sees cause\u2013effect chains, avoids messy hacks.\nClear written communicator (async-friendly).\nPragmatic and fast \u2014 focuses on ROI, not over-engineering.\nComfortable pushing back when requirements are unclear or suboptimal.\nBefore applying, please take into account that:\nIf you don\u2019t meet every single qualification but believe you can excel in the role based on what it requires \u2014 we encourage you to apply.\nWe are an equal opportunity employer and welcome applicants from all backgrounds, experiences, and perspectives.\nEven if it\u2019s not listed as a formal requirement, we truly value candidates who have clear familiarity with the prop trading industry and us, our mission and what we do.\nHiring stages\nWe keep the process structured, respectful of your time, and focused on real skills.\nHere\u2019s what to expect:\n1.\nApplication questionnaire - Self-Paced\n: A short, structured assessment to understand your background. (Async; ~10 minutes)\n2.\nHR Deep Dive\n: A conversation focused on your motivation, ownership style, culture fit, and your past accomplishments.\n3.\nTechnical Interview with Head of Engineering & CTO\n: A 60\u201375 minute session focused on:\nReal-world reasoning\nAutomation thinking\nSystem design approach Including a Live Demo: You\u2019ll be asked to show how you would build or troubleshoot a workflow using n8n or code - focusing on your thought process, not perfection.\n4.\nTechnical Assignment\n: A more advanced automation + API + reliability challenge, designed to reflect real work at PFM. We review code quality, modularity, error-handling, clarity, and overall architecture.\n5. (Optional / On-Demand)\nInterview with Top Management:\nA strategic conversation to align expectations, understand long-term contribution, and ensure cultural alignment with PFM leadership.\n6.\nOffer Stage\n: If successful, we begin with an informal offer discussion, followed by a formal written offer.\nBenefits\nWhy Join Prop Firm Match Global FZCO?\n\u25b8\u00a0 Contribute to a growing platform shaping the future of proprietary trading\n\u25b8\u00a0 Work within a flat, collaborative team where your input is valued\n\u25b8\u00a0 Competitive compensation, including base pay and benefits\n\u25b8\u00a0 100% medical, dental, and vision coverage (U.S. only), including gender-affirming care\n\u25b8\u00a0 Flexible PTO including sick time, holidays, refresh days, and sabbatical leave after five years\n\u25b8\u00a0 Work remotely with the flexibility you need to maintain balance and focus.\n\u25b8\u00a0 A professional, transparent, and healthy work environment that values both results and people.",
+    "location_work_type": "United States (Remote)",
+    "scraped_at": "2026-06-02T10:44:18.440541-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Cloud Automation Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Cloud Automation Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Cloud Automation Engineer"
+      ],
+      "strongest_label": "Cloud Automation Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": false,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 0,
+        "Cloud Automation Engineer": 10,
+        "Platform Engineering": 0,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 0,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 2,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Cloud Automation Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 10
+      },
+      "rationale": "This job was dynamically classified as Cloud Automation Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Cloud Automation Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Health Insurance",
+        "Dental Insurance",
+        "Vision Insurance",
+        "PTO / Vacation",
+        "Equity / Stock Options"
+      ]
+    },
+    "benefits": [
+      "Health Insurance",
+      "Dental Insurance",
+      "Vision Insurance",
+      "PTO / Vacation",
       "Equity / Stock Options"
+    ]
+  },
+  {
+    "job_title": "No-Code Systems Automation Engineer (GoHighLevel, Zapier, n8n, + AI)",
+    "company_name": "Human Intelligence",
+    "job_url": "https://jobs.workable.com/view/wjyG4DCpwyrReQFCTjz9nW/remote-no-code-systems-automation-engineer-(gohighlevel%2C-zapier%2C-n8n%2C-%2B-ai)-in-minsk-at-human-intelligence",
+    "requirement_id": "f589b1ac-dc72-4f7a-8133-2a4bbe0f0fc0",
+    "job_description": "Retainer position \u2014 deliver dependable GHL & automation workflows\nTitle: No-Code Systems Automation Engineer (GoHighLevel, Zapier, n8n, + AI) \u2014 Remote (Contractor)\nLocation: Remote \u2014 Global applicants welcome from: Philippines, Vietnam, Indonesia, Latin America (Mexico, Colombia, Brazil), Eastern Europe (Poland, Ukraine, Romania, Bulgaria, Belarus), Africa (Kenya, South Africa, Nigeria, Ethiopia, Ghana, Egypt), provided English proficiency is strong.\nBase fee: USD $1,000\u2013$1,500 per month + Performance Incentives (Contractor \u2014 paid via Wise or direct bank deposit)\nEmployment type: Contractor (Retainer)\nWho We Are\nWe build AI-driven automation infrastructure across multiple business units and product environments. We support operations, marketing, clinical pathways, and analytics with high-stability automation systems that require monitoring, recovery paths, and predictable performance.\nWho You Are\nYou are a no-code automation professional with strong expertise in GoHighLevel and Zapier or n8n. You specialize in designing resilient flows with error handling, structured logging, retries, idempotent logic, and clean documentation. You consistently deliver monitored, production-ready workflows. Your attention to detail is exceptional and working independently on focused work is what you prefer.\nResponsibilities\n\u2022 Lead discovery, scoping, development, testing, and monitoring for mission-critical automation across CRM, messaging, payments, and analytics environments.\n\u2022 Build robust, production-grade workflows including webhooks, queues, retries, structured logs, alerting, and rollback options.\n\u2022 Maintain data hygiene, enforce permissions, manage secrets, and adhere to PII/PHI protection requirements.\n\u2022 Produce monitoring dashboards, runbooks, and version-controlled documentation for operational continuity.\nRequirements\nMust-have qualifications\n\u2022 Demonstrated experience constructing advanced automations in GoHighLevel + Zapier or n8n involving APIs and webhooks.\n\u2022 Strong knowledge of logging frameworks, error handling, retry logic, idempotency, and monitoring best practices.\n\u2022 Strong documentation abilities \u2014 able to show flows with screenshots + a brief Loom walkthrough.\nNice-to-have\n\u2022 Basic JavaScript/Python for minor scripting; familiarity with Stripe or LLM tool integrations.\n\u2022 Prior exposure to clinical workflows or regulated-data environments.\nBenefits\nCompensation & performance bonuses\nRetainer: USD $1,000\u2013$1,500 per month depending on scope and SLAs.\nPerformance incentive: USD $500 per month for KPI over-performance.\nPayment & contractor terms\nIndependent Contractor status only. Payment in USD via Wise or bank deposit. Monthly retainer invoicing. No employee benefits; paid time off may be provided for high performance.\nHow to apply\n\u2022 Share two screenshots of your most complex flows + a 2-minute Loom explaining retries, idempotency, and monitoring.\n\u2022 Self-schedule a 16-minute prescreen AI one-way video interview.\n\u2022 Complete a role-specific test task.\n\u2022 Complete a 3rd-party personality profile.\n\u2022 If successful, hiring manager interview within 24\u201348 hours \u2014 same-day offers for top candidates.\nClosing note\nWe require automation specialists who can deliver stable, production-grade flows supported by monitoring and governance. Bring real examples.",
+    "location_work_type": "Minsk, Belarus (Remote)",
+    "scraped_at": "2026-06-02T10:44:18.445325-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Cloud Automation Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Cloud Automation Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Cloud Automation Engineer"
+      ],
+      "strongest_label": "Cloud Automation Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": false,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 0,
+        "Cloud Automation Engineer": 10,
+        "Platform Engineering": 0,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 0,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 0,
+        "Continuous Integration (CI/CD)": 0,
+        "System Engineer": 5,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Cloud Automation Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 10
+      },
+      "rationale": "This job was dynamically classified as Cloud Automation Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Cloud Automation Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "PTO / Vacation"
+      ]
+    },
+    "benefits": [
+      "PTO / Vacation"
+    ]
+  },
+  {
+    "job_title": "Cloud Infrastructure Engineer",
+    "company_name": "Security Risk Advisors",
+    "job_url": "https://jobs.workable.com/view/4KTs3XYrhd883ChwpUxECw/cloud-infrastructure-engineer-in-philadelphia-at-security-risk-advisors",
+    "requirement_id": "1e6c1ad1-87df-478b-8b53-d214c5cb8e96",
+    "job_description": "JOB DESCRIPTION\nSRA\u2019s mission is to\u00a0level up every day to protect our clients and their customers. This begins with our team members and their experience. SRA prides itself on\u00a0maintaining\u00a0a culture where team members have a shared sense of support and belonging, consistent with\u00a0our It\u2019s\u00a0Personal company value. At SRA, we prioritize transparent career pathing, varied DEI programming and community groups, competitive benefits including mental health support, and an emphasis on a sustainable, healthy, and engaging work culture. SRA has twice been named\u00a0a Best\u00a0Place to Work by the Philadelphia Business Journal.\nThese Essential Functions, Requirements, and Skills are guidelines. If you are a candidate who does not meet this exact job description but can\u00a0demonstrate\u00a0excellent organization, attention to detail, professionalism, flexibility, and self-direction in your professional background, we hope you apply. SRA values a diverse workplace and strongly encourages women, people of color, LGBTQ+ individuals, people with disabilities, members of ethnic minorities, and veterans to apply.\nSummary/Objective\nSecurity Risk Advisors Intl., LLC (SRA) is offering a Cloud Infrastructure Engineer position with a focus on Microsoft Azure. This role\u00a0is responsible for\u00a0designing, building, and\u00a0operating\u00a0secure, scalable, and resilient cloud infrastructure, including networking, identity integrations, compute, storage, and platform services. The Cloud Infrastructure Engineer partners with internal IT, security, and engineering teams to standardize Azure landing zones, automate deployments using infrastructure-as-code, and ensure environments meet reliability, performance, and cost\u00a0objectives.\nEssential Functions\nDesign, build, and\u00a0maintain\u00a0Azure infrastructure using best practices for reliability, scalability, and operational excellence.\nImplement and\u00a0operate\u00a0Azure landing zones, subscriptions, management groups, and governance controls (RBAC, Azure Policy, tagging, resource organization).\nEngineer Azure networking solutions (VNets, subnets, NSGs, route tables, Private Link/private endpoints, VPN/ExpressRoute, Azure Firewall) to meet connectivity and segmentation requirements.\nAutomate provisioning and configuration using infrastructure-as-code (Terraform and/or Bicep/ARM) and integrate into CI/CD pipelines.\nOperate Azure\u00a0compute\u00a0and platform services (VMs, VMSS, AKS, App Service, Functions) including scaling, patching, upgrades, and lifecycle management.\nDesign and manage Azure storage and data platform components (Storage Accounts, Azure Files, managed disks, backup targets) with\u00a0appropriate performance\u00a0and resiliency.\nImplement monitoring, logging, and alerting using Azure Monitor, Log Analytics, and Application Insights; improve observability and reduce mean time to recover.\nPartner with security teams to implement identity, key management, and baseline controls (Entra ID, PIM, Key Vault, Defender for Cloud) as part of the infrastructure standard.\nSupport incident response and problem management for Azure services, including root cause analysis and implementation of corrective and preventative actions.\nCreate and\u00a0maintain\u00a0technical documentation, diagrams, and runbooks for Azure\u00a0architectures, operational procedures, and standards.\nDrive cost optimization and capacity planning efforts (e.g., right-sizing, reservations/savings plans, storage tiering) and provide clear recommendations to stakeholders.\nPlan and test business continuity and disaster recovery capabilities for Azure workloads (backup, restore, replication, failover) and\u00a0validate\u00a0RTO/RPO requirements.\nRequirements\nCompetencies\nIn-depth understanding of:\nMicrosoft Azure core services and architecture (subscriptions, resource groups, compute, storage, PaaS offerings) and how to design for scale and resiliency\nAzure networking concepts and services (VNets, NSGs, load balancing, DNS, Private Link, VPN/ExpressRoute, Azure Firewall)\nAzure governance and identity fundamentals (Azure Policy, RBAC, management groups, Entra ID, PIM) and practical application of least privilege\nReliability engineering principles (high availability, fault domains, scaling, observability) and secure-by-default infrastructure patterns\nWorking knowledge of:\nInfrastructure-as-code and configuration management practices, including Terraform and/or Bicep/ARM templates\nAzure DevOps/GitHub-based CI/CD for infrastructure and platform deployments (pipelines, approvals, environments, secrets management)\nMonitoring, logging, and troubleshooting in Azure using Azure Monitor, Log Analytics, Application Insights, and KQL\nBackup, recovery, and resiliency tooling (Azure Backup, Recovery Services Vault, Site Recovery) and practical DR testing\nBasic experience with:\nOperating production cloud platforms, including\u00a0on-call/incident response, root cause analysis, and continuous improvement\nContainer and platform operations experience (AKS and related ecosystem: ingress, certificates, secrets, node pools, upgrades)\nCloud cost management and optimization practices (Azure Cost Management, budgeting, tagging discipline, forecasting)\nModerate experience with:\nScripting and automation using Python, PowerShell, or Bash\nAutomation using Azure-native services such as Azure Automation, Logic Apps, Functions, and Event Grid\nSupervisory Responsibility\nNone\nWork Environment\nThis job\u00a0operates\u00a0in a professional office environment\u00a0or remotely as needed/required. This role routinely uses standard office equipment.\nThis job\u00a0operates\u00a0in a professional office environment, and all co-ops are expected to work in the office every day. This role routinely uses standard office equipment.\nPhysical Demands\nThe physical demands described here are representative of those that must be met by an employee to successfully perform the essential functions of this job. While performing the duties of this job, the employee\u00a0is regularly required to\u00a0talk and hear; use hands to finger, handle, or feel; and reach with hands and arms. The employee\u00a0frequently\u00a0is required to\u00a0stand and walk. This is a\u00a0largely sedentary\u00a0role.\nCandidates with disabilities are encouraged to apply and email\ncareers@sra.io\nwith any questions. Reasonable accommodations may be made to enable disabled individuals to perform the essential functions of this role.\nPosition Type/Expected Hours of Work\nThis is a full-time\u00a0position\u00a0and hours of work and days are Monday through Friday 8:30am to 5pm.\u00a0Occasional evening and weekend work may be\u00a0required\u00a0as job duties demand.\nTravel\nLess than 5%.\nRequired Education and Experience\nPunctuality and\u00a0timely\u00a0attendance to external client and internal stakeholder needs.\nA\u00a0bachelor's degree in Information Technology, Computer Science, or a similar field of study, or equivalent experience.\n3+ years of hands-on experience engineering and operating cloud infrastructure, with strong, recent experience in Microsoft Azure (networking,\u00a0compute, storage, and governance).\nRelevant certifications preferred (e.g., AZ-104, AZ-305, AZ-400;\u00a0HashiCorp\u00a0Terraform Associate). Security certifications (e.g., AZ-500) are a plus.\nA passion\u00a0for learning about Azure services, cloud infrastructure patterns, automation, and\u00a0operational best\u00a0practices.\nExcellent verbal and written communication skills.\nStrong time management and organizational skills.\nOther Duties\nPlease\u00a0note\u00a0this job description is not designed to cover or\u00a0contain\u00a0a comprehensive listing of activities, duties or responsibilities that are\u00a0required of\u00a0the employee for this job. Duties, responsibilities, and activities may change at any time with or without notice.\nEEO Statement\nSecurity Risk Advisors\u00a0is\u00a0an Equal Opportunity Employer and prohibits discrimination or harassment of any kind. All employment decisions at SRA are based on business needs, job requirements, and individual qualifications, without regard to race, color, sex, sexual orientation, gender identity or expression, age, religion, national origin, disability, marital or family status, veteran status, medical condition, or any similar category protected under federal, state, or local laws.\nBenefits\nWork with Experts: Robust internal training program, plus Company-paid external training. SRA recognizes the value of professional development for employees. Therefore, we encourage our employees to pursue continuing education and role-specific training. Every SRA employee is eligible to attend one training per year paid for by SRA.\nMental Health Services: SRA has partnered with BetterHelp to provide SRA employees with free mental health support. BetterHelp connects individuals with licensed therapists for chat, video, and phone sessions.\nMedical / Dental / Other (regular full-time employees only)\nGenerous medical, dental, and vision benefits at different price points.\nCompany-paid disability and life insurance.\nCompany 401(k) plan including annual 3% safe harbor contribution.\nFree patient advocacy service that helps find care providers and resolve insurance queries.\nFree financial advising.\nGenerous parental leave, sick leave, and vacation policies.\nPossibility to work remotely or with a flexible schedule when needed and approved.\nCompany-paid cell phone with discounted accessories.\n1-2-3 Give Program: 1. SRA will give $1,000 to a charity of your choice. 2. If you give an additional amount (up to $1,000), then 3. SRA will match that amount up to $1,000.\nOther discounted, employee-paid benefits including pet insurance, legal support, and voluntary life insurance.\n(Subject to change)",
+    "location_work_type": "Philadelphia, United States (On_site)",
+    "scraped_at": "2026-06-02T10:44:19.437450-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Cloud Infrastructure Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Cloud Infrastructure Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Cloud Infrastructure Engineer"
+      ],
+      "strongest_label": "Cloud Infrastructure Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 1,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 0,
+        "Cloud Infrastructure Engineer": 10,
+        "Cloud Security Engineer": 1,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 2,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Cloud Infrastructure Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 10
+      },
+      "rationale": "This job was dynamically classified as Cloud Infrastructure Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Cloud Infrastructure Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Health Insurance",
+        "Dental Insurance",
+        "Vision Insurance",
+        "401(k)",
+        "PTO / Vacation",
+        "Parental Leave",
+        "Tuition / Learning Budget"
+      ]
+    },
+    "benefits": [
+      "Health Insurance",
+      "Dental Insurance",
+      "Vision Insurance",
+      "401(k)",
+      "PTO / Vacation",
+      "Parental Leave",
+      "Tuition / Learning Budget"
     ]
   },
   {
@@ -302,7 +506,7 @@
     "requirement_id": "da87fd48-f727-49b4-a3ea-d140d6b6f9e6",
     "job_description": "At the forefront of the future of connected living, TP-Link's Systems Inc. R&D Center in Irvine, Southern California's innovation hub, spearheads research and development of next-generation networking, IoT smart home products, and software services. Our team of passionate engineers are constantly innovating, engineering solutions that transform the end user experience with simpler, smarter, and more reliable connectivity.\nWe're looking for a passionate and experienced\nSite Reliability Engineer\nto join our team and play a crucial role in ensuring our cloud platform's security, Reliability, scalability, and operational excellence.\nAbout Us:\nHeadquartered in the United States, TP-Link Systems Inc. is a global provider of reliable networking devices and smart home products, consistently ranked as the world\u2019s top provider of Wi-Fi devices. The company is committed to delivering innovative products that enhance people\u2019s lives through faster, more reliable connectivity. With a commitment to excellence, TP-Link serves customers in over 170 countries and continues to grow its global footprint.\nWe believe technology changes the world for the better! At TP-Link Systems Inc, we are committed to crafting dependable, high-performance products to connect users worldwide with the wonders of technology.\nEmbracing professionalism, innovation, excellence, and simplicity, we aim to assist our clients in achieving remarkable global performance and enable consumers to enjoy a seamless, effortless lifestyle.\nResponsibilities:\nAssist in implementing and operating Microservices on Kubernetes cloud-based platforms.\nCollaborate with the Cloud Technical Development and DevOps teams to deploy services to the Multi-Cloud Platform.\nConduct Load Tests and Chaos Tests to ensure the scalability and reliability of microservices.\nBuild observability for Microservices and cloud platforms like AWS, OCI, Azure, and GCP.\nContribute to writing and executing disaster recovery plans in collaboration with the Development and DevOps teams.\nHelp analyze and resolve production risks caused by insufficient resources, such as node groups, CPU, memory, HPA scheduling, JVM pre-warming, etc.\nWrite and maintain scripts for automation using languages like Python, Go, or Bash.\nAssist in defining and maintaining the KPIs (SLA/SLO/SLI) for all cloud microservices with development teams to better understand the business.\nCreate and maintain technical documentation, including architecture diagrams, design documents, and standard operating procedures.\nEnsure adherence to security and compliance standards, including ISO27001, SOC2, and GDPR.\nParticipate in incident response efforts to troubleshoot and resolve production issues quickly.\nConduct post-incident analysis to identify root causes and potential workarounds/solutions.\nContribute to product/technology selection, including implementation of POCs.\nBe adaptable to change and evolving processes and tools.\nParticipate in mentoring and training less senior members of the team.\nBe part of the on-call rotation and provide support after work hours and on weekends.\nOther duties as assigned.\nRequirements\nBachelor's degree in Computer Science, Information Technology, or a related field.\n1-3 years of experience as a Site Reliability Engineer or in a related role.\nProficiency in programming and scripting languages like Java, Python, Bash, or PowerShell.\nHands-on experience in SRE, DevOps, cloud operations, and cloud security best practices.\nBasic knowledge of security technologies, including Identity and access management, Network security, Application security, and Data protection.\nStrong problem-solving and analytical skills, with the ability to work independently and as part of a team.\nExperience in developing and maintaining technical documentation and implementing compliance requirements.\nAdditional Skills (Preferred):\nRelevant cloud certifications include AWS Solutions Architect, Azure Solutions Architect Expert, or GCP Professional Cloud Architect.\nExperience with container orchestration technologies (e.g., Kubernetes)\nBenefits\nSalary range: $100,000 - $140,000\nFree snacks and drinks, and provided lunch on Fridays\nFully paid medical, dental, and vision insurance (partial coverage for dependents)\nContributions to 401k funds\nBi-annual reviews, and annual pay increases\nHealth and wellness benefits, including free gym membership\nQuarterly team-building events\nAt TP-Link Systems Inc., we are continually searching for ambitious individuals who are passionate about their work. We believe that diversity fuels innovation, collaboration, and drives our entrepreneurial spirit. As a global company, we highly value diverse perspectives and are committed to cultivating an environment where all voices are heard, respected, and valued. We are dedicated to providing equal employment opportunities to all employees and applicants, and we prohibit discrimination and harassment of any kind based on race, color, religion, age, sex, national origin, disability status, genetics, protected veteran status, sexual orientation, gender identity or expression, or any other characteristic protected by federal, state, or local laws. Beyond compliance, we strive to create a supportive and growth-oriented workplace for everyone. If you share our passion and connection to this mission, we welcome you to apply and join us in building a vibrant and inclusive team at TP-Link Systems Inc.\nPlease, no third-party agency inquiries, and we are unable to offer visa sponsorships at this time.",
     "location_work_type": "Irvine, United States (On_site)",
-    "scraped_at": "2026-05-31T20:55:58.842116-05:00",
+    "scraped_at": "2026-06-02T10:44:20.641553-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "Site Reliability Engineer (SRE)",
@@ -336,6 +540,8 @@
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -372,7 +578,7 @@
     "requirement_id": "881a507c-b78d-4f1b-babe-6356b5f2b44b",
     "job_description": "We are seeking a Site Reliability Engineer (SRE) with deep expertise in monitoring, observability, and reliability engineering to support systems running across on-premises infrastructure and Google Cloud Platform (GCP).\nThis role is primarily responsible for designing, operating, and improving monitoring, alerting, and observability platforms, with a strong focus on Grafana and Kubernetes environments.\nAs a secondary responsibility, this role provides backup coverage for the Application Support team during periods of resource constraints or major incidents, offering L2/L3 technical support when required.\nResponsibilities\nMonitoring & Observability (Core Focus)\nOwn and operate the monitoring and observability stack across on-prem and GCP environments\nDesign, build, and maintain Grafana dashboards for infrastructure, Kubernetes, and applications\nDefine, tune, and maintain alerts to ensure high signal-to-noise ratio\nEstablish observability standards and best practices across teams\nImprove visibility into system health, performance, and reliability\nSite Reliability Engineering\nApply SRE principles to improve availability, performance, and resilience\nDefine and track SLIs, SLOs, and error budgets\nParticipate in on-call rotations and SEV incident response\nLead or contribute to incident investigations and root cause analysis (RCA)\nDrive preventative actions to reduce repeat incidents\nKubernetes & Platform Reliability\nSupport and monitor Kubernetes environments (GKE and on-prem clusters)\nMonitor cluster health, capacity, and resource utilization\nTroubleshoot platform-level issues impacting application reliability\nCollaborate with Platform and Engineering teams on reliability improvements\nSecondary Responsibilities (Backup Application Support)\nThese responsibilities are activated as needed, not part of day-to-day operations.\nProvide L2/L3 application support coverage during:\nSupport team resource shortages\nHigh-severity incidents (SEVs)\nPeak support periods or escalations\nTriage and troubleshoot application issues using existing runbooks and dashboards\nCollaborate with Application Support and Engineering teams during incidents\nEnsure all actions, findings, and resolutions are documented in ServiceNow (SNOW)\nRequirements\nStrong experience as a\nSite Reliability Engineer or Reliability Engineer\nDeep hands-on expertise with\nGrafana\n(dashboards, alerting, troubleshooting)\nSolid experience with monitoring and observability systems\nProduction experience operating\nKubernetes\nenvironments\nExperience supporting systems in\nGCP\nand on-prem environments (mandatory)\nStrong\nLinux\nsystems and troubleshooting skills\nFluent\nEnglish\n(written and spoken).\nAbility to work in\nPST time zone.\nAbility to participate in an\non-call rotation\nthat includes coverage for one weekend day. Time worked during the weekend is compensated with one day off during the week, in accordance with the established work schedule.\nTechnology Stack:\nObservability: Grafana, Prometheus, logging platforms\nContainers: Kubernetes (GKE and on-prem)\nCloud: Google Cloud Platform (GCP)\nOperations: Linux, networking, infrastructure monitoring\nIncident Tools: PagerDuty, ServiceNow, Slack (or equivalents)\nNice to have:\nExperience supporting application teams during SEV incidents\nKnowledge of capacity planning and performance tuning\nScripting skills (Python, Bash, etc.)\nExperience with hybrid infrastructure environments\nBenefits\nAt Devsu, we believe in creating an environment where you can thrive both personally and professionally. By joining our team, you\u2019ll enjoy:\nA stable, long-term contract with opportunities for career growth\nPrivate health insurance\nA remote-friendly culture that promotes work-life balance\nContinuous training, mentorship, and learning programs to keep you at the forefront of the industry\nFree access to AI training resources and state-of-the-art AI tools to elevate your daily work\nA flexible Paid Time Off (PTO) policy as well as paid holiday days\nChallenging, world-class software projects for clients in the US and LatAm\nCollaboration with some of the most talented software engineers in Latin America and the US, in a diverse work environment\nJoin Devsu and discover a workplace that values your growth, supports your well-being, and empowers you to make a global impact.",
     "location_work_type": "Guatemala (Remote)",
-    "scraped_at": "2026-05-31T20:55:58.858691-05:00",
+    "scraped_at": "2026-06-02T10:44:20.679678-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "Site Reliability Engineer (SRE)",
@@ -406,6 +612,8 @@
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 2,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -472,6 +680,8 @@
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -508,7 +718,7 @@
     "requirement_id": "8e11e32f-4030-48c8-9a93-b2a2ca8ca145",
     "job_description": "We need a team member that is excited about working at an MSP...\nMore specifically, we need a System Administrator that is Humble, Hungry, and Smart!\nDo you want to work at a Security focused MSP that is growing, an MSP that has a framework to build processes and follow them? Do you want to work for Professional Clients who also want to improve their network?\nDoes your current MSP seem disorganized and chaotic? Are you burnt out and working too many hours?\nFounded in 2006, Straight Edge Technology is a company committed to excellence and working with purpose.  We have a dynamic and challenging environment, one that encourages teamwork and fosters professional growth. Our support team is top notch and looking for a teammate with a great attitude to join the crew to close issues and solve problems.\nSo, what does a Systems Engineer do?\nWe are looking for a Systems Engineer to help build out, maintain, and troubleshoot our rapidly expanding infrastructure. You will be part of a talented team that demonstrates superb technical competency, delivering mission critical infrastructure and ensuring the highest levels of availability, performance and security. Qualified systems engineers will have a background in IT, computer systems engineering, or systems engineering and analysis.\nDo you have what it takes?\nOur team of engineers need to respond to detected issues so fast that our clients don't even know they needed our help.\nYou\u2019ll need strong interpersonal skills, the ability to communicate about highly technical issues, strong attention to detail and, most importantly, a knock-\u2018em-dead attitude!   We need you to be open to ideas and to bring your own new ideas to the team.  We offer a fun, engaging, supportive environment in which your talent can thrive. So, if you\u2019re looking for a place where you can constantly learn more, be more and contribute to a team, this is it.\nDoes this sound just like you so far? Okay, good. Read on.\nEssential Responsibilities include but not limited to:\nAnalyzes problems from a systems perspective, isolates to hardware or software issue and carries through to resolution.\nProvides IT support relating to technical issues involving Microsoft\u2019s core business applications / Azure / Office 365, as well as virtual environments built on Citrix and VMware\nSupport services for Microsoft related technologies: Windows Server, Azure, Exchange, SQL, SharePoint, etc.\nImplement and support disaster recovery solutions.\nTechnical services and support at the network level: WAN and LAN connectivity, routers, firewalls, and security.\nRemote access solution implementation and support: VPN, Remote Desktop / Terminal Services, and Citrix.\nSystem documentation to include system reviews and recommendations.\nTravels to customer sites to perform work when appropriate (company vehicle provided).\nMaintains familiarity with industry best practices.\nCommunicate effectively with customers and the Service Team\nActively participates in team and company meetings.\nInstall, configure, test and maintain operating systems, application software and system management tools\nProactively ensure the highest levels of systems and infrastructure availability\nMonitor and test application performance for potential bottlenecks, identify possible solutions, and work with developers to implement those fixes\nMaintain security, backup, and redundancy strategies\nProvide 2nd and 3rd level support\nRequirements\nBS degree in Computer Science, Engineering or a related subject, or a combination of 5+ years of experience and recent equivalent training (college graduate, technical school graduate or similar\nExtensive knowledge of all aspects of PC operations and functions\nExperience with monitoring systems and automation software\nExperience with the following technologies:\nSophos or Meraki Firewall\nO365 and M365\nAzure Virtual Desktop or Terminal Services (RDS)\nSmall Business Networks\nMicrosoft SQL\nMicrosoft Windows Server 2016, 2019, 2022\nPREFERRED (one or multiple):\nMicrosoft AZURE\nMicrosoft MCSA, MCSE or MCITP\nMeraki Network Stack (Firewall / Switch and Access point)\nCisco CCNA\nCitrix CCA\nNetwork + Certification\nA+ Certification\nCORE COMPETENCIES:\nAttention to Communication\nWritten Communication\nCustomer Orientation\nInitiative\nPersonal Credibility\nDiagnostic Information Gathering Analytical Thinking\nTechnical Expertise\nThoroughness\nStress Management\nPhysical activity of this position:\nStooping, kneeling, crouching, reaching, walking, pushing, pulling, lifting, fingering, grasping, feeling, talking, hearing and repetitive motion.\nPhysical requirements of this position:\nMedium work exerting up to 50 pounds of force occasionally, and/or up to 30 pounds of force frequently, and/or up to 10 pounds of force constantly to move objects.\nVisual acuity requirements:\nThe worker is required to have close visual acuity and use of computer monitor screens up to 80% of the time.\nWork conditions:\nThe worker is not substantially exposed to adverse environmental conditions (such as in typical office or administrative work.)\nBenefits\nCompetitive Pay\nCompany subsidized medical, dental and vision insurance\nPTO\nPaid parental leave\nCompany Retirement Plan\nSubsidized Gym Membership",
     "location_work_type": "San Antonio, United States (On_site)",
-    "scraped_at": "2026-05-31T20:55:59.413887-05:00",
+    "scraped_at": "2026-06-02T10:44:21.530250-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "System Engineer",
@@ -542,6 +752,8 @@
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 5,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -582,7 +794,7 @@
     "requirement_id": "2bf378b9-bc7f-44c0-a23e-c34cdc4aa218",
     "job_description": "The Company:\nGEM Technologies is a Managed Services Provider that delivers personalized solutions to help local businesses make the most of their technology. At GEM Technologies, we are the New York City area\u2019s leading experts in emerging technology implementation. We deliver comprehensive and scalable solutions that keep businesses competitive, secure, and thriving. With the threat of cyber-attacks, and consumer and business digital adoption moving forward at such a rapid pace, it has never been more critical to partner with a professional service provider who can keep up with emerging technology development. We are always interested in meeting highly qualified engineers for future opportunities as our business grows\nThe Role:\nThe Senior Systems Engineer is responsible for the maintenance, configuration, and reliable operation of IT infrastructure, cloud platforms and computer systems. You will participate in research and development to continuously improve and keep up with IT business needs of the organization. You will also actively identify and resolve problems within the IT infrastructure that can lead to work disruptions within the company. You will also have the opportunity to work with multiple clients, providing them with expert technical support and ensuring their systems are secure and functioning at peak performance. As a Senior Systems Engineer, you will be responsible for designing, implementing, and maintaining our Windows-based systems and infrastructure. You will work closely with our IT team to ensure the stability, security, and performance of our systems.\nResponsibilities:\nDesign, implement and maintain server and cloud-based computing solutions\nProvide expert technical support to clients, resolving any issues related to their systems\nAnalyze and optimize system performance, identifying areas for improvement\nCreate and maintain documentation of system configurations, procedures and troubleshooting guides\nStay up-to-date with emerging technologies and trends in the field of systems engineering\nExperience with cybersecurity, including knowledge of firewalls and best practices for securing systems\nExperience with disaster recovery and regaining access and functionality to IT infrastructure\nWhile this is a remote position, some of your work will be performed onsite at client locations throughout the NYC metro area.\nRequirements:\nAbility to communicate effectively with organizational personnel and clients.\nCustomer service orientation (e.g., patience, positive customer-friendly attitude, active listening, empathy, professionalism, etc.).\nAdapt easily to rapid changes in requests, processes, and procedures.\nAbility to set goals and prioritize tasks.\nUses an objective, logical, rigorous, and detail-oriented approach to work.\nResolves problems promptly, accurately and in such a way as to prevent future occurrence.\nStrong ability to manage multiple responsibilities and competing priorities, constantly reprioritizing based on new information or shifting deadlines.\nMaintains confidentiality and uses sound judgement when discussing technical or sensitive matters.\nStrong attitude and desire to learn new technologies.\nMaintain current skills and strive to acquire new technical knowledge based on current industry trends.\nHighly motivated self-starter & independent worker who can produce high level results consistently with minimal supervision.\nMust work well in a team environment and participate in working meetings\nHybrid position \u2013 Based in NYC area, occasional client visits are an integral part of this role\nMust maintain a clean and presentable work environment for video calls when working from home as well as in the office\nCore Technical Knowledge:\nOn-Prem Exchange\nM365\nCybersecurity Applications\nAmazon Web Services\nMicrosoft Azure\nGoogle Cloud Platform\nCloud Software\nGoogle Workspace\nPowerShell\nManage and maintain DNS infrastructure\nVDI Administration\nMFA Administration\nMDM Solutions\nExperience with NOC software and PSAs\nExperience with router/switch implementation\nVoIP systems\nKnowledge of disaster recovery\nScripting or programming experience\nExperience with cloud servers\nRMM Experience\nRequirements\nEducation and Experience\n:\nA\nbachelor\u2019s degree\nin Computer Science, Information Technology, or a related field (or equivalent work experience).\nAt least five years of proven experience\nas a Senior Systems Engineer, with a track record of successfully delivering complex IT projects.\nTechnical Skills\n:\nSystems administration\n: Proficiency in managing and maintaining computer systems.\nNetwork protocols\n: Understanding of network communication protocols.\nHardware configuration\n: Knowledge of configuring hardware components.\nSoftware deployment\n: Ability to deploy and manage software solutions.\nScripting languages\n: Excellent scripting skills using languages.\nSecurity knowledge\n: Familiarity with system security practices.\nCloud-based computing\n: Experience with cloud platforms.\nBenefits\nRemote work\nProfessional Development stipend\nHealth Insurance\nDental/Vision Plan\nIn compliance with the state and city salary transparency requirements, the potential salary for this position is from $90,000 to $110,000 which represents a range commensurate with experience.\nVisa sponsorship for this role is currently not available.",
     "location_work_type": "New York, United States (Hybrid)",
-    "scraped_at": "2026-05-31T20:55:59.419715-05:00",
+    "scraped_at": "2026-06-02T10:44:21.536967-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "System Engineer",
@@ -616,6 +828,8 @@
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 5,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -654,7 +868,7 @@
     "requirement_id": "fb0eae0a-e44f-435a-ae6a-d9e7c90a32d9",
     "job_description": "About the Role\nThe Senior Cloud Network Engineer is responsible for designing, implementing, and maintaining secure, scalable, and high-performing cloud network architectures. This position will play a key role in optimizing connectivity between on-premises infrastructure, cloud platforms, and global enterprise applications.\nThe ideal candidate brings deep expertise in cloud networking, automation, and security best practices, with proven experience in AWS, Azure, or GCP environments.\nKey Responsibilities\nDesign and implement cloud network solutions, including VPCs, subnets, routing, peering, and VPN connections.\nBuild and maintain hybrid connectivity between on-premises and cloud environments using Direct Connect, ExpressRoute, or similar technologies.\nConfigure and manage firewalls, load balancers, gateways, and network security groups.\nMonitor network performance, capacity, and availability; troubleshoot complex network issues.\nDevelop infrastructure-as-code (IaC) templates for network automation using Terraform, CloudFormation, or ARM.\nCollaborate with security and DevOps teams to ensure compliance, encryption, and identity management standards.\nLead network-related projects for cloud migrations, multi-region deployments, and disaster recovery.\nEstablish and document best practices, architecture diagrams, and operational procedures.\nMentor junior engineers and contribute to the continuous improvement of the infrastructure team.\nRequirements\nQualifications\nBachelor\u2019s degree in Computer Science, Information Systems, or a related field (or equivalent experience).\n7+ years of hands-on experience in enterprise networking, including at least 3 years in cloud network engineering.\nExpert-level knowledge of cloud networking in\nAWS\n,\nAzure\n, or\nGoogle Cloud Platform\n.\nStrong understanding of\nTCP/IP\n,\nBGP\n,\nDNS\n,\nVPN\n, and\nload balancing\ntechnologies.\nExperience with\nIaC tools\n(Terraform, CloudFormation) and\nautomation scripting\n(Python, PowerShell, or Bash).\nFamiliarity with\ncloud-native firewalls\n,\nWAF\n,\nSD-WAN\n, and\nzero trust network access (ZTNA)\nconcepts.\nStrong troubleshooting and analytical skills with a focus on reliability and performance optimization.\nRelevant certifications preferred (e.g., AWS Advanced Networking, Azure Network Engineer Associate, CCNP/CCIE).\nPreferred Skills\nExperience with container networking (Kubernetes, CNI, service mesh).\nKnowledge of security frameworks (NIST, ISO 27001, SOC 2).\nFamiliarity with CI/CD pipelines and DevSecOps practices.\nExcellent documentation and communication skills.\nBenefits\nHealth, dental, vision, life, and short/long-term disability insurance\nPaid vacation, holidays, and sick leave\nCompetitive compensation and opportunities for advancement\nRetirement plan with employer contribution match\nWelcoming, family-style corporate culture uniquely suited to fast-paced, entrepreneurial, and motivated individuals\nOne of San Antonio\u2019s \u201cBest Places to Work\u201d for nine consecutive years",
     "location_work_type": "Bulverde, United States (On_site)",
-    "scraped_at": "2026-05-31T20:55:59.770620-05:00",
+    "scraped_at": "2026-06-02T10:44:22.009532-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "Cloud Network Engineer",
@@ -688,6 +902,8 @@
         "Continuous Integration (CI/CD)": 1,
         "System Engineer": 0,
         "Cloud Network Engineer": 10,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -758,6 +974,8 @@
         "Continuous Integration (CI/CD)": 1,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -792,7 +1010,7 @@
     "requirement_id": "9aef2ba4-f12f-4efd-ae5b-2804c000a08a",
     "job_description": "Founded in 2016 in Silicon Valley, Pony.ai has quickly become a global leader in autonomous mobility and is a pioneer in extending autonomous mobility technologies and services at a rapidly expanding footprint of sites around the world. Operating Robotaxi, Robotruck and Personally Owned Vehicles (POV) business units, Pony.ai is an industry leader in the commercialization of autonomous driving and is committed to developing the safest autonomous driving capabilities on a global scale. Pony.ai\u2019s leading position has been recognized, with CNBC ranking Pony.ai #10 on its CNBC Disruptor list of the 50 most innovative and disruptive tech companies of 2022. In June 2023, Pony.ai was recognized on the XPRIZE and Bessemer Venture Partners inaugural \u201cXB100\u201d 2023 list of the world\u2019s top 100 private deep tech companies, ranking #12 globally. As of August 2023, Pony.ai has accumulated nearly 21 million miles of autonomous driving globally. Pony.ai went public at NASDAQ in November 2024.\nResponsibility\nBuild scalable systems for training and fine-tuning large generative models that produce realistic, informative driving behaviors for evaluation and scenario coverage.\nImplement and iterate on RL-style methods: algorithms, reward / preference objectives, and training setups suited to high-fidelity, insightful behaviors in simulation-aligned workflows (closed-loop evaluation mindset).\nShip deep learning solutions (including LLM / VLM where appropriate) that improve human-led triaging, automate high-volume workflows, and support nuanced analysis of self-driving behavior to surface critical anomalies.\nOwn production-oriented ML for fleet-scale assessment: training, optimization, monitoring, and iteration of models used to judge performance across large real-world exposure.\nDesign and evolve data + evaluation systems inspired by RL from human preferences (RLHF) and related paradigms\u2014turning preference/judgment signals into repeatable, scalable training and evaluation loops.\nPartner broadly with teams such as Prediction, Planning, Research, and platform/engineering leads to land cross-cutting improvements with clear metrics.\nRequirements\nM.S. or Ph.D. in Computer Science, Machine Learning, AI, or a related field\u2014or equivalent practical experience.\nHands-on experience building and applying ML in production-grade settings, with a strong RL component (policy learning, preference/feedback optimization, or offline/online RL pipelines).\nDepth in deep learning, sequence modeling, and generative models.\nDemonstrated impact via strong publications or a clear history of shipping impactful ML systems end-to-end.\nExperience with large-scale distributed training and large-scale data processing.\nAbility to lead ambiguous technical work from problem framing through reliable delivery.\nPreferred\nBackground in autonomous vehicles, robotics, or complex simulation environments.\nStrong grasp of modern RL and post-training techniques in LLM, dLLM, VLA and video generations.\nHands-on integration of simulation platforms with ML training and evaluation workflows.\nPython fluency and frameworks such as PyTorch\nExperience defining and operating metrics for complex, safety-critical AI systems.\nTechnical leadership: influencing stakeholders, aligning teams, and raising the bar for evaluation rigor.\nExcellent communication\u2014simple explanations of complex trade-offs.\nCompensation and Benefits\nBase Salary Range: $150,000 - $250,000 Annually\nCompensation may vary outside of this range depending on many factors, including the candidate\u2019s qualifications, skills, competencies, experience, and location. Base pay is one part of the Total Compensation and this role may be eligible for bonuses/incentives and restricted stock units.\nAlso, we provide the following benefits to the eligible employees:\nHealth Care Plan (Medical, Dental & Vision)\nRetirement Plan (Traditional and Roth 401k)\nLife Insurance (Basic, Voluntary & AD&D)\nPaid Time Off (Vacation & Public Holidays)\nFamily Leave (Maternity, Paternity)\nShort Term & Long Term Disability\nFree Food & Snacks\nPlease click\nhere\nfor our privacy disclosure.",
     "location_work_type": "Fremont, United States (On_site)",
-    "scraped_at": "2026-05-31T20:56:00.460568-05:00",
+    "scraped_at": "2026-06-02T10:44:22.753716-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "Machine Learning Engineer (MLOps)",
@@ -826,6 +1044,8 @@
         "Continuous Integration (CI/CD)": 1,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 5,
         "AI Platform Engineer (AIOps)": 0
@@ -866,7 +1086,7 @@
     "requirement_id": "8055ba38-a224-4f50-8f4b-2e9dc9a6f758",
     "job_description": "Timescapes is looking for a Machine Learning Engineer to join our small, but growing team of high-performers. We\u2019re after someone who approaches problems from first principles, honing in on underlying causes and diligently iterating towards the best solution. We believe that great products feature incredible experiences that customers never want to stop using.\nAbout us\nFounded in New Zealand in 2017, Timescapes is a visual progress tracking solution for complex construction projects \u2013 our mission is to simplify construction through shared visibility. Customers value Timescapes because it helps them stay on schedule, validate construction claims and communicate progress more effectively.\nWe\u2019re a rapidly growing company, and are used by some of the largest construction firms across Australia, Canada, New Zealand and the United States. We\u2019re deliberate and thoughtful in everything that we do, and we emphasise awareness, speed and quality in our approach to product development.\nAbout the role\nAs our second dedicated ML / AI hire at Timescapes, you\u2019ll be working closely with our product and engineering team to develop ML models (computer vision) and incorporate them into our existing (and new) product capabilities. Key aspects of the role include:\nWorking closely with other members of the AI / ML team to design, develop, integrate and support machine learning models, to solve specific construction problems related to tracking activity and progress on civil, institutional and commercial sites.\nRunning experiments with LLMs and other large-scale generative AI models during problem and solution exploration, and determining when to invest in custom development vs leveraging off-the-shelf models.\nDeveloping software to manage the ML lifecycle, including data management, labeling and training.\nSourcing training data, curating it for quality, and determining how best to integrate it into the ML lifecycle.\nRequirements\nEssential Skills / Qualifications\nBachelor\u2019s degree in Computer Science, Engineering, or a related field.\nExperience with the development and delivery of production-level software systems that feature critical machine learning components.\nExperience with the development of computer vision models, from the data side as well as the model side.\nExperience with end-to-end ML operations, including data acquisition, labeling, model training, pipeline design + management, continuous integration, model versioning, and performance monitoring.\nExperience with leveraging LLMs, LVMs and multimodality models to augment product capabilities, including strong experimentation skills, and the ability to combine off-the-shelf commercial model capabilities with custom ML models.\nFamiliarity with methods for ML model validation and verification.\nExperience deploying ML inference infrastructures for systems with high throughput.\nAbility to develop ML-enabled product capabilities in the context of the entire SDLC, from initial concepts through detailed design, development, deployment and maintenance.\nOther Preferred Skills / Qualifications\nExperience with deep learning frameworks e.g. PyTorch\nFamiliarity with inference engines e.g. TensorRT\nExperience with developing edge ML applications\nExperience writing with .NET, C# and Python\nAbout you\nWe want curious, driven and enthusiastic people who are motivated by the prospect of building solutions that endure. The people who thrive at Timescapes are critical thinkers who are not afraid to embrace the unconventional. If the following resonates with you, we should definitely chat:\nValue-oriented:\nwe\u2019re focussed on ensuring that Timescapes as a business gets genuine value from engineering investments. You\u2019ll be someone who sees methodologies, best practices and patterns as useful tools, but you don\u2019t blindly adopt them and never let them get in the way of great customer outcomes.\nObsessed with the \u201cwhy\u201d:\nyou\u2019re someone who cares about the details, and you take pride in sharing your rationale for every decision you make. You question things that don\u2019t make sense, and you expect others to do the same.\nAll about the editing:\nwhen it comes to great solutions, we don\u2019t believe you generally nail it on the first attempt. You\u2019re someone who\u2019s not afraid to leave a lot of ideas on the cutting room floor, and you intuitively understand that the first release is just the beginning.\nAdaptable and creative:\nas a small company doing ambitious things, we don\u2019t always have the right answer, and we know that what\u2019s worked in the past may not work in the future, but we\u2019re not deterred by the unknown, and we\u2019re excited about trying new things and finding our way through.\nCommunication matters:\nin addition to communicating clearly and succinctly, you\u2019re also a natural relationship-builder, and you\u2019re equally comfortable on Slack/email, video calls and in person.\nBenefits\nThis is your chance to help build something meaningful - technology that genuinely makes construction better while working with people who care about doing great work.\nWe're at an exciting stage where your decisions will directly impact our trajectory as we scale globally.\nWe offer\nCompetitive compensation and equity package\nHealth insurance\n5% kiwisaver contribution\nEAP & wellbeing support",
     "location_work_type": "Auckland, New Zealand (Hybrid)",
-    "scraped_at": "2026-05-31T20:56:00.462723-05:00",
+    "scraped_at": "2026-06-02T10:44:22.755554-05:00",
     "red_flags": [],
     "apply_decision": "APPLY",
     "strongest_label": "Machine Learning Engineer (MLOps)",
@@ -900,6 +1120,8 @@
         "Continuous Integration (CI/CD)": 1,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 5,
         "AI Platform Engineer (AIOps)": 0
@@ -924,6 +1146,558 @@
     "benefits": [
       "Health Insurance",
       "Vision Insurance",
+      "Equity / Stock Options"
+    ]
+  },
+  {
+    "job_title": "Devops Engineer",
+    "company_name": "Aethir",
+    "job_url": "https://jobs.workable.com/view/qDD5nNX1WMrL4QruC7QC7y/hybrid-devops-engineer-in-petaling-jaya-at-aethir",
+    "requirement_id": "c79cb225-a396-4e43-9d0a-402b4626f66c",
+    "job_description": "Aethir\nis the leading\nDePIN\n, enterprise-grade, AI-focused\nGPU-as-a-Service\nprovider in the market. By leveraging a highly distributed cloud computing infrastructure, we help GPU providers serve AI and gaming customers at scale. Our mission is to deliver powerful AI chips for enterprise clients while supporting cloud gaming for hundreds of thousands of users worldwide\u2014all under a decentralized cloud architecture that brings compute power directly to the community.\nWe are looking for a\nDevOps Engineer\nto join our new headquarters in\nKuala Lumpur, Malaysia\n. In this role, you will be responsible for maintaining, optimizing, and scaling our production systems to ensure high availability, reliability, and performance across our decentralized compute network. You\u2019ll play a key part in supporting mission-critical infrastructure for our AI and cloud gaming customers globally.\nKey Responsibilities:\nDesign and implement automated deployment pipelines for our cloud-based services.\nCollaborate with development teams to optimize and automate build, deployment, and release processes.\nMaintain and monitor cloud infrastructure, ensuring high availability and performance.\nImplement and enforce security best practices to protect our cloud-based services and customer data.\nTroubleshoot and resolve infrastructure and deployment issues.\nManage and scale our containerized applications using orchestration tools like Kubernetes.\nCollaborate with cross-functional teams to design and implement infrastructure improvements.\nStay up-to-date with industry trends and best practices in DevOps and cloud technologies.\nRequirements\nBachelor's degree in Computer Science, Engineering, or a related field.\nProven experience as a DevOps Engineer or similar role.\nStrong understanding of cloud computing platforms like AWS or Google Cloud.\nExcellent communication and collaboration skills.\nAbility to work in a fast-paced, startup environment.\nProficiency in scripting languages such as Bash, Python, Golang or PowerShell.\nProficiency in Kubernetes (K8S), CI/CD, and Docker.\nFamiliarity with infrastructure-as-code tools like Terraform or CloudFormation.\nExcellent problem-solving and troubleshooting skills.\nPrior experience working in structured environments such as Huawei, ZTE, or banking institutions is preferred.\nFluency in Mandarin is mandatory\n(written and spoken)\nBenefits\nHypergrowth Startup Environment\nFantastic Career Progression Opportunities\nWork within a Global and Local Team\nCollaborative and innovative work environment with opportunities to contribute to cutting-edge projects.",
+    "location_work_type": "Petaling Jaya, Malaysia (Hybrid)",
+    "scraped_at": "2026-06-02T10:44:18.064695-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "DevOps Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "DevOps Engineer"
+      ],
+      "strongest_label": "DevOps Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 6,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 1,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 1,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 2,
+        "Cloud Database Engineer": 0,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "DevOps Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 6
+      },
+      "rationale": "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": []
+    },
+    "benefits": []
+  },
+  {
+    "job_title": "DevOps Engineer",
+    "company_name": "Accurant International",
+    "job_url": "https://jobs.workable.com/view/2S1SD8DXcUorUjtCNg2AdM/hybrid-devops-engineer-in-minneapolis-at-accurant-international",
+    "requirement_id": "0f14dd7f-cc42-457c-98a9-dfaeaec8cd05",
+    "job_description": "Hiring Entity: Renovo Automation, a Subsidiary of Accurant International\nLocation: Hybrid\nStatus: Exempt\nSalary Range: $95k-$125k\nJob Title: DevOps Engineer\nThe DevOps Engineer oversees the development of scalable, reliable, and secure cloud-based data architecture. This role bridges business needs with technical implementation, ensuring that data pipelines, storage systems, and analytics platforms align with organizational goals. Additionally, this role prioritizes projects and collaborates with other departments to maximize the impact of data solutions.\nJob Responsibilities\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Administer and optimize Linux-based systems in cloud and on-prem environments.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Automate end-to-end deployment workflows for applications and infrastructure.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Build and manage CI/CD pipelines using tools like Jenkins, GitLab CI, or GitHub Actions.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Deploy and maintain Kubernetes clusters (EKS, AKS), managing: Namespace isolation, resource quotas, and network policies\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Helm-based service deployments\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Cluster scaling and lifecycle management\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Implement observability solutions using Prometheus, Grafana, and Loki.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Architect and automate cloud-agnostic infrastructure using Infrastructure as Code tools.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Enforce cloud and infrastructure security best practices, including vulnerability identification and patch automation.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Troubleshoot issues spanning networking, Kubernetes, and distributed systems.\nRequirements\nRequirements\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Experience in\nLinux system administration\nwith automation expertise.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Proven experience automating\napplication and infrastructure deployments.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Strong scripting skills in\nBash, Python\n, or equivalent.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Hands-on experience with\nKubernetes\n(EKS, AKS).\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Proficiency with\nInfrastructure as Code\n(e.g., Helm, Terraform, Crossplane, or Ansible).\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Solid grasp of\nnetworking concepts\n(TCP/IP, DNS, routing, firewalls).\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Experience integrating\nautomated deployments\ninto CI/CD pipelines.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Awareness of\nDevSecOps\nand proactive infrastructure security practices.\nNice to Have:\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Experience with\nmulti-tenant\nand\nhybrid cloud\nsetups\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Familiarity with advanced\ntroubleshooting of distributed systems\n.\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Knowledge of event-driven architectures or microservices deployment.\nAbout Us\nRenovo Automation\ndevelops practical software solutions for electric utilities and critical infrastructure operators. Our products focus on reliable operations, secure communications, and modern grid integration, helping customers manage complex systems with confidence.\u00a0\u00a0Renovo Automation proudly\u00a0operates\u00a0as part of the\u00a0Accurant International portfolio of companies.\nAccurant International\noffers innovative solutions to tackle pressing climate and energy technology challenges through our portfolio companies. Our investments in fields ranging from renewable energy, smart grid systems, electric vehicles, optimizing energy usage in buildings, and other areas has allowed our alliance to lead the way in transforming various fields.\nCulture\nPrivately owned, friendly and family-oriented company with growth and advancement opportunities and learning new advanced technologies. We are\u00a0a\u00a0customer\u00a0focused\u00a0and\u00a0employee centered\u00a0organization. Innovation is the core of our business philosophy.\nIt is the policy of\u00a0Renovo Automation\u00a0not to discriminate against any applicant for employment, or any employee because of age, color, sex, disability, national origin, race, religion, or veteran status.\nBenefits\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Medical insurance\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Vision insurance\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Dental insurance\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Employer paid life insurance, AD&D, and disability insurance\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Competitive 401(k) match \u2013 up to 6%\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Performance based bonus\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Potential profit sharing\n\u00b7\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0 Paid time off, holidays and other paid leave",
+    "location_work_type": "Minneapolis, United States (Hybrid)",
+    "scraped_at": "2026-06-02T10:44:18.067249-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "DevOps Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "DevOps Engineer"
+      ],
+      "strongest_label": "DevOps Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 6,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 1,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 0,
+        "DevSecOps": 2,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
+        "Data Platform Engineer": 2,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "DevOps Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 6
+      },
+      "rationale": "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as DevOps Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Health Insurance",
+        "Dental Insurance",
+        "Vision Insurance",
+        "401(k)",
+        "PTO / Vacation"
+      ]
+    },
+    "benefits": [
+      "Health Insurance",
+      "Dental Insurance",
+      "Vision Insurance",
+      "401(k)",
+      "PTO / Vacation"
+    ]
+  },
+  {
+    "job_title": "Platform Engineer",
+    "company_name": "3E",
+    "job_url": "https://jobs.workable.com/view/jsKJpj1J6seyepX29JFmg1/hybrid-platform-engineer-in-brussels-at-3e",
+    "requirement_id": "9580c8bc-965a-426d-b0f0-0e2b700870ae",
+    "job_description": "As our operations are expanding, we are looking for a talented Platform Engineer to support us in the\ndesign, development and maintenance of our cloud-based and on-premises infrastructure\n. You will take ownership and coordinate\ninfrastructure-related projects\nfor our SynaptiQ and R&D department application platforms.\nYou will join 3E\u2019s infrastructure team, working in close collaboration with the Site Reliability Engineering, Development, and Information Security teams, reporting to the Information Security Teamlead.\nAs a Platform Engineer, you are the go-to person for all infrastructure changes:\nTechnical\nYou assist with the planning and execution of infrastructure changes\nYou implement and maintain infrastructure automation and CI/CD pipelines\nYou ensure infrastructure security, compliance, and best practices are followed\nYou\u2019re a key player in the Incident Management Process\nAdvisory\nYou provide technical guidance and mentorship to teams on infrastructure matters\nYou document infrastructure architecture, processes, and runbooks for the team\nStrategic\nYou evaluate and recommend new technologies and tools to improve infrastructure reliability\nYou monitor, maintain, and optimize infrastructure performance, security, and reliability\nRequirements\n3E is looking for a battle-hardened Platform Engineer capable of\nassessing the risks related to infrastructure changes\nand having\nexperience in implementing mitigating controls\n. You follow\nDevOps best practices\nwhen building infrastructure projects in Terraform and Docker. You\u2019re a team player and support teammate in their daily operations of 3E's production environments.\nOur ideal candidate:\nIs fluent in English, the main language in our company\nIs based in Belgium (or can relocate to Belgium easily, within a short timeframe)\nHas 3 years of relevant professional experience in a similar position\nHas experience with Linux administration and immutable OS\nHas experience working with Docker and Kubernetes\nIs experimented in networking, performance troubleshooting (e.g. tcpdump, strace, ss)\nHas experience with configuring IPSec VPN tunnels\nHas experience with AWS or other relevant cloud provider\nExperience in designing/operating scalable infrastructure\nIs a team player with good communication skills\nComes with strong analytical skills\nIs security minded\nBonus points for:\nExperience working on internal applications platform and programming\nExperience working in an ISO27001 certified workplace\nBenefits\nOur offices are hidden in the centre of Brussels with a view on a pond, with ducks and a heron bringing a regular visit. In addition to a\nstimulating\natmosphere in a highly motivated group of people, 3E offers a unique opportunity to further develop yourself in a company/team with an ambitious growth plan, delivering innovative services.\nFurthermore:\nTraining\non the job by our experts so you get to know our solution and work in and out\nFlexibility\nin our open-minded company.\nHome working (2 days per week)\nAn\ninternational\nenvironment: projects in over 100 countries worldwide, colleagues of over 20 nationalities.\nA\nsalary package\nincluding hospitalisation insurance, pension saving, \u20ac9 meal voucher/day, flexible income plan, 20 legal days off + 12 compensation days (per full year worked), sustainable transport subscription or bike allowance (\u20ac0.36/km).",
+    "location_work_type": "Brussels, Belgium (Hybrid)",
+    "scraped_at": "2026-06-02T10:44:19.065273-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Platform Engineering",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Platform Engineering using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Platform Engineering"
+      ],
+      "strongest_label": "Platform Engineering",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 1,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 11,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 1,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Platform Engineering"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 11
+      },
+      "rationale": "This job was dynamically classified as Platform Engineering using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Platform Engineering using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Equity / Stock Options",
+        "Stipend / Allowance"
+      ]
+    },
+    "benefits": [
+      "Equity / Stock Options",
+      "Stipend / Allowance"
+    ]
+  },
+  {
+    "job_title": "Network Cloud Engineer",
+    "company_name": "Renmoney",
+    "job_url": "https://jobs.workable.com/view/rrZDMpdC4vA88mY5jdvE1E/network-cloud-engineer-in-lagos-at-renmoney",
+    "requirement_id": "ce1596f6-d6b2-4edd-9b57-e8f686f27706",
+    "job_description": "The Network Cloud Engineer is responsible for operating secure and highly available computing platforms, servers, and networks. They install, maintain, upgrade, and continuously improve the Institute\u2019s operating environment.\nThey also maintain the ongoing reliability, performance and support of the infrastructure. This includes monitoring the operating environments, responding to incidents, problems and planning for growth. Individuals in this job family are also responsible for the overall operation and maintenance of the data center.\nResponsibilities:\nDesign, implement and provide Level 2/3 Support for the switched, wireless and remote access network\nDesign, implement and administer Enterprise-Wide Area Network including Cisco router, Next Generation Firewall and Unified Threat Management systems\nManage the voice infrastructure, providing Level 2 Support for all voice related problems and advising the business on required system upgrades\nManage relationship with internet/voice service providers and ensuring quick escalations to the provider during service failures; making recommendations to the business on required capacity upgrades\nManage cloud-based infrastructure on AWS, including EC2 Linux/Windows instances, Images, snapshot backups, Software Defined Network and defining Security controls to protect the Organization\u2019s cloud-based infrastructure\nCloud and On-Premises network integration with partners and 3rd party service providers\nMitigation of Enterprise infrastructure security risks and ensuring compliance with best practices\nProvide technical expertise to the Help Desk\nWork with the legal team to review Service Provider contracts\nPerforms and analyze periodic health checks\nWork with project teams to understand and advise on infrastructure requirements\nAny other task as advised by the Head of Information Technology\nRequirements\nRequirements:\nB.Sc. degree in Engineering, Computer science or Information technology related course\nA minimum of 3 years\nRelevant certifications / qualifications: Professional Level Cisco and Microsoft Certifications (CCNP/CCDP/MCSE), AWS Certified Solutions Architect, AWS Certified SysOps Administrator, or equivalent are preferred\nUser support experience is desirable.\nProficiency in managing AWS services, including EC2, VPC, S3, RDS, IAM, and CloudFormation.\nExpertise in network design, implementation, and administration, including experience with Cisco routers, firewalls, and VPNs.\nDemonstrated ability to optimize cloud infrastructure for performance, cost, and security.\nKnowledge of security principles and best practices for both cloud and on-premises environments.\nAbility to troubleshoot complex network and infrastructure issues.\nStrong verbal and written communication skills to collaborate with team members and stakeholders.\nBenefits\nYou\u2019ll receive competitive compensation and work with amazing people. You\u2019ll work in a beautiful environment with a flat structure and solve complex, real-world challenges.",
+    "location_work_type": "Lagos, Nigeria (On_site)",
+    "scraped_at": "2026-06-02T10:44:19.439523-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Cloud Network Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Cloud Network Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Cloud Network Engineer"
+      ],
+      "strongest_label": "Cloud Network Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 0,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 0,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 1,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 0,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 10,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Cloud Network Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 10
+      },
+      "rationale": "This job was dynamically classified as Cloud Network Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Cloud Network Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": []
+    },
+    "benefits": []
+  },
+  {
+    "job_title": "Cloud Security Engineer",
+    "company_name": "Renmoney",
+    "job_url": "https://jobs.workable.com/view/7btjfdmx2oZfwQG5AKMkiy/cloud-security-engineer-in-lagos-at-renmoney",
+    "requirement_id": "320d1a55-2502-45d1-b64c-945e6aac809e",
+    "job_description": "Who We Are\nWe are committed to ensuring the confidentiality, integrity, and availability of our cloud-hosted applications, data, and infrastructure. Our team applies industry best practices, threat-mitigation techniques, and compliance standards such as ISO 27001, PCI DSS, and relevant regulatory guidelines to secure our evolving cloud environment.\nThe Role\nThe\nCloud Security Engineer\nis responsible for designing, implementing, and managing security controls across the organization\u2019s cloud environments. The role ensures secure architectures, proactive threat detection, and continuous compliance across AWS, Azure, GCP, and cloud-native technologies.\nWhat You Will Do\nCloud Security Architecture & Engineering\nDesign and implement secure cloud architectures for IaaS, PaaS, and SaaS platforms (AWS, Azure, GCP).\nImplement Zero Trust principles, network segmentation, and secure landing zones.\nDefine and enforce cloud security baselines, hardening standards, and configuration policies.\nCloud Security Operations\nManage cloud-native security tools (AWS Security Hub, GuardDuty, Azure Defender, GCP Security Command Center).\nMonitor and remediate misconfigurations using CSPM and CIEM solutions.\nConduct continuous security assessments and vulnerability remediation on cloud assets.\nSupport DevOps pipelines by integrating security tools (SAST and DAST).\nIdentity & Access Management\nImplement and manage identity controls such as IAM, RBAC, MFA, and conditional access policies.\nReview and enforce least privilege access for users, applications, and services.\nThreat Detection & Incident Response\nAnalyze cloud-specific security alerts, investigate suspicious activities, and respond to incidents.\nSupport threat hunting and logging activities using SIEM/SOAR platforms.\nDevelop runbooks and playbooks for cloud-related incidents.\nCompliance & Governance\nEnsure cloud environments meet internal security policies, regulatory requirements, and frameworks such as ISO 27001, PCI DSS, CIS Benchmarks, NIST CSF.\nConduct periodic cloud compliance audits and provide remediation guidance.\nDocumentation & Collaboration\nCreate and maintain security documentation including architecture diagrams, SOPs, and hardening guides.\nWork closely with DevOps, Networking, Infrastructure, and other teams to ensure secure deployment of cloud workloads.\nTrain and guide technical teams on cloud security best practices.\nRequirements\nWhat You Bring\nBachelor\u2019s degree in computer science, Information Security, Engineering, or related field.\n5\u20137 years hands-on experience in cloud engineering or cloud security.\nStrong experience with at least one major cloud platform (AWS, Azure, or GCP).\nExperience with cloud security tools: CSPM, WAF, API Gateway security, Firewalls, and vulnerability scanners.\nSolid understanding of networking concepts: VPC, subnets, VPN, firewalls, routing, DNS, load balancing.\nExperience with security frameworks such as ISO 27001, NIST, CIS, and PCI DSS.\nPreferred Certifications (Any 3 of the following)\nAWS Certified Security \u2013 Specialty\nMicrosoft Azure Security Engineer (AZ-500)\nGoogle Professional Cloud Security Engineer\nCISSP, CISM, CCSP, CEH\nCompTIA Security+, Cloud+\nKey Skills\nCloud architecture and security hardening\nIdentity and Access Management\nThreat detection and incident response\nContainer and Kubernetes security\nStrong analytical and troubleshooting skills\nExcellent communication and documentation skills\nBenefits\nWhat\u2019s In It For You\nCompetitive compensation and performance-driven rewards.\nOpportunity to work with modern cloud security technologies across AWS, Azure, and GCP.\nA collaborative and high-impact engineering environment.\nProfessional development support, including certifications and specialized security training.\nExposure to advanced cloud architectures, DevSecOps practices, and enterprise-scale security programs.\nA culture that values innovation, ownership, and continuous improvement.",
+    "location_work_type": "Lagos, Nigeria (On_site)",
+    "scraped_at": "2026-06-02T10:44:19.861102-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Cloud Security Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Cloud Security Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Cloud Security Engineer"
+      ],
+      "strongest_label": "Cloud Security Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 1,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 1,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 10,
+        "DevSecOps": 2,
+        "Site Reliability Engineer (SRE)": 0,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Cloud Security Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 10
+      },
+      "rationale": "This job was dynamically classified as Cloud Security Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Cloud Security Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Equity / Stock Options",
+        "Tuition / Learning Budget"
+      ]
+    },
+    "benefits": [
+      "Equity / Stock Options",
+      "Tuition / Learning Budget"
+    ]
+  },
+  {
+    "job_title": "Cloud Security Engineer",
+    "company_name": "Security Risk Advisors",
+    "job_url": "https://jobs.workable.com/view/s5eB93XNfzKfg3Mobvp1kC/cloud-security-engineer-in-philadelphia-at-security-risk-advisors",
+    "requirement_id": "d324f713-4084-4317-bf4b-d8dd166b5b1a",
+    "job_description": "Security Risk Advisors Intl., LLC (SRA) is offering a\nCloud Security Engineer\nposition. This role\u00a0is responsible for\u00a0designing, implementing, and\u00a0maintaining\u00a0security controls across SRA's multi-cloud environment, spanning Microsoft Azure/Entra ID, Google Cloud Platform (GCP), and Amazon Web Services (AWS). The Cloud Security Engineer will work closely with internal IT, security operations, and engineering teams to ensure cloud infrastructure is deployed and\u00a0maintained\u00a0in a secure, compliant, and resilient manner.\nEssential Functions\nDesign, implement, and\u00a0maintain\u00a0cloud security architectures across Azure/Entra ID, GCP, and AWS environments.\nAdminister and continuously improve cloud identity and access management (IAM) policies, roles, and privilege models across all three platforms.\nMonitor cloud environments for misconfigurations, threats, and vulnerabilities using cloud-native and third-party security tooling (e.g., Defender for Cloud, Security Command Center, AWS Security Hub).\nOperationalize cloud vulnerability and patch management processes, ensuring\u00a0timely\u00a0remediation of identified risks.\nImplement and\u00a0maintain\u00a0Cloud Security Posture Management (CSPM) solutions to enforce security baselines and compliance standards.\nDevelop and enforce cloud security policies, standards, and guardrails (e.g., Azure Policy, GCP Organization Policies, AWS SCPs).\nCollaborate with engineering and DevOps teams to embed security into CI/CD pipelines and infrastructure-as-code (IaC) workflows.\nConduct cloud security assessments and architecture reviews for new and existing environments.\nSupport incident response activities related to cloud infrastructure, including investigation, containment, and remediation.\nCreate and\u00a0maintain\u00a0technical documentation for cloud security architectures, configurations, and operational procedures.\nResearch and evaluate emerging cloud security technologies and provide recommendations for adoption.\nDevelop\u00a0detection\u00a0content and security analytics in SRA's internal SOC applicable to cloud environments.\nRequirements\nCompetencies\nIn-depth understanding of:\nMicrosoft Azure and Entra ID, including conditional access, PIM, and Defender for Cloud\nGoogle Cloud Platform (GCP) security services, including Security Command Center, IAM, and VPC Service Controls\nAmazon Web Services (AWS) security services, including IAM,\u00a0GuardDuty, Security Hub, and AWS Config\nCloud identity and access management principles and zero trust architecture\nWorking knowledge of:\nCloud Security Posture Management (CSPM) and Cloud Workload Protection Platforms (CWPP)\nInfrastructure-as-Code (IaC) tools such as Terraform, Bicep, or CloudFormation\nNetworking concepts as applied to cloud environments (VPCs, peering, private endpoints, firewalls)\nSIEM and EDR technologies in cloud-integrated environments\nExperience with:\nCI/CD pipeline security and\u00a0DevSecOps\u00a0practices\nOrganizing or supporting penetration testing, purple team exercises, or cloud-focused security assessments\nCompliance frameworks relevant to cloud environments (e.g., CIS Benchmarks, NIST CSF, SOC 2)\nModerate experience with:\nScripting and automation using Python, PowerShell, or Bash\nAutomation via tools such as Power Automate, Logic Apps, or cloud-native orchestration services\nSupervisory Responsibility\nNone\nWork Environment\nThis job\u00a0operates on-site\u00a0in a professional office environment or remotely as needed/required. This role routinely uses standard office equipment.\nPhysical Demands\nThe physical demands described here are representative of those that must be met by an employee to successfully perform the essential functions of this job. While performing the duties of this job, the employee\u00a0is regularly required to\u00a0talk and hear; use hands to finger, handle, or feel; and reach with hands and arms. The employee\u00a0frequently\u00a0is required to\u00a0stand and walk. This is a\u00a0largely sedentary\u00a0role.\nCandidates with disabilities are encouraged to apply and email\ncareers@sra.io\nwith any questions. Reasonable accommodations may be made to enable disabled individuals to perform the essential functions of this role.\nPosition Type/Expected Hours of Work\nThis is a full-time\u00a0position\u00a0and hours of work and days are Monday through Friday 8:30am to 5pm.\u00a0Occasional evening and weekend work may be\u00a0required\u00a0as job duties demand.\nTravel\nLess than 5%.\nRequired Education and Experience\nPunctuality and\u00a0timely\u00a0attendance to external client and internal stakeholder needs.\nA\u00a0bachelor's degree in Information Technology, Computer Science, or a similar field of study, or equivalent experience.\n3+ years of hands-on experience in cloud security engineering or a related role, with demonstrable experience across at least two of the three major cloud platforms (Azure, GCP, AWS).\nRelevant cloud security certifications preferred (e.g., AZ-500, SC-100, Google PCSE, AWS Security Specialty).\nA passion\u00a0for learning about cloud security, emerging technologies, and threat landscapes.\nExcellent verbal and written communication skills.\nStrong time management and organizational skills.\nOther Duties\nPlease\u00a0note\u00a0this job description is not designed to cover or\u00a0contain\u00a0a comprehensive listing of activities, duties or responsibilities that are\u00a0required of\u00a0the employee for this job. Duties, responsibilities, and activities may change at any time with or without notice.\nEEO Statement\nSecurity Risk Advisors\u00a0is\u00a0an Equal Opportunity Employer and prohibits discrimination or harassment of any kind. All employment decisions at SRA are based on business needs, job requirements, and individual qualifications, without regard to race, color, sex, sexual orientation, gender identity or expression, age, religion, national origin, disability, marital or family status, veteran status, medical condition, or any similar category protected under federal, state, or local laws.\nBenefits\nWork with Experts\n: Robust internal training program, plus Company-paid external training. SRA recognizes the value of professional development for employees. Therefore, we encourage our employees to pursue continuing education and role-specific training. Every SRA employee is eligible to attend one training per year paid for by SRA.\nMental Health Services\n: SRA has partnered with BetterHelp to provide SRA employees with free mental health support. BetterHelp connects individuals with licensed therapists for chat, video, and phone sessions.\nMedical / Dental / Other (regular full-time employees only)\nGenerous medical, dental, and vision benefits at different price points.\nCompany-paid disability and life insurance.\nCompany 401(k) plan including annual 3% safe harbor contribution.\nFree patient advocacy service that helps find care providers and resolve insurance queries.\nFree financial advising.\nGenerous parental leave, sick leave, and vacation policies.\nPossibility to work remotely or with a flexible schedule when needed and approved.\nCompany-paid cell phone with discounted accessories.\n1-2-3 Give Program: 1. SRA will give $1,000 to a charity of your choice. 2. If you give an additional amount (up to $1,000), then 3. SRA will match that amount up to $1,000.\nOther discounted, employee-paid benefits including pet insurance, legal support, and voluntary life insurance.\nSRA\u2019s mission is to\u00a0level up every day to protect our clients and their customers. This begins with our team members and their experience. SRA prides itself on\u00a0maintaining\u00a0a culture where team members have a shared sense of support and belonging, consistent with\u00a0our It\u2019s\u00a0Personal company value. At SRA, we prioritize transparent career pathing, varied DEI programming and community groups, competitive benefits including mental health support, and an emphasis on a sustainable, healthy, and engaging work culture. SRA has twice been named\u00a0a Best\u00a0Place to Work by the Philadelphia Business Journal.\nThese Essential Functions, Requirements, and Skills are guidelines. If you are a candidate who does not meet this exact job description but can\u00a0demonstrate\u00a0excellent organization, attention to detail, professionalism, flexibility, and self-direction in your professional background, we hope you apply. SRA values a diverse workplace and strongly encourages women, people of color, LGBTQ+ individuals, people with disabilities, members of ethnic minorities, and veterans to apply.\nSalary Range\n: $90k - 130k",
+    "location_work_type": "Philadelphia, United States (On_site)",
+    "scraped_at": "2026-06-02T10:44:19.865726-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Cloud Security Engineer",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Cloud Security Engineer using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Cloud Security Engineer"
+      ],
+      "strongest_label": "Cloud Security Engineer",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 1,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 0,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 10,
+        "DevSecOps": 2,
+        "Site Reliability Engineer (SRE)": 0,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 2,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Cloud Security Engineer"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 10
+      },
+      "rationale": "This job was dynamically classified as Cloud Security Engineer using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Cloud Security Engineer using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Health Insurance",
+        "Dental Insurance",
+        "Vision Insurance",
+        "401(k)",
+        "PTO / Vacation",
+        "Parental Leave",
+        "Tuition / Learning Budget"
+      ]
+    },
+    "benefits": [
+      "Health Insurance",
+      "Dental Insurance",
+      "Vision Insurance",
+      "401(k)",
+      "PTO / Vacation",
+      "Parental Leave",
+      "Tuition / Learning Budget"
+    ]
+  },
+  {
+    "job_title": "Machine Learning Engineer",
+    "company_name": "Multi Media LLC",
+    "job_url": "https://jobs.workable.com/view/bqkqSAJN2W35yHL1WmQ5C9/remote-machine-learning-engineer-in-united-states-at-multi-media-llc",
+    "requirement_id": "546135e4-ef37-4583-a7cd-e0146e28b040",
+    "job_description": "About Multi Media, LLC\nMulti Media LLC is the company behind Chaturbate, one of the most heavily trafficked live streaming platforms in the world. We support a global network of independent content creators and millions of real-time viewers, delivering interactive video at scale. Our infrastructure handles complex broadcasting, low-latency streaming, and high-engagement user experiences. All live, all the time.\nWe\u2019re building a platform where creators can express themselves freely and grow their communities, where viewers discover and interact with creators they\u2019re drawn to, and where the team behind it is challenged, trusted, and responsible for shaping the experience of millions of users around the world. We value people who take initiative, stay curious, and care deeply about the quality and impact of what they build.\nThe Role\nWe are looking for a Machine Learning Engineer to join our Artificial Intelligence and Machine Learning team. In this role, you will help build, maintain, and improve production grade machine learning systems that support search, recommendations, personalization, computer vision, predictive modeling, and AI-driven experimentation across a global-scale consumer platform.\nThis is a hands-on engineering role for someone who has experience building ML models and systems at scale, understands how to evaluate model performance in production contexts, and is excited to apply machine learning to practical product and business problems.\nYou\u2019ll partner closely with Data Scientists, Product, Engineering, and other cross-functional partners to translate product and business needs into scalable ML solutions that improve discovery, engagement, retention, and user experience.\nYou Will:\nBuild, maintain, and improve production machine learning systems that support search, recommendations, personalization, computer vision, and predictive modeling.\nContribute to search and discovery improvements, including ranking, filtering, relevance, exact match, boolean logic, and LLM-powered enhancements.\nDevelop and integrate machine learning models that improve recommendation quality, search accuracy, behavioral analytics, and personalized user experiences.\nWrite clean, reliable, and maintainable code for ML pipelines, model development, experimentation, and production workflows.\nWork with large-scale datasets to train, evaluate, monitor, and improve ML systems.\nCollaborate with Data Science, Product, Engineering, and other cross-functional partners to understand requirements, evaluate tradeoffs, and deliver ML solutions that create measurable product and business impact.\nParticipate in technical design discussions for ML systems, including model architecture, data pipelines, evaluation methods, deployment approaches, monitoring, and scalability.\nRequirements\nYou have:\nBachelor\u2019s degree in Computer Science, Engineering, Data Science, Mathematics, Statistics, or a similar technical field, or equivalent practical experience.\n3+ years of experience building, deploying, or maintaining machine learning systems in production environments.\nExperience building ML models or systems at scale in areas such as search, recommender systems, personalization, computer vision, predictive modeling, or user-facing ranking systems.\nExperience working on consumer-facing products where machine learning directly impacts user discovery, engagement, retention, or personalization.\nExperience working with global-scale systems, high-traffic environments, or large-scale user behavior data.\nExcellent Python programming skills.\nExperience with common machine learning libraries, frameworks, and tooling, such as scikit-learn, PyTorch, TensorFlow, XGBoost, pandas, NumPy, or similar tools.\nAbility to reason through ML system design, including data quality, model evaluation, performance tradeoffs, scalability, reliability, and monitoring.\nStrong communication skills and experience partnering with Product, Engineering, Data Science, and other cross-functional partners to deliver practical ML solutions for complex product systems.\nBonus points:\nExperience with search systems, ranking systems, recommendation engines, embeddings, or information retrieval.\nBenefits\nFair and competitive base salary\nFully Remote Optional\nHealth, Vision, Dental, and Life Insurance for you and any dependents, with policy premiums covered by the Company\nLong & Short term disability insurance\nUnlimited PTO\nAnnual Year-End Company Closure\nOptional 401k with 5% matching\n12 Paid Holidays\nPaid Lunches in-office, or if Remote, a $125/week stipend via Sharebite\nEmployee Assistance and Employee Recognition Programs\nAnd much more!\nThe Base Salary range for this position is $180,000 - $200,000 USD. This range reflects base salary only and does not include additional compensation or benefits. The range displayed reflects the minimum and maximum range for a new hire across the US for the posted position. A candidate\u2019s specific pay will be determined on a case-by-case basis and may vary based on the candidate\u2019s job-related skills, relevant education, training, experience, certifications, and abilities of the candidate, as well as other factors unique to each candidate.\nPlease note:\nAll offers from Multi Media, LLC are made only after a structured, multi-step recruiting process that includes live interviews, followed by a verbal offer before any written agreement is extended. Official communications, including from interviewers, will only come from email addresses ending in @multimediallc.com.\nMulti Media, LLC is an equal opportunity employer and strives for diversity at our company. We do not discriminate on the basis of race, religion, color, national origin, gender, sexual orientation, age, marital status, veteran status, or disability status. We encourage people from underrepresented groups to apply!",
+    "location_work_type": "United States (Remote)",
+    "scraped_at": "2026-06-02T10:44:22.752085-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Machine Learning Engineer (MLOps)",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Machine Learning Engineer (MLOps) using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Machine Learning Engineer (MLOps)"
+      ],
+      "strongest_label": "Machine Learning Engineer (MLOps)",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": false,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 0,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 0,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 0,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 2,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
+        "Data Platform Engineer": 2,
+        "Machine Learning Engineer (MLOps)": 5,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Machine Learning Engineer (MLOps)"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 5
+      },
+      "rationale": "This job was dynamically classified as Machine Learning Engineer (MLOps) using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Machine Learning Engineer (MLOps) using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Dental Insurance",
+        "Vision Insurance",
+        "401(k)",
+        "PTO / Vacation",
+        "Stipend / Allowance"
+      ]
+    },
+    "benefits": [
+      "Dental Insurance",
+      "Vision Insurance",
+      "401(k)",
+      "PTO / Vacation",
+      "Stipend / Allowance"
+    ]
+  },
+  {
+    "job_title": "Site Reliability Engineer",
+    "company_name": "Trade Nation",
+    "job_url": "https://jobs.workable.com/view/5nzYSoZbJ9EgAGhd2XHC2y/hybrid-site-reliability-engineer-in-kuala-lumpur-at-trade-nation",
+    "requirement_id": "23681d73-0159-4dd5-a6a7-78d110cc68e2",
+    "job_description": "The Site Reliability Engineer ensures the reliability, availability, and performance of web services and applications within the Python development squad. This role bridges development and operations, focusing on building scalable systems, automating processes using Python, and maintaining high service uptime. SREs work closely with Python developers, QA engineers, and product teams to embed reliability into every stage of the software lifecycle, leveraging Python as the primary language for tooling, scripting, and automation.\nWho we are\nTrade Nation is a global CFD and spread betting broker. We help traders make better decisions through clear market insights, transparent pricing and fairer approach to trading.\nSince 2014, we\u2019ve grown into a market-leading, low-cost broker with our headquarters in London and offices across Europe, South Africa, Asia-Pacific, and key offshore regions including the Caribbean and Indian Ocean. Our platform is available in 14 languages, making it accessible to traders worldwide.\nBuilt on transparency and trust, and driven by our people, our focus is simple: helping customers trade more effectively. We do that by keeping costs low, cutting unnecessary complexity and using technology to put traders first.\nYour team\nOur Kuala Lumpur office is a bright, modern space located at the heart of the city. The team here is expanding, making it our second-largest hub, and we\u2019re excited to welcome like-minded individuals to join an exciting, collaborative environment filled with professionals who have a passion for innovation and driving change.\nOur commitments to each other\nWe have each other\u2019s backs\nThere when we need each other most\nWe challenge each other\nBe more creative, more curious, more bold\nWe thrive together\nTaking our work to the next level\nWe form strong bonds\nThrough team building and social events\nWe don\u2019t judge\nInstead, we teach and are open to learning\nWe step up\nTaking ownership and supporting each other to do the same\nResponsibilities\nSystem Design & Maintenance: Design, implement, and maintain scalable, secure, and reliable systems, with Python-based services and microservices as the primary stack.\nMonitoring & Observability: Build and manage monitoring, alerting, and logging systems using Python-native tooling (e.g. Prometheus clients, OpenTelemetry SDK, structlog); proactively identify and resolve performance issues.\nAutomation & Tooling: Develop and maintain automation tools and internal libraries in Python to streamline operations, reduce manual intervention, and support CI/CD pipelines.\nCollaboration: Partner with Python development squads to ensure new features are designed with reliability in mind; conduct code reviews for reliability-critical paths; participate in Agile ceremonies.\nIncident Management: Conduct root cause analysis for incidents and implement corrective actions to prevent recurrence; participate in on-call rotations for critical systems; maintain runbooks in version-controlled Python projects.\nContinuous Improvement: Drive initiatives to improve system performance, reliability, and scalability through Python best practices, including profiling, benchmarking, and dependency management.\nRequirements\nBachelor's degree in Computer Science, Engineering, or equivalent practical experience.\nMinimum 2 years in SRE, DevOps, or similar roles.\nStrong Python proficiency \u2014 including async frameworks (asyncio, FastAPI), ORM frameworks (Django), testing (pytest), packaging (Poetry/pip), and scripting.\nExperience with cloud platforms (AWS, GCP, or Azure) and container orchestration (Kubernetes, Docker).\nFamiliarity with Infrastructure-as-Code tools such as Terraform or CloudFormation.\nStrong problem-solving skills and ability to work effectively under pressure.\nExcellent communication and collaboration skills for cross-functional teamwork.",
+    "location_work_type": "Kuala Lumpur, Malaysia (Hybrid)",
+    "scraped_at": "2026-06-04T17:06:03.966797-05:00",
+    "red_flags": [],
+    "apply_decision": "APPLY",
+    "strongest_label": "Site Reliability Engineer (SRE)",
+    "confidence_score": 85,
+    "rationale": "This job was dynamically classified as Site Reliability Engineer (SRE) using rule-based keyword signals matching the target role profile.",
+    "apply_decision_payload": {
+      "all_labels": [
+        "Site Reliability Engineer (SRE)"
+      ],
+      "strongest_label": "Site Reliability Engineer (SRE)",
+      "other_labels": [],
+      "apply_decision": "APPLY",
+      "red_flags": [],
+      "filters": {
+        "domain_specialization": false
+      },
+      "confidence_score": 85,
+      "cloud": {
+        "is_cloud_role": true,
+        "primary_cloud": "",
+        "cloud_providers": []
+      },
+      "domain_scores": {
+        "DevOps Engineer": 1,
+        "Cloud Automation Engineer": 0,
+        "Platform Engineering": 1,
+        "Cloud Infrastructure Engineer": 0,
+        "Cloud Security Engineer": 0,
+        "DevSecOps": 0,
+        "Site Reliability Engineer (SRE)": 12,
+        "Continuous Integration (CI/CD)": 1,
+        "System Engineer": 0,
+        "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
+        "Data Platform Engineer": 0,
+        "Machine Learning Engineer (MLOps)": 0,
+        "AI Platform Engineer (AIOps)": 0
+      },
+      "dominant_domains": [
+        "Site Reliability Engineer (SRE)"
+      ],
+      "dominant_signals": {},
+      "decision_trace": {
+        "top_score": 12
+      },
+      "rationale": "This job was dynamically classified as Site Reliability Engineer (SRE) using rule-based keyword signals matching the target role profile.",
+      "rationale_formatted": [
+        "This job was dynamically classified as Site Reliability Engineer (SRE) using rule-based keyword signals matching the target role profile."
+      ],
+      "benefits": [
+        "Equity / Stock Options"
+      ]
+    },
+    "benefits": [
       "Equity / Stock Options"
     ]
   }

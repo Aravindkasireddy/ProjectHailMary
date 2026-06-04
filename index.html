@@ -387,6 +387,26 @@
 
         /* Jobs Grid & Cards */
         .jobs-grid {
+            /* existing styles */
+        }
+        /* New Jobs Card Styles */
+        .new-jobs-card {
+            background: var(--bg-glass);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            box-shadow: var(--shadow-md);
+            transition: var(--transition-smooth);
+        }
+        .new-jobs-card details {
+            background: var(--bg-surface);
+            padding: 15px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+        }
+        .new-jobs-card summary {
+            color: var(--color-primary);
+        }
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
             gap: 25px;
@@ -837,7 +857,7 @@
     <div class="container">
         
         <!-- Metrics Stats Grid -->
-        <section class="stats-grid">
+        <section class="stats-grid" id="stats-grid">
             <div class="stat-card total">
                 <div class="stat-info">
                     <h3>Total Scraped</h3>
@@ -869,6 +889,18 @@
                 </div>
                 <div class="stat-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
             </div>
+        </section>
+
+        <!-- New Jobs Collapsible Card -->
+        <section id="new-jobs-section" class="new-jobs-card" style="margin-bottom: 30px; display:none;">
+            <details>
+                <summary id="new-jobs-summary" style="cursor:pointer; font-size:1.2rem; font-weight:600; color:var(--text-main);">
+                    New Jobs (<span id="new-jobs-count">0</span>)
+                </summary>
+                <div id="new-jobs-container" style="margin-top:15px;">
+                    <!-- Jobs will be rendered here -->
+                </div>
+            </details>
         </section>
 
         <!-- Toolbar controls -->
@@ -1070,6 +1102,7 @@
     <!-- Scripting Frontend Logic -->
     <script>
         let allJobs = [];
+        let newJobs = [];
         let selectedJob = null;
         let scraperTimer = null;
         let activeConfig = { target_titles: [], scheduler: { enabled: true, run_at_hour: 8, run_at_minute: 0 }, webhook_url: "" };
