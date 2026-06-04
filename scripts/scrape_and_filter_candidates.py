@@ -126,7 +126,7 @@ def load_known_hashes(workspace_path):
     approved_hashes = {}
     failed_hashes = {}
     
-    approved_path = workspace_path / "approved_jobs.json"
+    approved_path = resolve_path(workspace_path / "approved_jobs.json")
     if approved_path.exists():
         try:
             jobs = json.loads(approved_path.read_text(encoding="utf-8"))
@@ -139,7 +139,7 @@ def load_known_hashes(workspace_path):
         except Exception as e:
             print(f"Error loading approved hashes: {e}")
             
-    failed_path = workspace_path / "failed_candidate_jobs.json"
+    failed_path = resolve_path(workspace_path / "failed_candidate_jobs.json")
     if failed_path.exists():
         try:
             jobs = json.loads(failed_path.read_text(encoding="utf-8"))
@@ -161,6 +161,16 @@ if str(_repo_root) not in sys.path:
 from jobsearch_paths import workspace_root
 
 WORKSPACE = workspace_root()
+
+def resolve_path(base_path):
+    import os
+    email = os.environ.get("MAAS_USER_EMAIL")
+    if not email:
+        return base_path
+    import re
+    suffix = re.sub(r'[^a-zA-Z0-9_.-]', '_', email)
+    p = Path(base_path)
+    return p.parent / f"{p.stem}_{suffix}{p.suffix}"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -535,71 +545,163 @@ async def scrape_workable(client, url):
         parsed = urlparse(url)
         path_parts = [p for p in parsed.path.split('/') if p]
         
-        if len(path_parts) >= 3 and path_parts[1] == 'j':
+        # 1. Standard apply.workable.com scraping
+        company_slug = "unknown"
+        job_id = "unknown"
+        is_view_url = False
+        
+        if 'jobs.workable.com' in parsed.netloc and len(path_parts) >= 2 and path_parts[0] == 'view':
+            job_id = path_parts[1]
+            is_view_url = True
+        elif len(path_parts) >= 3 and path_parts[1] == 'j':
             company_slug = path_parts[0]
             job_id = path_parts[2]
-        else:
-            if len(path_parts) >= 2 and path_parts[0] == 'j':
-                company_slug = "unknown"
-                job_id = path_parts[1]
-            else:
-                return None
-                
-        company_name = company_slug.replace('-', ' ').title()
-        if company_slug != "unknown":
-            try:
-                acct_url = f"https://apply.workable.com/api/v1/accounts/{company_slug}"
-                acct_res = await client.get(acct_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-                if acct_res.status_code == 200:
-                    company_name = acct_res.json().get("name", company_name)
-            except Exception:
-                pass
-                
-        api_url = f"https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{job_id}"
-        response = await client.get(api_url, headers=headers, timeout=10)
-        if response.status_code != 200:
+        elif len(path_parts) >= 2 and path_parts[0] == 'j':
+            company_slug = "unknown"
+            job_id = path_parts[1]
+            
+        if not is_view_url and (company_slug == "unknown" and job_id == "unknown"):
             return None
             
-        data = response.json()
-        title = data.get("title", "Unknown Title")
-        req_id = data.get("shortcode", job_id)
-        
-        desc_html = data.get("description", "")
-        reqs_html = data.get("requirements", "")
-        benefits_html = data.get("benefits", "")
-        
-        combined_html = f"<div>{desc_html}</div>"
-        if reqs_html:
-            combined_html += f"<div><h3>Requirements</h3>{reqs_html}</div>"
-        if benefits_html:
-            combined_html += f"<div><h3>Benefits</h3>{benefits_html}</div>"
-            
-        description = clean_text(combined_html)
-        
-        loc_data = data.get("location", {})
-        city = loc_data.get("city", "")
-        country = loc_data.get("country", "")
-        workplace = data.get("workplace", "remote")
-        
-        loc_str = ""
-        if city:
-            loc_str += city
-        if country:
-            if loc_str:
-                loc_str += f", {country}"
-            else:
-                loc_str = country
-        if not loc_str:
-            loc_str = "Remote"
-            
-        return {
-            "job_title": title,
-            "company_name": company_name,
-            "job_url": url,
-            "requirement_id": req_id,
-            "job_description": description.strip(),
-            "location_work_type": f"{loc_str} ({workplace.capitalize()})"
-        }
+        if is_view_url:
+            api_url = f"https://jobs.workable.com/api/v1/jobs/{job_id}"
+            response = await client.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                title = data.get("title", "Unknown Title")
+                req_id = data.get("id", job_id)
+                company = data.get("company", {})
+                company_name = company.get("title", "Unknown Company")
+                
+                desc_html = data.get("description", "")
+                reqs_html = data.get("requirementsSection", "")
+                benefits_html = data.get("benefitsSection", "")
+                
+                combined_html = f"<div>{desc_html}</div>"
+                if reqs_html:
+                    combined_html += f"<div><h3>Requirements</h3>{reqs_html}</div>"
+                if benefits_html:
+                    combined_html += f"<div><h3>Benefits</h3>{benefits_html}</div>"
+                    
+                description = clean_text(combined_html)
+                
+                loc_data = data.get("location", {})
+                city = loc_data.get("city", "")
+                country = loc_data.get("countryName", "")
+                workplace = data.get("workplace", "remote")
+                
+                loc_str = ""
+                if city:
+                    loc_str += city
+                if country:
+                    if loc_str:
+                        loc_str += f", {country}"
+                    else:
+                        loc_str = country
+                if not loc_str:
+                    loc_str = "Remote"
+                    
+                return {
+                    "job_title": title,
+                    "company_name": company_name,
+                    "job_url": url,
+                    "requirement_id": req_id,
+                    "job_description": description.strip(),
+                    "location_work_type": f"{loc_str} ({workplace.capitalize()})"
+                }
+        else:
+            company_name = company_slug.replace('-', ' ').title()
+            if company_slug != "unknown":
+                try:
+                    acct_url = f"https://apply.workable.com/api/v1/accounts/{company_slug}"
+                    acct_res = await client.get(acct_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                    if acct_res.status_code == 200:
+                        company_name = acct_res.json().get("name", company_name)
+                except Exception:
+                    pass
+                    
+            api_url = f"https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{job_id}"
+            response = await client.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                title = data.get("title", "Unknown Title")
+                req_id = data.get("shortcode", job_id)
+                
+                desc_html = data.get("description", "")
+                reqs_html = data.get("requirements", "")
+                benefits_html = data.get("benefits", "")
+                
+                combined_html = f"<div>{desc_html}</div>"
+                if reqs_html:
+                    combined_html += f"<div><h3>Requirements</h3>{reqs_html}</div>"
+                if benefits_html:
+                    combined_html += f"<div><h3>Benefits</h3>{benefits_html}</div>"
+                    
+                description = clean_text(combined_html)
+                
+                loc_data = data.get("location", {})
+                city = loc_data.get("city", "")
+                country = loc_data.get("country", "")
+                workplace = data.get("workplace", "remote")
+                
+                loc_str = ""
+                if city:
+                    loc_str += city
+                if country:
+                    if loc_str:
+                        loc_str += f", {country}"
+                    else:
+                        loc_str = country
+                if not loc_str:
+                    loc_str = "Remote"
+                    
+                return {
+                    "job_title": title,
+                    "company_name": company_name,
+                    "job_url": url,
+                    "requirement_id": req_id,
+                    "job_description": description.strip(),
+                    "location_work_type": f"{loc_str} ({workplace.capitalize()})"
+                }
+
+        # 2. HTML JSON-LD Fallback (Extremely resilient for any Workable URL style)
+        html_response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, timeout=10)
+        if html_response.status_code == 200:
+            soup = BeautifulSoup(html_response.text, 'html.parser')
+            script = soup.find('script', type='application/ld+json')
+            if script:
+                import json
+                data = json.loads(script.string)
+                title = data.get("title", "Unknown Title")
+                desc_html = data.get("description", "")
+                description = clean_text(desc_html)
+                company_name = data.get("hiringOrganization", {}).get("name", "Unknown Company")
+                req_id = data.get("identifier", {}).get("value", job_id)
+                
+                loc_data = data.get("jobLocation", {}).get("address", {})
+                city = loc_data.get("addressLocality", "")
+                country = loc_data.get("addressCountry", "")
+                
+                loc_str = ""
+                if city:
+                    loc_str += city
+                if country:
+                    if loc_str:
+                        loc_str += f", {country}"
+                    else:
+                        loc_str = country
+                if not loc_str:
+                    loc_str = "Remote"
+                    
+                return {
+                    "job_title": title,
+                    "company_name": company_name,
+                    "job_url": url,
+                    "requirement_id": req_id,
+                    "job_description": description.strip(),
+                    "location_work_type": loc_str
+                }
+        return None
     except Exception as e:
         print(f"Failed to scrape Workable: {e}")
         return None
@@ -955,7 +1057,7 @@ async def process_single_job(semaphore, client, browser, job, i, total_jobs):
         return "skip", None
 
 async def main():
-    input_path = str(WORKSPACE / "scraped_jobs.json")
+    input_path = str(resolve_path(WORKSPACE / "scraped_jobs.json"))
     with open(input_path, 'r') as f:
         jobs = json.load(f)
         
@@ -1030,10 +1132,10 @@ async def main():
                 
     print(f"\nProcessing complete.\nPassed jobs: {len(passed_jobs)}\nFailed jobs: {len(failed_jobs)}", flush=True)
     
-    with open(str(WORKSPACE / "active_candidate_jobs.json"), "w") as f:
+    with open(str(resolve_path(WORKSPACE / "active_candidate_jobs.json")), "w") as f:
         json.dump(passed_jobs, f, indent=2)
         
-    with open(str(WORKSPACE / "failed_candidate_jobs.json"), "w") as f:
+    with open(str(resolve_path(WORKSPACE / "failed_candidate_jobs.json")), "w") as f:
         json.dump(failed_jobs, f, indent=2)
 
 if __name__ == '__main__':

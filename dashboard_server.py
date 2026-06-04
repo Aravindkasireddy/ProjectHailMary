@@ -6,8 +6,9 @@ import urllib.parse
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, date
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
 import requests
 
@@ -22,6 +23,115 @@ from services.resume_service import generate_resume
 WORKSPACE_DIR = str(workspace_root())
 load_dotenv(dotenv_path=os.path.join(WORKSPACE_DIR, ".env"))
 
+# Authentication passwords
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+USER_PASSWORD = os.environ.get("USER_PASSWORD", "user123")
+if ADMIN_PASSWORD == "admin123" and USER_PASSWORD == "user123":
+    print("WARNING: Using default fallback credentials ('admin123' and 'user123'). Please set ADMIN_PASSWORD and USER_PASSWORD in your .env file.")
+
+# In-memory session store: token -> dict mapping {"role": role, "email": email}
+active_sessions = {}
+
+# Password hashing helpers
+import hashlib
+import secrets
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    pw_hash = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
+    return f"{salt}:{pw_hash}"
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, pw_hash = stored_hash.split(":", 1)
+        calc_hash = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
+        return secrets.compare_digest(calc_hash, pw_hash)
+    except Exception:
+        return False
+
+# Database user helpers
+def verify_user_credentials(email, password):
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    import sqlite3
+    ensure_notion_mirror_schema(WORKSPACE_DIR)
+    db_file = db_path(WORKSPACE_DIR)
+    
+    conn = sqlite3.connect(str(db_file))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    created_at = datetime.utcnow().isoformat()
+    
+    # Verify/Seed admin@hailmary.ai
+    cursor.execute("SELECT password_hash FROM users WHERE email = ?", ("admin@hailmary.ai",))
+    admin_row = cursor.fetchone()
+    if not admin_row:
+        admin_hash = hash_password(ADMIN_PASSWORD)
+        conn.execute("INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                     ("admin@hailmary.ai", admin_hash, "admin", created_at))
+        conn.commit()
+    elif not verify_password(ADMIN_PASSWORD, admin_row["password_hash"]):
+        admin_hash = hash_password(ADMIN_PASSWORD)
+        conn.execute("UPDATE users SET password_hash = ? WHERE email = ?", (admin_hash, "admin@hailmary.ai"))
+        conn.commit()
+
+    # Verify/Seed user@hailmary.ai
+    cursor.execute("SELECT password_hash FROM users WHERE email = ?", ("user@hailmary.ai",))
+    user_row = cursor.fetchone()
+    if not user_row:
+        user_hash = hash_password(USER_PASSWORD)
+        conn.execute("INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                     ("user@hailmary.ai", user_hash, "user", created_at))
+        conn.commit()
+    elif not verify_password(USER_PASSWORD, user_row["password_hash"]):
+        user_hash = hash_password(USER_PASSWORD)
+        conn.execute("UPDATE users SET password_hash = ? WHERE email = ?", (user_hash, "user@hailmary.ai"))
+        conn.commit()
+        
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+    user = cursor.fetchone()
+    conn.close()
+    
+    if user and verify_password(password, user["password_hash"]):
+        return {"email": user["email"], "role": user["role"]}
+    return None
+
+def register_user(email, password, role="user"):
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    import sqlite3
+    ensure_notion_mirror_schema(WORKSPACE_DIR)
+    db_file = db_path(WORKSPACE_DIR)
+    
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT 1 FROM users WHERE email = ?", (email,))
+    if cursor.fetchone():
+        conn.close()
+        return False, "Email already registered"
+        
+    pw_hash = hash_password(password)
+    created_at = datetime.utcnow().isoformat()
+    try:
+        conn.execute("INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                     (email, pw_hash, role, created_at))
+        conn.commit()
+        conn.close()
+        return True, "User registered successfully"
+    except Exception as e:
+        conn.close()
+        return False, str(e)
+
+# Filename scoping helper
+def resolve_path(base_path, email=None):
+    if not email:
+        return base_path
+    suffix = re.sub(r'[^a-zA-Z0-9_.-]', '_', email)
+    dir_name, file_name = os.path.split(base_path)
+    name, ext = os.path.splitext(file_name)
+    scoped_file_name = f"{name}_{suffix}{ext}"
+    return os.path.join(dir_name, scoped_file_name)
+
 # HTTP API + dashboard backend (default 8080). Override if port is busy:
 #   JOBSEARCH_DASHBOARD_PORT=8081 python3 dashboard_server.py
 PORT = int(os.environ.get("JOBSEARCH_DASHBOARD_PORT", "8080"))
@@ -32,23 +142,33 @@ FAILED_PATH = os.path.join(WORKSPACE_DIR, "failed_candidate_jobs.json")
 ACTIVE_PATH = os.path.join(WORKSPACE_DIR, "active_candidate_jobs.json")
 SYNCED_PATH = os.path.join(WORKSPACE_DIR, "synced_jobs.json")
 
-# Global scraper status
-scraper_state = {
-    "status": "idle",
-    "message": "Scraper is ready.",
-    "last_run": None,
-    "last_error": None,
-    "last_metrics": {},
-}
+# User-scoped scraper and stale check status stores
+scraper_states = {}
+stale_check_states = {}
 
-# Global stale check status
-stale_check_state = {
-    "status": "idle",
-    "progress": 0,
-    "total": 0,
-    "completed": 0,
-    "stale_found": 0,
-}
+def get_scraper_state(email):
+    email_key = email or "admin@hailmary.ai"
+    if email_key not in scraper_states:
+        scraper_states[email_key] = {
+            "status": "idle",
+            "message": "Scraper is ready.",
+            "last_run": None,
+            "last_error": None,
+            "last_metrics": {},
+        }
+    return scraper_states[email_key]
+
+def get_stale_check_state(email):
+    email_key = email or "admin@hailmary.ai"
+    if email_key not in stale_check_states:
+        stale_check_states[email_key] = {
+            "status": "idle",
+            "progress": 0,
+            "total": 0,
+            "completed": 0,
+            "stale_found": 0,
+        }
+    return stale_check_states[email_key]
 
 def check_url_stale(url):
     headers = {
@@ -93,25 +213,26 @@ def check_url_stale(url):
         pass
     return False
 
-def stale_check_worker():
-    global stale_check_state
-    stale_check_state["status"] = "running"
-    stale_check_state["progress"] = 0
-    stale_check_state["total"] = 0
-    stale_check_state["completed"] = 0
-    stale_check_state["stale_found"] = 0
+def stale_check_worker(email=None):
+    state = get_stale_check_state(email)
+    state["status"] = "running"
+    state["progress"] = 0
+    state["total"] = 0
+    state["completed"] = 0
+    state["stale_found"] = 0
     
+    approved_path = resolve_path(APPROVED_PATH, email)
     try:
-        if not os.path.exists(APPROVED_PATH):
-            stale_check_state["status"] = "idle"
+        if not os.path.exists(approved_path):
+            state["status"] = "idle"
             return
             
-        with open(APPROVED_PATH, 'r') as f:
+        with open(approved_path, 'r') as f:
             approved_jobs = json.load(f)
             
-        stale_check_state["total"] = len(approved_jobs)
+        state["total"] = len(approved_jobs)
         if not approved_jobs:
-            stale_check_state["status"] = "idle"
+            state["status"] = "idle"
             return
             
         updated_jobs = []
@@ -123,52 +244,73 @@ def stale_check_worker():
             
             if is_stale:
                 job["stale"] = True
-                stale_check_state["stale_found"] += 1
+                state["stale_found"] += 1
             else:
                 job["stale"] = False
                 
             updated_jobs.append(job)
-            stale_check_state["completed"] = idx + 1
-            stale_check_state["progress"] = int((idx + 1) / len(approved_jobs) * 100)
+            state["completed"] = idx + 1
+            state["progress"] = int((idx + 1) / len(approved_jobs) * 100)
             time.sleep(1)
             
-        with open(APPROVED_PATH, 'w') as f:
+        with open(approved_path, 'w') as f:
             json.dump(updated_jobs, f, indent=2)
             
     except Exception as e:
         print(f"Error in stale check worker: {e}")
     finally:
-        stale_check_state["status"] = "idle"
+        state["status"] = "idle"
 
-def archive_job_on_disk(url):
+def archive_job_on_disk(url, email=None):
     if not url:
         return False, "Missing job_url"
         
     approved = []
-    if os.path.exists(APPROVED_PATH):
+    approved_path = resolve_path(APPROVED_PATH, email)
+    if os.path.exists(approved_path):
         try:
-            with open(APPROVED_PATH, 'r') as f:
+            with open(approved_path, 'r') as f:
                 approved = json.load(f)
         except Exception:
             pass
             
     failed = []
-    if os.path.exists(FAILED_PATH):
+    failed_path = resolve_path(FAILED_PATH, email)
+    if os.path.exists(failed_path):
         try:
-            with open(FAILED_PATH, 'r') as f:
+            with open(failed_path, 'r') as f:
                 failed = json.load(f)
         except Exception:
             pass
             
     active = []
-    if os.path.exists(ACTIVE_PATH):
+    active_path = resolve_path(ACTIVE_PATH, email)
+    if os.path.exists(active_path):
         try:
-            with open(ACTIVE_PATH, 'r') as f:
+            with open(active_path, 'r') as f:
                 active = json.load(f)
         except Exception:
             pass
             
     found = False
+    
+    # Check SQLite database mirror first
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    try:
+        ensure_notion_mirror_schema(WORKSPACE_DIR)
+        db_file = db_path(WORKSPACE_DIR)
+        if os.path.exists(db_file):
+            import sqlite3
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
+            row = cursor.execute("SELECT 1 FROM notion_job_reports WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai')).fetchone()
+            if row:
+                conn.execute("UPDATE notion_job_reports SET archived = 1 WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai'))
+                conn.commit()
+                found = True
+            conn.close()
+    except Exception as e:
+        print(f"Error archiving job in SQLite mirror: {e}")
     
     for j in approved:
         if j.get("job_url") == url:
@@ -189,23 +331,25 @@ def archive_job_on_disk(url):
         return False, "Job not found in any database."
         
     try:
-        with open(APPROVED_PATH, 'w') as f:
+        with open(approved_path, 'w') as f:
             json.dump(approved, f, indent=2)
-        with open(FAILED_PATH, 'w') as f:
+        with open(failed_path, 'w') as f:
             json.dump(failed, f, indent=2)
-        with open(ACTIVE_PATH, 'w') as f:
+        with open(active_path, 'w') as f:
             json.dump(active, f, indent=2)
-        return True, "Job successfully archived."
     except Exception as e:
-        return False, f"Failed to save changes: {str(e)}"
+        return False, f"Failed to save archived state: {e}"
+        
+    return True, "Job archived successfully."
 
-def load_config():
-    if os.path.exists(CONFIG_PATH):
+def load_config(email=None):
+    path = resolve_path(CONFIG_PATH, email)
+    if os.path.exists(path):
         try:
-            with open(CONFIG_PATH, 'r') as f:
+            with open(path, 'r') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading config.json: {e}")
+            print(f"Error loading config file {path}: {e}")
     # Default config
     return {
         "target_titles": [
@@ -238,25 +382,27 @@ def load_config():
         },
     }
 
-def save_config(cfg):
+def save_config(cfg, email=None):
     try:
         cfg = dict(cfg)
         if os.environ.get("JOBSEARCH_WEBHOOK_URL", "").strip():
             cfg.pop("webhook_url", None)
-        with open(CONFIG_PATH, 'w') as f:
+        path = resolve_path(CONFIG_PATH, email)
+        with open(path, 'w') as f:
             json.dump(cfg, f, indent=2)
         return True
     except Exception as e:
-        print(f"Error saving config.json: {e}")
+        print(f"Error saving config file: {e}")
         return False
 
-def load_policy_config():
-    if os.path.exists(POLICY_CONFIG_PATH):
+def load_policy_config(email=None):
+    path = resolve_path(POLICY_CONFIG_PATH, email)
+    if os.path.exists(path):
         try:
-            with open(POLICY_CONFIG_PATH, 'r') as f:
+            with open(path, 'r') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading policy_config.json: {e}")
+            print(f"Error loading policy config {path}: {e}")
     return {
         "max_experience_years": 8,
         "min_salary_annual": 80000,
@@ -266,13 +412,14 @@ def load_policy_config():
         "custom_red_flag_keywords": []
     }
 
-def save_policy_config(cfg):
+def save_policy_config(cfg, email=None):
     try:
-        with open(POLICY_CONFIG_PATH, 'w') as f:
+        path = resolve_path(POLICY_CONFIG_PATH, email)
+        with open(path, 'w') as f:
             json.dump(cfg, f, indent=2)
         return True
     except Exception as e:
-        print(f"Error saving policy_config.json: {e}")
+        print(f"Error saving policy config: {e}")
         return False
 
 def rebuild_classifier_prompt(config):
@@ -394,38 +541,47 @@ pure scrum master / delivery coordination without hands-on engineering scope
     except Exception as e:
         return False, f"Rebuild failed: {str(e)}"
 
-def load_synced_jobs():
-    if os.path.exists(SYNCED_PATH):
+def load_synced_jobs(email=None):
+    path = resolve_path(SYNCED_PATH, email)
+    if os.path.exists(path):
         try:
-            with open(SYNCED_PATH, 'r') as f:
+            with open(path, 'r') as f:
                 return json.load(f)
         except Exception:
             return {}
     return {}
 
-def mark_job_synced(url, page_id):
-    synced = load_synced_jobs()
+def mark_job_synced(url, page_id, email=None):
+    synced = load_synced_jobs(email)
     synced[url] = {
         "page_id": page_id,
         "synced_at": datetime.utcnow().isoformat()
     }
     try:
-        with open(SYNCED_PATH, 'w') as f:
+        path = resolve_path(SYNCED_PATH, email)
+        with open(path, 'w') as f:
             json.dump(synced, f, indent=2)
     except Exception as e:
         print(f"Error saving synced jobs: {e}")
 
-_cached_jobs_data = None
+_cached_jobs_data = {}
 _cached_jobs_mtimes = {}
 
-def load_all_jobs():
+def load_all_jobs(email=None):
     global _cached_jobs_data, _cached_jobs_mtimes
     
+    email_key = email or "admin@hailmary.ai"
+    
+    approved_path = resolve_path(APPROVED_PATH, email)
+    active_path = resolve_path(ACTIVE_PATH, email)
+    failed_path = resolve_path(FAILED_PATH, email)
+    synced_path = resolve_path(SYNCED_PATH, email)
+    
     paths_to_track = {
-        "approved": APPROVED_PATH,
-        "active": ACTIVE_PATH,
-        "failed": FAILED_PATH,
-        "synced": SYNCED_PATH
+        "approved": approved_path,
+        "active": active_path,
+        "failed": failed_path,
+        "synced": synced_path
     }
     
     current_mtimes = {}
@@ -435,30 +591,115 @@ def load_all_jobs():
         else:
             current_mtimes[key] = 0.0
             
-    if _cached_jobs_data is not None and _cached_jobs_mtimes == current_mtimes:
-        return _cached_jobs_data
-
+    if email_key in _cached_jobs_data and _cached_jobs_mtimes.get(email_key) == current_mtimes:
+        return _cached_jobs_data[email_key]
     jobs = []
     approved_urls = set()
-    synced_jobs = load_synced_jobs()
+    synced_jobs = load_synced_jobs(email)
     
     # Import salary extractor helper
     try:
         from salary_extractor import extract_salary
     except ImportError:
         extract_salary = None
+
+    # Load synced jobs from local SQLite database (Notion mirror)
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    try:
+        ensure_notion_mirror_schema(WORKSPACE_DIR)
+        db_file = db_path(WORKSPACE_DIR)
+        if os.path.exists(db_file):
+            import sqlite3
+            conn = sqlite3.connect(str(db_file))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM notion_job_reports WHERE user_email = ?", (email or 'admin@hailmary.ai',))
+            rows = cursor.fetchall()
+            for row in rows:
+                url = row['job_url']
+                if not url:
+                    continue
+                
+                red_flags = []
+                if row['red_flags_json']:
+                    try:
+                        red_flags = json.loads(row['red_flags_json'])
+                    except Exception:
+                        pass
+                
+                payload = {}
+                if row['apply_decision_payload_json']:
+                    try:
+                        payload = json.loads(row['apply_decision_payload_json'])
+                    except Exception:
+                        pass
+                
+                confidence = row['confidence_score']
+                if confidence is not None:
+                    if confidence <= 1.0:
+                        confidence = confidence * 100.0
+                else:
+                    confidence = 100.0
+
+                j = {
+                    "job_title": row['job_title'] or "Unknown Title",
+                    "company_name": row['company_name'] or "Unknown",
+                    "job_url": url,
+                    "requirement_id": row['requirement_id'] or "Unknown",
+                    "job_description": row['job_description'] or "",
+                    "location_work_type": row['location_work_type'] or "Remote",
+                    "scraped_at": row['date_added'] or datetime.utcnow().strftime("%Y-%m-%d"),
+                    "red_flags": red_flags,
+                    "apply_decision": row['apply_decision'] or "APPLY",
+                    "strongest_label": row['strongest_label'] or "DevOps Engineer",
+                    "confidence_score": confidence,
+                    "rationale": row['rationale'] or "",
+                    "apply_decision_payload": payload,
+                    "benefits": payload.get("benefits", []),
+                    "status": "approved",
+                    "synced": True,
+                    "synced_data": {
+                        "page_id": row['notion_page_id'],
+                        "synced_at": row['synced_at']
+                    },
+                    "source_file": "notion_job_reports.db",
+                    "pipeline_stage": row['pipeline_stage'] or 'Approved',
+                    "min_salary": row['min_salary'],
+                    "max_salary": row['max_salary'],
+                    "is_hourly": bool(row['is_hourly']),
+                    "salary_text": row['salary_text'],
+                    "archived": bool(row['archived'])
+                }
+                
+                # Retroactive salary parsing
+                if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                    sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
+                    if sal_info:
+                        j.update(sal_info)
+                        
+                approved_urls.add(url)
+                jobs.append(j)
+            conn.close()
+    except Exception as e:
+        print(f"Error loading jobs from SQLite mirror: {e}")
     
     # Load approved jobs
-    if os.path.exists(APPROVED_PATH):
+    approved_path = resolve_path(APPROVED_PATH, email)
+    if os.path.exists(approved_path):
         try:
-            with open(APPROVED_PATH, 'r') as f:
+            with open(approved_path, 'r') as f:
                 app_jobs = json.load(f)
                 for j in app_jobs:
                     url = j.get('job_url')
+                    if url in approved_urls:
+                        continue
                     j['status'] = 'approved'
                     j['synced'] = url in synced_jobs
                     j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'approved_jobs.json'
+                    
+                    if 'archived' not in j:
+                        j['archived'] = False
                     
                     # Set default pipeline stage
                     if 'pipeline_stage' not in j:
@@ -477,9 +718,10 @@ def load_all_jobs():
             print(f"Error reading approved jobs: {e}")
 
     # Load active candidates
-    if os.path.exists(ACTIVE_PATH):
+    active_path = resolve_path(ACTIVE_PATH, email)
+    if os.path.exists(active_path):
         try:
-            with open(ACTIVE_PATH, 'r') as f:
+            with open(active_path, 'r') as f:
                 act_jobs = json.load(f)
                 for j in act_jobs:
                     url = j.get('job_url')
@@ -516,9 +758,10 @@ def load_all_jobs():
             print(f"Error reading active candidates: {e}")
 
     # Load failed candidate jobs (failed pre-screen)
-    if os.path.exists(FAILED_PATH):
+    failed_path = resolve_path(FAILED_PATH, email)
+    if os.path.exists(failed_path):
         try:
-            with open(FAILED_PATH, 'r') as f:
+            with open(failed_path, 'r') as f:
                 fail_jobs = json.load(f)
                 for j in fail_jobs:
                     url = j.get('job_url')
@@ -558,13 +801,13 @@ def load_all_jobs():
     jobs = group_and_flag_duplicates(jobs)
 
     # Cache results
-    _cached_jobs_data = jobs
-    _cached_jobs_mtimes = current_mtimes
+    _cached_jobs_data[email_key] = jobs
+    _cached_jobs_mtimes[email_key] = current_mtimes
 
     return jobs
 
-def calculate_analytics():
-    jobs = load_all_jobs()
+def calculate_analytics(email=None):
+    jobs = load_all_jobs(email)
     total_jobs = len(jobs)
     
     approved_count = 0
@@ -641,31 +884,35 @@ def calculate_analytics():
         "rejection_reasons": rejection_reasons
     }
 
-def override_job_on_disk(updated_job):
+def override_job_on_disk(updated_job, email=None):
     url = updated_job.get("job_url")
     if not url:
         return False, "Missing job_url"
         
+    approved_path = resolve_path(APPROVED_PATH, email)
+    failed_path = resolve_path(FAILED_PATH, email)
+    active_path = resolve_path(ACTIVE_PATH, email)
+    
     approved = []
-    if os.path.exists(APPROVED_PATH):
+    if os.path.exists(approved_path):
         try:
-            with open(APPROVED_PATH, 'r') as f:
+            with open(approved_path, 'r') as f:
                 approved = json.load(f)
         except Exception:
             pass
             
     failed = []
-    if os.path.exists(FAILED_PATH):
+    if os.path.exists(failed_path):
         try:
-            with open(FAILED_PATH, 'r') as f:
+            with open(failed_path, 'r') as f:
                 failed = json.load(f)
         except Exception:
             pass
             
     active = []
-    if os.path.exists(ACTIVE_PATH):
+    if os.path.exists(active_path):
         try:
-            with open(ACTIVE_PATH, 'r') as f:
+            with open(active_path, 'r') as f:
                 active = json.load(f)
         except Exception:
             pass
@@ -767,11 +1014,11 @@ def override_job_on_disk(updated_job):
         msg = "Job successfully rejected and saved."
         
     try:
-        with open(APPROVED_PATH, 'w') as f:
+        with open(approved_path, 'w') as f:
             json.dump(approved, f, indent=2)
-        with open(FAILED_PATH, 'w') as f:
+        with open(failed_path, 'w') as f:
             json.dump(failed, f, indent=2)
-        with open(ACTIVE_PATH, 'w') as f:
+        with open(active_path, 'w') as f:
             json.dump(active, f, indent=2)
         return True, msg
     except Exception as e:
@@ -937,7 +1184,7 @@ def check_job_exists_in_notion(job, token, database_id):
     return False, None
 
 
-def _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate):
+def _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate, email=None):
     try:
         upsert_notion_job_report(
             job,
@@ -945,16 +1192,17 @@ def _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate):
             database_id,
             was_duplicate=was_duplicate,
             workspace=WORKSPACE_DIR,
+            user_email=email or 'admin@hailmary.ai',
         )
     except Exception as e:
         print(f"SQLite Notion mirror warning: {e}")
 
 
-def sync_job_to_notion(job, token, database_id):
+def sync_job_to_notion(job, token, database_id, email=None):
     # Check duplicate first
     exists, page_id = check_job_exists_in_notion(job, token, database_id)
     if exists:
-        _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=True)
+        _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=True, email=email)
         return True, page_id, None
 
     url = "https://api.notion.com/v1/pages"
@@ -977,7 +1225,7 @@ def sync_job_to_notion(job, token, database_id):
     if response.status_code == 200:
         data = response.json()
         page_id = data.get("id")
-        _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False)
+        _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False, email=email)
         return True, page_id, None
     else:
         # Fallback formatting
@@ -994,14 +1242,14 @@ def sync_job_to_notion(job, token, database_id):
         if response.status_code == 200:
             data = response.json()
             page_id = data.get("id")
-            _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False)
+            _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False, email=email)
             return True, page_id, None
         else:
             return False, None, response.text
 
 # Webhook Notification Dispatcher
-def send_webhook_alert(job, page_id, custom_msg=None):
-    cfg = load_config()
+def send_webhook_alert(job, page_id, custom_msg=None, email=None):
+    cfg = load_config(email)
     webhook_url = effective_webhook_url(cfg)
     if not webhook_url:
         return False
@@ -1126,16 +1374,21 @@ def _append_pipeline_log(message):
 
 
 # Scraper worker thread
-def scraper_worker(past_24h_only=False):
-    global scraper_state
-    scraper_state["status"] = "running"
-    scraper_state["message"] = "Starting search query sourcing..."
-    scraper_state["last_error"] = None
-    scraper_state["last_metrics"] = {}
+def scraper_worker(email=None, past_24h_only=False):
+    state = get_scraper_state(email)
+    state["status"] = "running"
+    state["message"] = "Sourcing jobs..."
+    state["last_error"] = None
+    state["new_jobs"] = []
+    start_time = datetime.utcnow().isoformat()
+    state["start_time"] = start_time
 
     def run_step(cmd, label):
         _append_pipeline_log(f"START {label}: {' '.join(cmd)}")
-        p = subprocess.run(cmd, capture_output=True, text=True, cwd=WORKSPACE_DIR)
+        env = os.environ.copy()
+        if email:
+            env["MAAS_USER_EMAIL"] = email
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=WORKSPACE_DIR, env=env)
         tail_out = (p.stdout or "")[-12000:]
         tail_err = (p.stderr or "")[-8000:]
         _append_pipeline_log(f"END {label} rc={p.returncode}\n--- stdout ---\n{tail_out}\n--- stderr ---\n{tail_err}")
@@ -1147,125 +1400,150 @@ def scraper_worker(past_24h_only=False):
             cmd.append("--past-24h")
         p1 = run_step(cmd, "find_and_scrape_jobs")
         if p1.returncode != 0:
-            scraper_state["status"] = "failed"
+            state["status"] = "failed"
             err = (p1.stderr or p1.stdout or "").strip() or "Unknown error"
-            scraper_state["message"] = f"Sourcing script failed: {err[:500]}"
-            scraper_state["last_error"] = err[:4000]
+            state["message"] = f"Sourcing script failed: {err[:500]}"
+            state["last_error"] = err[:4000]
             return
 
-        scraper_state["message"] = "Running validation and filtering..."
+        state["message"] = "Running validation and filtering..."
         filter_script = os.path.join(WORKSPACE_DIR, "scripts", "scrape_and_filter_candidates.py")
         p2 = run_step([sys.executable, filter_script], "scrape_and_filter_candidates")
         if p2.returncode != 0:
-            scraper_state["status"] = "failed"
+            state["status"] = "failed"
             err = (p2.stderr or p2.stdout or "").strip() or "Unknown error"
-            scraper_state["message"] = f"Filter script failed: {err[:500]}"
-            scraper_state["last_error"] = err[:4000]
+            state["message"] = f"Filter script failed: {err[:500]}"
+            state["last_error"] = err[:4000]
             return
 
-        scraper_state["message"] = "Applying policy classification..."
+        state["message"] = "Applying policy classification..."
         classify_script = os.path.join(WORKSPACE_DIR, "scripts", "classify_and_save.py")
         p3 = run_step([sys.executable, classify_script], "classify_and_save")
         if p3.returncode != 0:
-            scraper_state["status"] = "failed"
+            state["status"] = "failed"
             err = (p3.stderr or p3.stdout or "").strip() or "Unknown error"
-            scraper_state["message"] = f"Classifier failed: {err[:500]}"
-            scraper_state["last_error"] = err[:4000]
+            state["message"] = f"Classifier failed: {err[:500]}"
+            state["last_error"] = err[:4000]
             return
 
         metrics = {}
+        sj = resolve_path(os.path.join(WORKSPACE_DIR, "scraped_jobs.json"), email)
+        approved_path = resolve_path(APPROVED_PATH, email)
+        active_path = resolve_path(ACTIVE_PATH, email)
+        failed_path = resolve_path(FAILED_PATH, email)
         try:
-            sj = os.path.join(WORKSPACE_DIR, "scraped_jobs.json")
             if os.path.exists(sj):
                 with open(sj, encoding="utf-8") as f:
                     metrics["scraped_jobs_count"] = len(json.load(f))
         except Exception:
             pass
         try:
-            if os.path.exists(APPROVED_PATH):
-                with open(APPROVED_PATH, encoding="utf-8") as f:
+            if os.path.exists(approved_path):
+                with open(approved_path, encoding="utf-8") as f:
                     metrics["approved_jobs_count"] = len(json.load(f))
         except Exception:
             pass
         try:
-            if os.path.exists(ACTIVE_PATH):
-                with open(ACTIVE_PATH, encoding="utf-8") as f:
+            if os.path.exists(active_path):
+                with open(active_path, encoding="utf-8") as f:
                     metrics["active_candidates_count"] = len(json.load(f))
         except Exception:
             pass
         try:
-            if os.path.exists(FAILED_PATH):
-                with open(FAILED_PATH, encoding="utf-8") as f:
+            if os.path.exists(failed_path):
+                with open(failed_path, encoding="utf-8") as f:
                     metrics["failed_candidates_count"] = len(json.load(f))
         except Exception:
             pass
-        scraper_state["last_metrics"] = metrics
+        state["last_metrics"] = metrics
 
         # Load the newly approved jobs and auto-sync them if cron triggered
         # For auto runs, we sync them and send webhook notifications
         token = os.getenv("NOTION_TOKEN")
         db_id = os.getenv("NOTION_DATABASE_ID")
-        if token and db_id and os.path.exists(APPROVED_PATH):
+        if token and db_id and os.path.exists(approved_path):
             try:
-                cfg = load_config()
+                cfg = load_config(email)
                 search_cfg = cfg.get("search") or {}
                 send_digest_only = search_cfg.get("send_digest_only", True)
                 
-                with open(APPROVED_PATH, 'r') as f:
+                with open(approved_path, 'r') as f:
                     app_jobs = json.load(f)
-                synced_jobs = load_synced_jobs()
+                synced_jobs = load_synced_jobs(email)
                 
                 newly_synced = []
                 for job in app_jobs:
                     url = job.get("job_url")
                     if url and url not in synced_jobs:
                         # Auto sync
-                        success, page_id, _ = sync_job_to_notion(job, token, db_id)
+                        success, page_id, _ = sync_job_to_notion(job, token, db_id, email=email)
                         if success:
-                            mark_job_synced(url, page_id)
+                            mark_job_synced(url, page_id, email)
                             newly_synced.append((job, page_id))
                             if not send_digest_only:
-                                send_webhook_alert(job, page_id)
+                                send_webhook_alert(job, page_id, email=email)
                                 
                 if send_digest_only and newly_synced:
                     send_daily_digest_alert(newly_synced, len(newly_synced))
             except Exception as e:
                 print(f"Error auto-syncing approved jobs: {e}")
                 
-        scraper_state["status"] = "completed"
-        scraper_state["message"] = "Job sourcing and validation complete!"
-        scraper_state["last_run"] = datetime.utcnow().isoformat()
+        # Identify newly scraped jobs by comparing scraped_at to start_time
+        all_jobs = load_all_jobs(email)
+        new_jobs = [j for j in all_jobs if j.get('scraped_at') and j['scraped_at'] >= start_time]
+        state["new_jobs"] = new_jobs
+
+        state["status"] = "completed"
+        state["message"] = f"Job sourcing complete! {len(new_jobs)} new jobs found."
+        state["last_run"] = datetime.utcnow().isoformat()
     except Exception as e:
-        scraper_state["status"] = "failed"
-        scraper_state["message"] = f"Scraper execution error: {str(e)}"
-        scraper_state["last_error"] = str(e)[:4000]
+        state["status"] = "failed"
+        state["message"] = f"Scraper execution error: {str(e)}"
+        state["last_error"] = str(e)[:4000]
 
 # Background Scheduler Loop
 def scheduler_loop():
     print("Background scheduler thread started.")
-    last_triggered_date = None
+    last_triggered_dates = {}
+    
+    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    import sqlite3
+    ensure_notion_mirror_schema(WORKSPACE_DIR)
+    db_file = db_path(WORKSPACE_DIR)
     
     while True:
-        cfg = load_config()
-        sched_cfg = cfg.get("scheduler", {})
-        
-        if sched_cfg.get("enabled", False):
-            now = datetime.now()
-            today = date.today()
+        try:
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
+            cursor.execute("SELECT email FROM users")
+            emails = [row[0] for row in cursor.fetchall()]
+            conn.close()
+        except Exception:
+            # Seed / fallback defaults
+            emails = ["admin@hailmary.ai"]
             
-            target_hour = sched_cfg.get("run_at_hour", 8)
-            target_minute = sched_cfg.get("run_at_minute", 0)
+        for email in emails:
+            cfg = load_config(email)
+            sched_cfg = cfg.get("scheduler", {})
             
-            # Check if it matches target hour and minute, and hasn't run today yet
-            if now.hour == target_hour and now.minute == target_minute and last_triggered_date != today:
-                print(f"[{now.isoformat()}] Scheduled trigger: Starting daily job sourcing scraper...")
-                last_triggered_date = today
+            if sched_cfg.get("enabled", False):
+                now = datetime.now()
+                today = date.today()
                 
-                # Trigger scraper run if not already running
-                global scraper_state
-                if scraper_state["status"] != "running":
-                    threading.Thread(target=scraper_worker).start()
+                target_hour = sched_cfg.get("run_at_hour", 8)
+                target_minute = sched_cfg.get("run_at_minute", 0)
+                
+                # Check if it matches target hour and minute, and hasn't run today yet
+                last_triggered_date = last_triggered_dates.get(email)
+                if now.hour == target_hour and now.minute == target_minute and last_triggered_date != today:
+                    print(f"[{now.isoformat()}] Scheduled trigger for {email}: Starting daily job sourcing scraper...")
+                    last_triggered_dates[email] = today
                     
+                    # Trigger scraper run if not already running
+                    state = get_scraper_state(email)
+                    if state["status"] != "running":
+                        threading.Thread(target=scraper_worker, args=(email,)).start()
+                        
         # Sleep for 30 seconds before checking again
         time.sleep(30)
 
@@ -1277,15 +1555,79 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
 
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_cors_headers()
         self.end_headers()
 
+    def get_auth_email(self):
+        auth_header = self.headers.get("Authorization")
+        if not auth_header:
+            return None
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+            session = active_sessions.get(token)
+            if isinstance(session, dict):
+                return session.get("email")
+            # fallback for backward compatibility
+            return "admin@hailmary.ai"
+        return None
+
+    def get_auth_role(self):
+        auth_header = self.headers.get("Authorization")
+        if not auth_header:
+            return None
+        
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+            session = active_sessions.get(token)
+            if isinstance(session, dict):
+                return session.get("role")
+            elif isinstance(session, str):
+                return session
+            
+        return None
+
+    def check_authenticated(self):
+        role = self.get_auth_role()
+        if role in ["admin", "user"]:
+            return True
+        
+        # Return 401 Unauthorized
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_cors_headers()
+        self.end_headers()
+        res = {"success": False, "message": "Unauthorized. Please log in."}
+        self.wfile.write(json.dumps(res).encode('utf-8'))
+        return False
+
+    def check_admin(self):
+        role = self.get_auth_role()
+        if role == "admin":
+            return True
+            
+        # Return 403 Forbidden
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.send_cors_headers()
+        self.end_headers()
+        res = {"success": False, "message": "Forbidden. Admin access required."}
+        self.wfile.write(json.dumps(res).encode('utf-8'))
+        return False
+
     def do_GET(self):
         parsed_url = urllib.parse.urlparse(self.path)
+        
+        # Authenticate all API endpoints (excluding static page rendering and 404s)
+        if parsed_url.path.startswith("/api/"):
+            if not self.check_authenticated():
+                return
         
         # API: Get all jobs
         if parsed_url.path == "/api/jobs":
@@ -1294,8 +1636,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            jobs = load_all_jobs()
+            email = self.get_auth_email()
+            jobs = load_all_jobs(email)
             self.wfile.write(json.dumps(jobs).encode('utf-8'))
+            return
+
+        elif parsed_url.path == "/api/new-jobs":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+
+            email = self.get_auth_email()
+            state = get_scraper_state(email)
+            new_jobs = state.get("new_jobs", [])
+            self.wfile.write(json.dumps(new_jobs).encode('utf-8'))
             return
             
         # API: Get settings config
@@ -1305,7 +1660,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            cfg = load_config()
+            email = self.get_auth_email()
+            cfg = load_config(email)
             self.wfile.write(json.dumps(public_config_for_api(cfg)).encode('utf-8'))
             return
 
@@ -1316,7 +1672,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            cfg = load_policy_config()
+            email = self.get_auth_email()
+            cfg = load_policy_config(email)
             self.wfile.write(json.dumps(cfg).encode('utf-8'))
             return
 
@@ -1327,7 +1684,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            data = calculate_analytics()
+            email = self.get_auth_email()
+            data = calculate_analytics(email)
             self.wfile.write(json.dumps(data).encode('utf-8'))
             return
             
@@ -1367,7 +1725,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_cors_headers()
             self.end_headers()
-            self.wfile.write(json.dumps(scraper_state).encode('utf-8'))
+            email = self.get_auth_email()
+            self.wfile.write(json.dumps(get_scraper_state(email)).encode('utf-8'))
             return
 
         # API: Get stale check status
@@ -1376,7 +1735,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_cors_headers()
             self.end_headers()
-            self.wfile.write(json.dumps(stale_check_state).encode('utf-8'))
+            email = self.get_auth_email()
+            self.wfile.write(json.dumps(get_stale_check_state(email)).encode('utf-8'))
             return
 
         # API: Get scraper console logs
@@ -1408,7 +1768,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            jobs = load_all_jobs()
+            email = self.get_auth_email()
+            jobs = load_all_jobs(email)
             approved_jobs = [j for j in jobs if j.get('status') == 'approved' and not j.get('archived')]
             
             yearly_salaries = []
@@ -1456,10 +1817,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
+            email = self.get_auth_email()
             data_dir = os.path.join(WORKSPACE_DIR, "data")
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir, exist_ok=True)
-            resume_path = os.path.join(data_dir, "base_resume.md")
+            resume_path = resolve_path(os.path.join(data_dir, "base_resume.md"), email)
             
             content = ""
             if os.path.exists(resume_path):
@@ -1527,6 +1889,98 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
+        # Protect all API endpoints (excluding login and register) and require admin role
+        if parsed_url.path.startswith("/api/"):
+            if parsed_url.path not in ["/api/login", "/api/register"]:
+                if not self.check_admin():
+                    return
+
+        # API: Login
+        if parsed_url.path == "/api/login":
+            email = payload.get("email")
+            password = payload.get("password")
+            
+            # Backward compatibility check
+            if not email:
+                if password == ADMIN_PASSWORD:
+                    email = "admin@hailmary.ai"
+                elif password == USER_PASSWORD:
+                    email = "user@hailmary.ai"
+                else:
+                    email = "user@hailmary.ai"
+            
+            if not email or not password:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": "Missing email or password"}).encode('utf-8'))
+                return
+                
+            user_session = verify_user_credentials(email, password)
+            if user_session:
+                token = str(uuid.uuid4())
+                active_sessions[token] = user_session
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "token": token,
+                    "role": user_session["role"],
+                    "email": user_session["email"]
+                }).encode('utf-8'))
+            else:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "message": "Invalid email or password"
+                }).encode('utf-8'))
+            return
+
+        # API: Register
+        elif parsed_url.path == "/api/register":
+            email = payload.get("email")
+            password = payload.get("password")
+            if not email or not password:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": "Email and password are required"}).encode('utf-8'))
+                return
+                
+            if "@" not in email or "." not in email:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": "Invalid email address format"}).encode('utf-8'))
+                return
+                
+            role = "user"
+            if "admin" in email.lower():
+                role = "admin"
+                
+            success, msg = register_user(email, password, role)
+            if success:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "message": msg}).encode('utf-8'))
+            else:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": msg}).encode('utf-8'))
+            return
+
         # API: Save settings config
         if parsed_url.path == "/api/config":
             self.send_response(200)
@@ -1534,7 +1988,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            success = save_config(payload)
+            email = self.get_auth_email()
+            success = save_config(payload, email)
             self.wfile.write(json.dumps({"success": success, "message": "Settings saved successfully!" if success else "Failed to save settings."}).encode('utf-8'))
             return
 
@@ -1545,7 +2000,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            success = save_policy_config(payload)
+            email = self.get_auth_email()
+            success = save_policy_config(payload, email)
             if success:
                 rebuild_success, msg = rebuild_classifier_prompt(payload)
                 if rebuild_success:
@@ -1563,7 +2019,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
 
-            cfg = load_config()
+            email = self.get_auth_email()
+            cfg = load_config(email)
             test_url = (payload.get("webhook_url") or "").strip() or effective_webhook_url(cfg)
             if not test_url:
                 self.wfile.write(json.dumps({"success": False, "message": "No Webhook URL provided (form or JOBSEARCH_WEBHOOK_URL / config)."}).encode('utf-8'))
@@ -1601,7 +2058,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            success, msg = override_job_on_disk(payload)
+            email = self.get_auth_email()
+            success, msg = override_job_on_disk(payload, email)
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
             return
 
@@ -1618,26 +2076,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "message": "Missing job_url or pipeline_stage"}).encode('utf-8'))
                 return
                 
+            email = self.get_auth_email()
+            approved_path = resolve_path(APPROVED_PATH, email)
+            active_path = resolve_path(ACTIVE_PATH, email)
+            failed_path = resolve_path(FAILED_PATH, email)
+
             approved = []
-            if os.path.exists(APPROVED_PATH):
+            if os.path.exists(approved_path):
                 try:
-                    with open(APPROVED_PATH, 'r') as f:
+                    with open(approved_path, 'r') as f:
                         approved = json.load(f)
                 except Exception:
                     pass
                     
             active = []
-            if os.path.exists(ACTIVE_PATH):
+            if os.path.exists(active_path):
                 try:
-                    with open(ACTIVE_PATH, 'r') as f:
+                    with open(active_path, 'r') as f:
                         active = json.load(f)
                 except Exception:
                     pass
                     
             failed = []
-            if os.path.exists(FAILED_PATH):
+            if os.path.exists(failed_path):
                 try:
-                    with open(FAILED_PATH, 'r') as f:
+                    with open(failed_path, 'r') as f:
                         failed = json.load(f)
                 except Exception:
                     pass
@@ -1663,6 +2126,74 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         target_job = j
                         found_list = failed
                         break
+            if not target_job:
+                # Check SQLite database mirror
+                from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+                try:
+                    ensure_notion_mirror_schema(WORKSPACE_DIR)
+                    db_file = db_path(WORKSPACE_DIR)
+                    if os.path.exists(db_file):
+                        import sqlite3
+                        conn = sqlite3.connect(str(db_file))
+                        conn.row_factory = sqlite3.Row
+                        cursor = conn.cursor()
+                        row = cursor.execute("SELECT * FROM notion_job_reports WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai')).fetchone()
+                        if row:
+                            red_flags = []
+                            if row['red_flags_json']:
+                                try:
+                                    red_flags = json.loads(row['red_flags_json'])
+                                except Exception:
+                                    pass
+                            payload_data = {}
+                            if row['apply_decision_payload_json']:
+                                try:
+                                    payload_data = json.loads(row['apply_decision_payload_json'])
+                                except Exception:
+                                    pass
+                            
+                            confidence = row['confidence_score']
+                            if confidence is not None:
+                                if confidence <= 1.0:
+                                    confidence = confidence * 100.0
+                            else:
+                                confidence = 100.0
+
+                            target_job = {
+                                "job_title": row['job_title'] or "Unknown Title",
+                                "company_name": row['company_name'] or "Unknown",
+                                "job_url": url,
+                                "requirement_id": row['requirement_id'] or "Unknown",
+                                "job_description": row['job_description'] or "",
+                                "location_work_type": row['location_work_type'] or "Remote",
+                                "scraped_at": row['date_added'],
+                                "red_flags": red_flags,
+                                "apply_decision": row['apply_decision'] or "APPLY",
+                                "strongest_label": row['strongest_label'] or "DevOps Engineer",
+                                "confidence_score": confidence,
+                                "rationale": row['rationale'] or "",
+                                "apply_decision_payload": payload_data,
+                                "benefits": payload_data.get("benefits", []),
+                                "status": "approved",
+                                "synced": True,
+                                "synced_data": {
+                                    "page_id": row['notion_page_id'],
+                                    "synced_at": row['synced_at']
+                                },
+                                "source_file": "notion_job_reports.db",
+                                "pipeline_stage": new_stage,
+                                "min_salary": row['min_salary'],
+                                "max_salary": row['max_salary'],
+                                "is_hourly": bool(row['is_hourly']),
+                                "salary_text": row['salary_text'],
+                                "archived": bool(row['archived'])
+                            }
+                            # Update the stage in SQLite
+                            conn.execute("UPDATE notion_job_reports SET pipeline_stage = ? WHERE job_url = ? AND user_email = ?", (new_stage, url, email or 'admin@hailmary.ai'))
+                            conn.commit()
+                        conn.close()
+                except Exception as e:
+                    print(f"Error checking/updating SQLite mirror in update-pipeline-stage: {e}")
                         
             if not target_job:
                 self.wfile.write(json.dumps({"success": False, "message": "Job not found."}).encode('utf-8'))
@@ -1672,18 +2203,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             
             # Save back to JSON lists
             try:
-                with open(APPROVED_PATH, 'w') as f:
+                with open(approved_path, 'w') as f:
                     json.dump(approved, f, indent=2)
-                with open(ACTIVE_PATH, 'w') as f:
+                with open(active_path, 'w') as f:
                     json.dump(active, f, indent=2)
-                with open(FAILED_PATH, 'w') as f:
+                with open(failed_path, 'w') as f:
                     json.dump(failed, f, indent=2)
             except Exception as e:
                 self.wfile.write(json.dumps({"success": False, "message": f"Failed to save JSON updates: {str(e)}"}).encode('utf-8'))
                 return
                 
             # Update SQLite mirror if synced
-            synced_jobs = load_synced_jobs()
+            synced_jobs = load_synced_jobs(email)
             page_id = None
             db_id = os.getenv("NOTION_DATABASE_ID")
             
@@ -1693,7 +2224,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if page_id:
                 try:
                     from notion_sqlite_mirror import upsert_notion_job_report
-                    upsert_notion_job_report(target_job, page_id, db_id or "")
+                    upsert_notion_job_report(target_job, page_id, db_id or "", user_email=email or 'admin@hailmary.ai')
                 except Exception as e:
                     print(f"Warning: Failed to update SQLite mirror: {e}")
                     
@@ -1742,8 +2273,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "message": "Missing job_url"}).encode('utf-8'))
                 return
                 
+            email = self.get_auth_email()
             # Find the job
-            all_jobs = load_all_jobs()
+            all_jobs = load_all_jobs(email)
             target_job = None
             for j in all_jobs:
                 if j.get("job_url") == url:
@@ -1761,11 +2293,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
                 return
                 
-            success, page_id, error_msg = sync_job_to_notion(target_job, token, db_id)
+            success, page_id, error_msg = sync_job_to_notion(target_job, token, db_id, email)
             if success:
-                mark_job_synced(url, page_id)
+                mark_job_synced(url, page_id, email)
                 # Dispatch Webhook alert!
-                send_webhook_alert(target_job, page_id)
+                send_webhook_alert(target_job, page_id, email=email)
                 self.wfile.write(json.dumps({"success": True, "message": "Successfully synced to Notion!", "page_id": page_id}).encode('utf-8'))
             else:
                 self.wfile.write(json.dumps({"success": False, "message": f"Notion Sync failed: {error_msg}"}).encode('utf-8'))
@@ -1778,12 +2310,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            global scraper_state
-            if scraper_state["status"] == "running":
+            email = self.get_auth_email()
+            state = get_scraper_state(email)
+            if state["status"] == "running":
                 res = {"success": False, "message": "Scraper is already running."}
             else:
                 past_24h_only = payload.get("past_24h_only", False)
-                threading.Thread(target=lambda: scraper_worker(past_24h_only)).start()
+                threading.Thread(target=lambda: scraper_worker(email, past_24h_only)).start()
                 res = {"success": True, "message": "Scraper started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
@@ -1796,11 +2329,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
-            global stale_check_state
-            if stale_check_state["status"] == "running":
+            email = self.get_auth_email()
+            state = get_stale_check_state(email)
+            if state["status"] == "running":
                 res = {"success": False, "message": "Stale job check is already running."}
             else:
-                threading.Thread(target=stale_check_worker).start()
+                threading.Thread(target=stale_check_worker, args=(email,)).start()
                 res = {"success": True, "message": "Stale job check started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
@@ -1818,7 +2352,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "message": "Missing job_url"}).encode('utf-8'))
                 return
                 
-            success, msg = archive_job_on_disk(url)
+            email = self.get_auth_email()
+            success, msg = archive_job_on_disk(url, email)
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
             return
 
@@ -1829,13 +2364,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
+            email = self.get_auth_email()
             token = os.getenv("NOTION_TOKEN")
             db_id = os.getenv("NOTION_DATABASE_ID")
             if not token or not db_id:
                 self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
                 return
                 
-            all_jobs = load_all_jobs()
+            all_jobs = load_all_jobs(email)
             unsynced_approved = [j for j in all_jobs if j.get("status") == "approved" and not j.get("synced")]
             
             if not unsynced_approved:
@@ -1848,10 +2384,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             
             for j in unsynced_approved:
                 url = j.get("job_url")
-                success, page_id, error_msg = sync_job_to_notion(j, token, db_id)
+                success, page_id, error_msg = sync_job_to_notion(j, token, db_id, email)
                 if success:
-                    mark_job_synced(url, page_id)
-                    send_webhook_alert(j, page_id)
+                    mark_job_synced(url, page_id, email)
+                    send_webhook_alert(j, page_id, email=email)
                     synced_count += 1
                 else:
                     failed_count += 1
@@ -1877,7 +2413,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
                 return
                 
-            synced_jobs = load_synced_jobs()
+            email = self.get_auth_email()
+            synced_jobs = load_synced_jobs(email)
             if not synced_jobs:
                 self.wfile.write(json.dumps({"success": True, "message": "No synced jobs to check."}).encode('utf-8'))
                 return
@@ -1890,18 +2427,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             updated_count = 0
             errors = 0
             
+            approved_path = resolve_path(APPROVED_PATH, email)
+            active_path = resolve_path(ACTIVE_PATH, email)
+
             approved = []
-            if os.path.exists(APPROVED_PATH):
+            if os.path.exists(approved_path):
                 try:
-                    with open(APPROVED_PATH, 'r') as f:
+                    with open(approved_path, 'r') as f:
                         approved = json.load(f)
                 except Exception:
                     pass
             
             active = []
-            if os.path.exists(ACTIVE_PATH):
+            if os.path.exists(active_path):
                 try:
-                    with open(ACTIVE_PATH, 'r') as f:
+                    with open(active_path, 'r') as f:
                         active = json.load(f)
                 except Exception:
                     pass
@@ -1946,14 +2486,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                         found = True
                                         break
                                         
+                            # Also update in the SQLite database mirror
+                            from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+                            try:
+                                ensure_notion_mirror_schema(WORKSPACE_DIR)
+                                db_file = db_path(WORKSPACE_DIR)
+                                if os.path.exists(db_file):
+                                    import sqlite3
+                                    conn = sqlite3.connect(str(db_file))
+                                    cursor = conn.cursor()
+                                    row = cursor.execute("SELECT apply_decision FROM notion_job_reports WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai')).fetchone()
+                                    if row:
+                                        if row[0] != decision:
+                                            conn.execute("UPDATE notion_job_reports SET apply_decision = ? WHERE job_url = ? AND user_email = ?", (decision, url, email or 'admin@hailmary.ai'))
+                                            conn.commit()
+                                            if not found:
+                                                updated_count += 1
+                                    conn.close()
+                            except Exception as e:
+                                print(f"Error updating SQLite mirror in two-way sync: {e}")
+                                        
                 except Exception as e:
                     errors += 1
                     
             if updated_count > 0:
                 try:
-                    with open(APPROVED_PATH, 'w') as f:
+                    with open(approved_path, 'w') as f:
                         json.dump(approved, f, indent=2)
-                    with open(ACTIVE_PATH, 'w') as f:
+                    with open(active_path, 'w') as f:
                         json.dump(active, f, indent=2)
                 except Exception as e:
                     self.wfile.write(json.dumps({"success": False, "message": f"Failed to save synced states: {str(e)}"}).encode('utf-8'))
@@ -1972,11 +2532,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             
+            email = self.get_auth_email()
             resume_content = payload.get("resume", "")
             data_dir = os.path.join(WORKSPACE_DIR, "data")
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir, exist_ok=True)
-            resume_path = os.path.join(data_dir, "base_resume.md")
+            resume_path = resolve_path(os.path.join(data_dir, "base_resume.md"), email)
             
             try:
                 with open(resume_path, "w", encoding="utf-8") as f:
@@ -2012,7 +2573,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except Exception:
                     return u
             
-            jobs = load_all_jobs()
+            email = self.get_auth_email()
+            jobs = load_all_jobs(email)
             target_job = None
             norm_target = _norm(job_url)
             for j in jobs:
@@ -2024,7 +2586,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "message": "Job posting not found in local database."}).encode('utf-8'))
                 return
                 
-            resume_path = os.path.join(WORKSPACE_DIR, "data", "base_resume.md")
+            resume_path = resolve_path(os.path.join(WORKSPACE_DIR, "data", "base_resume.md"), email)
             base_resume = ""
             if os.path.exists(resume_path):
                 try:
@@ -2131,7 +2693,7 @@ def main():
     sched_thread = threading.Thread(target=scheduler_loop, daemon=True)
     sched_thread.start()
     
-    server = HTTPServer(('0.0.0.0', PORT), DashboardHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)
     print(f"MAAS Job Sourcing Agent Dashboard running at: http://localhost:{PORT}")
     try:
         server.serve_forever()

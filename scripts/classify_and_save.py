@@ -18,7 +18,7 @@ def load_known_hashes(workspace_path):
     approved_hashes = {}
     failed_hashes = {}
     
-    approved_path = workspace_path / "approved_jobs.json"
+    approved_path = resolve_path(workspace_path / "approved_jobs.json")
     if approved_path.exists():
         try:
             jobs = json.loads(approved_path.read_text(encoding="utf-8"))
@@ -31,7 +31,7 @@ def load_known_hashes(workspace_path):
         except Exception as e:
             print(f"Error loading approved hashes: {e}")
             
-    failed_path = workspace_path / "failed_candidate_jobs.json"
+    failed_path = resolve_path(workspace_path / "failed_candidate_jobs.json")
     if failed_path.exists():
         try:
             jobs = json.loads(failed_path.read_text(encoding="utf-8"))
@@ -55,6 +55,16 @@ from jobsearch_paths import workspace_root
 from benefits_extractor import extract_benefits
 
 WORKSPACE = workspace_root()
+
+def resolve_path(base_path):
+    email = os.environ.get("MAAS_USER_EMAIL")
+    if not email:
+        return base_path
+    import re
+    suffix = re.sub(r'[^a-zA-Z0-9_.-]', '_', email)
+    p = Path(base_path)
+    return p.parent / f"{p.stem}_{suffix}{p.suffix}"
+
 load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
 api_key = os.getenv("GEMINI_API_KEY")
 if api_key:
@@ -868,7 +878,7 @@ def normalize_url(url):
         return url.lower().strip()
 
 def main():
-    with open(str(WORKSPACE / "active_candidate_jobs.json"), "r") as f:
+    with open(str(resolve_path(WORKSPACE / "active_candidate_jobs.json")), "r") as f:
         jobs = json.load(f)
         
     classifications = get_job_classifications()
@@ -1000,7 +1010,7 @@ def main():
     ]
     
     # Write to approved_jobs.json
-    output_path = str(WORKSPACE / "approved_jobs.json")
+    output_path = str(resolve_path(WORKSPACE / "approved_jobs.json"))
     with open(output_path, "w") as f:
         json.dump(approved_jobs, f, indent=2)
         

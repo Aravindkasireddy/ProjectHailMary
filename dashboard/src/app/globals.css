@@ -24,3 +24,36 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Glass-morphism card for new jobs modal */
+.glass-card {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 1rem;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(139, 92, 246, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-card h2 {
+  text-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+}
+
+.glass-card ul li {
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 0.875rem;
+}
+
+.glass-card ul li a {
+  color: rgba(196, 181, 253, 0.95);
+  text-decoration-color: rgba(139, 92, 246, 0.4);
+  transition: color 0.2s ease, text-decoration-color 0.2s ease;
+}
+
+.glass-card ul li a:hover {
+  color: rgb(167, 139, 250);
+  text-decoration-color: rgb(139, 92, 246);
+}

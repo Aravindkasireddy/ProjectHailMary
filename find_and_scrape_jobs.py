@@ -16,6 +16,14 @@ from urllib.parse import urlparse, quote_plus, parse_qs
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 
+def resolve_path(base_path):
+    email = os.environ.get("MAAS_USER_EMAIL")
+    if not email:
+        return base_path
+    suffix = re.sub(r'[^a-zA-Z0-9_.-]', '_', email)
+    p = Path(base_path)
+    return p.parent / f"{p.stem}_{suffix}{p.suffix}"
+
 def get_cdt_now_iso():
     # CDT is UTC-5
     cdt = timezone(timedelta(hours=-5))
@@ -103,7 +111,7 @@ def get_random_user_agent():
 def get_random_proxy():
     try:
         from jobsearch_paths import workspace_root
-        config_path = workspace_root() / "config.json"
+        config_path = resolve_path(workspace_root() / "config.json")
         if config_path.exists():
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
             proxies = cfg.get("proxies", [])
@@ -351,7 +359,13 @@ def search_duckduckgo(query):
                     actual_url = queries.get('uddg', [None])[0]
                     if actual_url:
                         href = actual_url
-                links.append(href)
+                
+                # Filter to ensure it belongs to one of our target job boards and isn't a search engine URL
+                if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
+                    parsed_actual = urlparse(href)
+                    domain_actual = parsed_actual.netloc.lower()
+                    if not any(se in domain_actual for se in ['yahoo.com', 'yahoo.co', 'google.com', 'bing.com', 'duckduckgo.com']):
+                        links.append(href)
         else:
             log(f"DuckDuckGo search error for '{query}': status code {r.status_code}")
             SEARCH_STATE["consecutive_failures"] += 1
@@ -435,8 +449,8 @@ from jobsearch_paths import workspace_root
 
 WORKSPACE = workspace_root()
 load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
-CONFIG_PATH = WORKSPACE / "config.json"
-SCRAPED_OUTPUT = WORKSPACE / "scraped_jobs.json"
+CONFIG_PATH = resolve_path(WORKSPACE / "config.json")
+SCRAPED_OUTPUT = resolve_path(WORKSPACE / "scraped_jobs.json")
 
 
 def _ensure_log_dir():

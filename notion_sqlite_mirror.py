@@ -30,9 +30,21 @@ def db_path(ws: Union[str, Path, None] = None) -> Path:
 def _init(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS notion_job_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_url TEXT NOT NULL UNIQUE,
+            job_url TEXT NOT NULL,
             notion_page_id TEXT NOT NULL,
             notion_database_id TEXT,
             requirement_id TEXT,
@@ -53,7 +65,10 @@ def _init(conn: sqlite3.Connection) -> None:
             min_salary REAL,
             max_salary REAL,
             is_hourly INTEGER,
-            salary_text TEXT
+            salary_text TEXT,
+            archived INTEGER DEFAULT 0,
+            user_email TEXT DEFAULT 'admin@hailmary.ai',
+            UNIQUE(job_url, user_email)
         )
         """
     )
@@ -73,6 +88,67 @@ def _init(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE notion_job_reports ADD COLUMN is_hourly INTEGER")
     if "salary_text" not in columns:
         conn.execute("ALTER TABLE notion_job_reports ADD COLUMN salary_text TEXT")
+    if "archived" not in columns:
+        conn.execute("ALTER TABLE notion_job_reports ADD COLUMN archived INTEGER DEFAULT 0")
+    if "user_email" not in columns:
+        conn.execute("ALTER TABLE notion_job_reports ADD COLUMN user_email TEXT DEFAULT 'admin@hailmary.ai'")
+        
+    # Check if table needs UNIQUE(job_url, user_email) migration
+    cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='notion_job_reports'")
+    table_sql_row = cursor.fetchone()
+    if table_sql_row:
+        table_sql = table_sql_row[0] or ""
+        if "job_url TEXT NOT NULL UNIQUE" in table_sql or "UNIQUE(job_url, user_email)" not in table_sql:
+            conn.execute("ALTER TABLE notion_job_reports RENAME TO notion_job_reports_old")
+            conn.execute(
+                """
+                CREATE TABLE notion_job_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_url TEXT NOT NULL,
+                    notion_page_id TEXT NOT NULL,
+                    notion_database_id TEXT,
+                    requirement_id TEXT,
+                    job_title TEXT,
+                    company_name TEXT,
+                    location_work_type TEXT,
+                    job_description TEXT,
+                    apply_decision TEXT,
+                    strongest_label TEXT,
+                    confidence_score REAL,
+                    rationale TEXT,
+                    apply_decision_payload_json TEXT,
+                    red_flags_json TEXT,
+                    date_added TEXT,
+                    synced_at TEXT NOT NULL,
+                    was_duplicate INTEGER NOT NULL DEFAULT 0,
+                    pipeline_stage TEXT DEFAULT 'Approved',
+                    min_salary REAL,
+                    max_salary REAL,
+                    is_hourly INTEGER,
+                    salary_text TEXT,
+                    archived INTEGER DEFAULT 0,
+                    user_email TEXT DEFAULT 'admin@hailmary.ai',
+                    UNIQUE(job_url, user_email)
+                )
+                """
+            )
+            cursor.execute("PRAGMA table_info(notion_job_reports_old)")
+            old_columns = [row[1] for row in cursor.fetchall()]
+            columns_to_copy = [c for c in old_columns if c != "user_email"]
+            columns_str = ", ".join(columns_to_copy)
+            
+            if "user_email" in old_columns:
+                conn.execute(f"""
+                    INSERT INTO notion_job_reports ({columns_str}, user_email)
+                    SELECT {columns_str}, COALESCE(user_email, 'admin@hailmary.ai') FROM notion_job_reports_old
+                """)
+            else:
+                conn.execute(f"""
+                    INSERT INTO notion_job_reports ({columns_str}, user_email)
+                    SELECT {columns_str}, 'admin@hailmary.ai' FROM notion_job_reports_old
+                """)
+            
+            conn.execute("DROP TABLE notion_job_reports_old")
         
     conn.commit()
 
@@ -98,8 +174,9 @@ def upsert_notion_job_report(
     *,
     was_duplicate: bool = False,
     workspace: Union[str, Path, None] = None,
+    user_email: str = 'admin@hailmary.ai',
 ) -> None:
-    """Insert or replace one row keyed by job_url."""
+    """Insert or replace one row keyed by (job_url, user_email)."""
     path = db_path(workspace)
     red = job.get("red_flags", [])
     if isinstance(red, str):
@@ -118,9 +195,9 @@ def upsert_notion_job_report(
                 job_title, company_name, location_work_type, job_description,
                 apply_decision, strongest_label, confidence_score, rationale,
                 apply_decision_payload_json, red_flags_json, date_added, synced_at, was_duplicate,
-                pipeline_stage, min_salary, max_salary, is_hourly, salary_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url) DO UPDATE SET
+                pipeline_stage, min_salary, max_salary, is_hourly, salary_text, archived, user_email
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(job_url, user_email) DO UPDATE SET
                 notion_page_id = excluded.notion_page_id,
                 notion_database_id = excluded.notion_database_id,
                 requirement_id = excluded.requirement_id,
@@ -141,7 +218,8 @@ def upsert_notion_job_report(
                 min_salary = excluded.min_salary,
                 max_salary = excluded.max_salary,
                 is_hourly = excluded.is_hourly,
-                salary_text = excluded.salary_text
+                salary_text = excluded.salary_text,
+                archived = excluded.archived
             """,
             (
                 job.get("job_url") or "",
@@ -166,6 +244,8 @@ def upsert_notion_job_report(
                 job.get("max_salary"),
                 1 if job.get("is_hourly") else 0,
                 job.get("salary_text"),
+                1 if job.get("archived") else 0,
+                user_email,
             ),
         )
         conn.commit()
