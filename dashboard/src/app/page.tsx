@@ -31,6 +31,10 @@ import {
   FileText
 } from 'lucide-react';
 import ResumeGenerator from '../../components/ResumeGenerator';
+import CopyButton from '../../components/CopyButton';
+import LogConsole from '../../components/LogConsole';
+import SettingsPanel from '../../components/SettingsPanel';
+import PolicyPanel from '../../components/PolicyPanel';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -129,29 +133,6 @@ const CATEGORIES = [
   "OutOfScope"
 ];
 
-const CopyButton = ({ text }: { text: string }) => {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <button
-      onClick={handleCopy}
-      type="button"
-      className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors flex items-center"
-      title="Copy to clipboard"
-    >
-      {copied ? (
-        <Check className="w-3.5 h-3.5 text-emerald-400 animate-in zoom-in-50 duration-150" />
-      ) : (
-        <Copy className="w-3.5 h-3.5" />
-      )}
-    </button>
-  );
-};
-
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
 
@@ -187,9 +168,10 @@ export default function Dashboard() {
   const [isTailorModalOpen, setIsTailorModalOpen] = useState<boolean>(false);
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
-  const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week'>('all');
   const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
   const [showActiveOnly, setShowActiveOnly] = useState(true);
+  const [past24hOnly, setPast24hOnly] = useState(false);
 
   // Custom States for Advanced Sourcing, Notion Sync, and Live Logs Console
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string | null>(null);
@@ -602,7 +584,11 @@ export default function Dashboard() {
   // Start scraper
   const triggerScrape = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/scrape`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/scrape`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ past_24h_only: past24hOnly })
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -1008,20 +994,24 @@ export default function Dashboard() {
       );
     }
 
-    // Filter by scraped timeframe
+    // Filter by scraped timeframe or posting timeframe
     if (scrapedTimeframe !== 'all') {
       const now = new Date().getTime();
       const oneDay = 24 * 60 * 60 * 1000;
       list = list.filter(j => {
-        if (!j.scraped_at) return false;
-        const scrapedTime = new Date(j.scraped_at).getTime();
-        const diff = now - scrapedTime;
-        if (scrapedTimeframe === 'today') {
-          return diff <= oneDay;
-        } else if (scrapedTimeframe === 'week') {
-          return diff <= 7 * oneDay;
-        } else if (scrapedTimeframe === 'month') {
-          return diff <= 30 * oneDay;
+        if (scrapedTimeframe === 'today' || scrapedTimeframe === 'week' || scrapedTimeframe === 'month') {
+          if (!j.scraped_at) return false;
+          const scrapedTime = new Date(j.scraped_at).getTime();
+          const diff = now - scrapedTime;
+          if (scrapedTimeframe === 'today') return diff <= oneDay;
+          if (scrapedTimeframe === 'week') return diff <= 7 * oneDay;
+          if (scrapedTimeframe === 'month') return diff <= 30 * oneDay;
+        } else if (scrapedTimeframe === 'posted_today' || scrapedTimeframe === 'posted_week') {
+          if (!j.posted_at) return false;
+          const postedTime = new Date(j.posted_at).getTime();
+          const diff = now - postedTime;
+          if (scrapedTimeframe === 'posted_today') return diff <= oneDay;
+          if (scrapedTimeframe === 'posted_week') return diff <= 7 * oneDay;
         }
         return true;
       });
@@ -1147,6 +1137,17 @@ export default function Dashboard() {
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${staleCheckStatus.status === 'running' ? 'animate-spin' : ''}`} />
             Check Closed Jobs
           </button>
+
+          {/* Past 24h Toggle */}
+          <label className="inline-flex items-center space-x-2 bg-slate-900/80 border border-slate-850 hover:border-slate-700 rounded-xl px-3 py-1.5 cursor-pointer select-none transition-all active:scale-95">
+            <input
+              type="checkbox"
+              checked={past24hOnly}
+              onChange={e => setPast24hOnly(e.target.checked)}
+              className="w-3.5 h-3.5 text-violet-600 bg-slate-950 border-slate-800 rounded focus:ring-violet-600 focus:ring-offset-slate-950 accent-violet-600"
+            />
+            <span className="text-[11px] font-bold tracking-tight text-slate-300">Past 24h Only</span>
+          </label>
 
           {/* Manual Run button */}
           <button
@@ -1425,12 +1426,14 @@ export default function Dashboard() {
                 </span>
                 <select
                   value={scrapedTimeframe}
-                  onChange={e => setScrapedTimeframe(e.target.value as 'all' | 'today' | 'week' | 'month')}
+                  onChange={e => setScrapedTimeframe(e.target.value as 'all' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week')}
                   className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[170px]"
                 >
-                  <option value="all">All Scrape Times</option>
+                  <option value="all">All Times</option>
                   <option value="today">Scraped Today (24h)</option>
+                  <option value="posted_today">Posted Today (24h)</option>
                   <option value="week">Scraped Last 7 Days</option>
+                  <option value="posted_week">Posted Last 7 Days</option>
                   <option value="month">Scraped Last 30 Days</option>
                 </select>
                 <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
@@ -1800,280 +1803,30 @@ export default function Dashboard() {
               })()}
             </div>
           ) : activeTab === 'policy' ? (
-            <div className="bg-slate-900/20 backdrop-blur-md border border-slate-800 p-6 rounded-2xl space-y-6 max-w-3xl shadow-xl">
-              {policyLoading || !policyConfig ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-12 text-center border border-slate-800 rounded-2xl bg-slate-900/10">
-                  <RefreshCw className="w-10 h-10 text-violet-500 animate-spin mb-3" />
-                  <p className="text-sm text-slate-400 font-medium">Loading classifier policy guidelines...</p>
-                </div>
-              ) : (
-                <div className="space-y-6 animate-in fade-in duration-300">
-                  <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-                    <div className="flex items-center space-x-2">
-                      <Shield className="w-5 h-5 text-violet-400" />
-                      <h2 className="text-lg font-bold text-white">Classifier Policy & Experience Rules</h2>
-                    </div>
-                    <span className="text-[10px] bg-violet-950/60 text-violet-400 px-2 py-0.5 rounded border border-violet-850 font-bold uppercase tracking-wider">
-                      Gemini Policy Gating
-                    </span>
-                  </div>
-
-                  {/* Max Experience Input */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Max Allowed Experience Cap
-                      </label>
-                      <span className="text-xs font-bold text-violet-400">{policyConfig.max_experience_years} Years</span>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <input
-                        type="range"
-                        min="3"
-                        max="15"
-                        value={policyConfig.max_experience_years}
-                        onChange={e => setPolicyConfig({ ...policyConfig, max_experience_years: Number(e.target.value) })}
-                        className="flex-1 accent-violet-600 bg-slate-950 h-2 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <input
-                        type="number"
-                        min="3"
-                        max="15"
-                        value={policyConfig.max_experience_years}
-                        onChange={e => setPolicyConfig({ ...policyConfig, max_experience_years: Number(e.target.value) })}
-                        className="w-16 bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-center text-xs text-slate-200 focus:outline-none focus:border-violet-600/70"
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-500">Jobs requesting experience years at or above this threshold will be flagged as R2 and automatically rejected.</p>
-                  </div>
-
-                  {/* Salary Threshold inputs */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-800">
-                    <div className="space-y-2">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Min Annual Salary
-                      </label>
-                      <div className="relative">
-                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 text-xs">$</span>
-                        <input
-                          type="number"
-                          value={policyConfig.min_salary_annual}
-                          onChange={e => setPolicyConfig({ ...policyConfig, min_salary_annual: Number(e.target.value) })}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-6 pr-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 shadow-inner"
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-500">Block salaried positions offering below this annual rate (e.g. $80,000).</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Min Hourly Rate
-                      </label>
-                      <div className="relative">
-                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 text-xs">$</span>
-                        <input
-                          type="number"
-                          value={policyConfig.min_salary_hourly}
-                          onChange={e => setPolicyConfig({ ...policyConfig, min_salary_hourly: Number(e.target.value) })}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-6 pr-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 shadow-inner"
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-500">Block hourly contracts offering at or below this hourly rate (e.g. $50/hr).</p>
-                    </div>
-                  </div>
-
-                  {/* Checkbox Gating Rules */}
-                  <div className="space-y-3 pt-4 border-t border-slate-800">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Standard Security Restrictions
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-                      {/* Visa sponsorship toggle */}
-                      <label className="flex items-center space-x-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800 cursor-pointer hover:border-slate-700 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={policyConfig.enforce_visa_sponsorship}
-                          onChange={e => setPolicyConfig({ ...policyConfig, enforce_visa_sponsorship: e.target.checked })}
-                          className="w-4 h-4 text-violet-600 bg-slate-900 border-slate-800 rounded focus:ring-violet-600 focus:ring-offset-slate-900"
-                        />
-                        <div>
-                          <span className="text-xs font-bold text-slate-200 block">Block Visa Sponsorship Limits</span>
-                          <span className="text-[9px] text-slate-500 block mt-0.5">{'Reject jobs that explicitly state "no sponsorship" or "cannot sponsor"'}</span>
-                        </div>
-                      </label>
-
-                      {/* Security clearance toggle */}
-                      <label className="flex items-center space-x-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800 cursor-pointer hover:border-slate-700 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={policyConfig.enforce_no_clearance}
-                          onChange={e => setPolicyConfig({ ...policyConfig, enforce_no_clearance: e.target.checked })}
-                          className="w-4 h-4 text-violet-600 bg-slate-900 border-slate-800 rounded focus:ring-violet-600 focus:ring-offset-slate-900"
-                        />
-                        <div>
-                          <span className="text-xs font-bold text-slate-200 block">Block Security Clearance Roles</span>
-                          <span className="text-[9px] text-slate-500 block mt-0.5">{'Reject roles requesting "Active Secret/TS Clearance" or government eligibility'}</span>
-                        </div>
-                      </label>
-
-                    </div>
-                  </div>
-
-                  {/* Custom Red Flag Keywords */}
-                  <div className="space-y-2 pt-4 border-t border-slate-800">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Custom Red Flag Keywords (Comma separated)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="clearance, visa limit, federal, internship"
-                      value={policyConfig.custom_red_flag_keywords.join(', ')}
-                      onChange={e => setPolicyConfig({
-                        ...policyConfig,
-                        custom_red_flag_keywords: e.target.value.split(',').map(s => s.trim()).filter(s => s)
-                      })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-650 focus:outline-none focus:border-violet-600/70 shadow-inner"
-                    />
-                    <p className="text-[10px] text-slate-500">Any exact keyword or phrase match will instantly flag the job as rejected.</p>
-                  </div>
-
-                  {/* Save panel */}
-                  <div className="pt-6 border-t border-slate-850 flex justify-end">
-                    <button
-                      onClick={() => savePolicyConfig(policyConfig)}
-                      className="inline-flex items-center px-6 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-sm font-semibold shadow-md shadow-violet-500/10 border border-violet-500/20 active:scale-95 transition-all"
-                    >
-                      <Check className="w-4 h-4 mr-2" />
-                      Apply Policy Rules
-                    </button>
-                  </div>
-
-                </div>
-              )}
-            </div>
+            <PolicyPanel
+              policyLoading={policyLoading}
+              policyConfig={policyConfig}
+              setPolicyConfig={setPolicyConfig}
+              savePolicyConfig={savePolicyConfig}
+            />
           ) : activeTab === 'settings' ? (
-
-            /* Settings Tab */
-            <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-3xl shadow-xl">
-              <div className="flex items-center space-x-2 pb-4 border-b border-slate-800">
-                <SettingsIcon className="w-5 h-5 text-violet-400" />
-                <h2 className="text-lg font-bold text-white">Sourcing & Webhook Settings</h2>
-              </div>
-
-              {/* Webhook URLs */}
-              <div className="space-y-3">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Discord Notification Webhook
-                </label>
-                <div className="flex space-x-3">
-                  <input
-                    type="text"
-                    placeholder="https://discord.com/api/webhooks/..."
-                    value={webhookUrlInput}
-                    onChange={e => setWebhookUrlInput(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-600/70 shadow-inner"
-                  />
-                  <button
-                    onClick={testWebhook}
-                    disabled={testingWebhook}
-                    className="inline-flex items-center px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition-colors"
-                  >
-                    {testingWebhook ? 'Testing...' : 'Test Webhook'}
-                  </button>
-                </div>
-
-                {/* Webhook Delivery Preference Toggle */}
-                <div className="bg-slate-950/40 border border-slate-850 p-3 rounded-xl flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-slate-300">Delivery Preference</span>
-                    <p className="text-[11px] text-slate-500">
-                      Consolidated digest groups all new approved jobs into a single summary card instead of individual alerts.
-                    </p>
-                  </div>
-                  <label className="inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={sendDigestOnly}
-                      onChange={e => setSendDigestOnly(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="relative w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-600 peer-checked:after:bg-white"></div>
-                    <span className="ms-2 text-xs font-semibold text-slate-300">Digest</span>
-                  </label>
-                </div>
-
-                <p className="text-xs text-slate-500">Sends alerts when new approved jobs are synced to Notion.</p>
-              </div>
-
-              {/* Target titles */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Target Job Titles Sourcing List (One per line)
-                </label>
-                <textarea
-                  rows={8}
-                  placeholder="DevOps Engineer&#10;Platform Engineer"
-                  value={titlesInput}
-                  onChange={e => setTitlesInput(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-600/70 shadow-inner"
-                />
-              </div>
-
-              {/* Scheduler Settings */}
-              <div className="space-y-4 pt-4 border-t border-slate-850">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Background Scheduler Configuration
-                </label>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-6">
-                  <label className="inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={schedulerEnabled}
-                      onChange={e => setSchedulerEnabled(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="relative w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600 peer-checked:after:bg-white"></div>
-                    <span className="ms-3 text-sm font-medium text-slate-300">Run automatically every day</span>
-                  </label>
-
-                  {schedulerEnabled && (
-                    <div className="flex items-center space-x-2">
-                      <span className="text-sm text-slate-400">at</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="23"
-                        value={schedulerHour}
-                        onChange={e => setSchedulerHour(Number(e.target.value))}
-                        className="w-16 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-center text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
-                      />
-                      <span className="text-sm text-slate-400">:</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="59"
-                        value={schedulerMinute}
-                        onChange={e => setSchedulerMinute(Number(e.target.value))}
-                        className="w-16 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-center text-sm text-slate-200 focus:outline-none focus:border-violet-600/70"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Submit panel */}
-              <div className="pt-6 border-t border-slate-800 flex justify-end">
-                <button
-                  onClick={saveSettings}
-                  className="inline-flex items-center px-6 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-sm font-semibold shadow-md shadow-violet-500/10 border border-violet-500/20 active:scale-95 transition-all"
-                >
-                  <Check className="w-4 h-4 mr-2" />
-                  Save Settings
-                </button>
-              </div>
-
-            </div>
+            <SettingsPanel
+              webhookUrlInput={webhookUrlInput}
+              setWebhookUrlInput={setWebhookUrlInput}
+              testWebhook={testWebhook}
+              testingWebhook={testingWebhook}
+              sendDigestOnly={sendDigestOnly}
+              setSendDigestOnly={setSendDigestOnly}
+              titlesInput={titlesInput}
+              setTitlesInput={setTitlesInput}
+              schedulerEnabled={schedulerEnabled}
+              setSchedulerEnabled={setSchedulerEnabled}
+              schedulerHour={schedulerHour}
+              setSchedulerHour={setSchedulerHour}
+              schedulerMinute={schedulerMinute}
+              setSchedulerMinute={setSchedulerMinute}
+              saveSettings={saveSettings}
+            />
           ) : activeTab === 'resume' ? (
             <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-4xl shadow-xl flex flex-col h-[70vh]">
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
@@ -2494,56 +2247,12 @@ export default function Dashboard() {
           )}
         </section>
 
-        {/* Live Scraper Log Console */}
-        <section className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 rounded-2xl shadow-xl overflow-hidden mt-6">
-          <button
-            type="button"
-            onClick={() => setIsLogsExpanded(prev => !prev)}
-            className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-800/25 transition-colors"
-          >
-            <div className="flex items-center space-x-2.5">
-              <Database className="w-5 h-5 text-indigo-400 animate-pulse" />
-              <div className="text-left">
-                <h3 className="text-sm font-bold text-white">Live Pipeline Logs Console</h3>
-                <p className="text-[10px] text-slate-400">
-                  {scraperStatus.status === 'running'
-                    ? 'Scraper active - streaming logs'
-                    : 'Pipeline idle - click to view recent logs'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              {scraperStatus.status === 'running' && (
-                <span className="flex h-2 w-2 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                </span>
-              )}
-              <span className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">
-                {isLogsExpanded ? 'Hide Console' : 'Show Console'}
-              </span>
-            </div>
-          </button>
-          
-          {isLogsExpanded && (
-            <div className="border-t border-slate-800 p-4 bg-slate-950/85">
-              <div className="flex items-center justify-between mb-3 text-xs text-slate-400 font-mono">
-                <span>logs/scrape.log · Last 100 lines</span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Auto-refreshing (3s)
-                </span>
-              </div>
-              <div className="h-64 overflow-y-auto bg-slate-950 font-mono text-xs text-slate-300 p-4 rounded-xl border border-slate-850/80 custom-scrollbar">
-                <pre className="whitespace-pre-wrap leading-relaxed text-left">
-                  {scraperLogs.length > 0 
-                    ? scraperLogs.join('') 
-                    : 'No logs fetched yet or pipeline log is empty.'}
-                </pre>
-              </div>
-            </div>
-          )}
-        </section>
+        <LogConsole
+          isLogsExpanded={isLogsExpanded}
+          setIsLogsExpanded={setIsLogsExpanded}
+          scraperStatus={scraperStatus}
+          scraperLogs={scraperLogs}
+        />
 
       </main>
 

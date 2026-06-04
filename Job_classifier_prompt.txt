@@ -20,12 +20,6 @@ Ignore:
 * marketing language
 * generic soft-skill filler unless it affects the role scope
 
-Geography and work arrangement (US pipeline):
-
-* Discovery is biased toward roles tied to the United States; postings may be remote, hybrid, or onsite.
-* Prefer APPLY when the role is clearly US-based or explicitly open to qualified US-based candidates in line with stated location and authorization text.
-* Prefer DO_NOT_APPLY / OutOfScope when the role is clearly outside the US with no credible US remote or relocation path, or when geography conflicts with MAAS policy.
-
 Return ONLY valid JSON using the schema defined below.
 
 ---
@@ -44,6 +38,8 @@ Site Reliability Engineer (SRE)
 Continuous Integration (CI/CD)
 System Engineer
 Cloud Network Engineer
+Database Engineer
+Cloud Database Engineer
 Data Platform Engineer
 Machine Learning Engineer (MLOps)
 AI Platform Engineer (AIOps)
@@ -61,7 +57,7 @@ Do not promote a role into a specialist label from tool mentions alone. Speciali
 
 Examples:
 
-Database administration dominates → OutOfScope
+Database systems dominate → Cloud Database Engineer or Database Engineer
 Networking architecture dominates → Cloud Network Engineer
 Operating system / compute lifecycle dominates → Cloud Infrastructure Engineer
 Kubernetes platform ownership dominates → Platform Engineering
@@ -160,6 +156,7 @@ Do not classify from keyword stacking alone. For example:
 * Terraform mention alone does NOT mean Cloud Automation Engineer
 * Prometheus/Grafana mention alone does NOT mean Site Reliability Engineer (SRE)
 * IAM mention alone does NOT mean Cloud Security Engineer
+* SQL/database mention alone does NOT mean Database Engineer
 
 Role-nature gate takes precedence over tool mentions.
 If the role is primarily customer-facing technical enablement, treat it as OutOfScope even when DevOps/cloud tools are listed.
@@ -180,6 +177,8 @@ The following roles belong to one MAAS DevOps-family ecosystem, but they are NOT
 * Continuous Integration (CI/CD)
 * System Engineer
 * Cloud Network Engineer
+* Database Engineer
+* Cloud Database Engineer
 * Data Platform Engineer
 * Machine Learning Engineer (MLOps)
 * AI Platform Engineer (AIOps)
@@ -192,19 +191,21 @@ Use the specialized label when that domain is primary. Use DevOps Engineer when 
 
 When scores are close, use this precedence:
 
-1 Cloud Network Engineer
-2 Cloud Infrastructure Engineer
-3 Platform Engineering
-4 Cloud Security Engineer
-5 DevSecOps
-6 Data Platform Engineer
-7 Machine Learning Engineer (MLOps)
-8 AI Platform Engineer (AIOps)
-9 Cloud Automation Engineer
-10 Site Reliability Engineer (SRE)
-11 Continuous Integration (CI/CD)
-12 System Engineer
-13 DevOps Engineer
+1 Cloud Database Engineer
+2 Database Engineer
+3 Cloud Network Engineer
+4 Cloud Infrastructure Engineer
+5 Platform Engineering
+6 Cloud Security Engineer
+7 DevSecOps
+8 Data Platform Engineer
+9 Machine Learning Engineer (MLOps)
+10 AI Platform Engineer (AIOps)
+11 Cloud Automation Engineer
+12 Site Reliability Engineer (SRE)
+13 Continuous Integration (CI/CD)
+14 System Engineer
+15 DevOps Engineer
 
 ---
 
@@ -263,11 +264,6 @@ ranges where maximum ≤7
 - Data science
 - If present: add red_flag: "Out of scope"
 
-### Non-US Location
-- Role is outside the United States (e.g. Canada, UK/London, Germany, India, Europe, Australia, etc.)
-- Description explicitly requires candidate to be based in a non-US location or have work authorization for a non-US country with no US work option.
-- If any of these appear: add red_flag: "Non-US Location restriction"
-
 ### Salary rule
 - Salaried full-time: minimum salary < $80k → DO_NOT_APPLY
 - Hourly: ≤ $50/hr → DO_NOT_APPLY
@@ -297,11 +293,115 @@ pure scrum master / delivery coordination without hands-on engineering scope
 
 --------------------------------------------------
 ---
-## DATABASE AND CLOUD DATABASE WORK - OUT OF SCOPE
+## DATABASE ENGINEER RULE
 
-Roles where database administration, database systems reliability, DB performance tuning, database recovery, schema optimization, or cloud-managed database services (AWS RDS, Aurora, DynamoDB, PostgreSQL, Oracle, MongoDB, Redis, etc.) dominate responsibilities are OUT OF SCOPE. They must be classified as OutOfScope.
+Choose Database Engineer when database infrastructure dominates and the work is primarily database administration, reliability, performance, tuning, recovery, or platform support.
 
-STOP — If database systems or database platforms dominate, classify as OutOfScope.
+Signals:
+
+database administration
+replication
+backup and recovery
+query optimization
+database clustering
+performance tuning
+capacity planning
+high availability
+database patching
+schema performance support
+
+Expanded Signals:
+
+query indexing strategies
+transaction tuning
+connection pooling
+database failover handling
+data consistency enforcement
+
+Implicit Signals:
+
+high-throughput systems
+OLTP systems
+data reliability ownership
+
+Negative Signals:
+
+only writing application queries
+ORM-only usage
+no database ownership
+
+Technologies:
+
+SQL Server
+PostgreSQL
+Oracle
+MySQL
+MongoDB
+Redis
+Cassandra
+
+Scoring:
+
+database_score += 3
+
+If performance tuning + HA present:
+
+database_score += 2
+
+---
+
+## CLOUD DATABASE ENGINEER RULE
+
+Choose Cloud Database Engineer when managed cloud database services dominate responsibilities.
+
+Signals:
+
+managed database services
+database migration to cloud
+multi-region database design
+cloud database reliability
+database platform automation
+
+Expanded Signals:
+
+cross-region replication
+serverless database systems
+cloud DB scaling strategies
+disaster recovery planning
+
+Implicit Signals:
+
+cloud-first data architecture
+distributed database systems
+
+Negative Signals:
+
+database usage without ownership
+only writing queries
+
+Technologies:
+
+AWS RDS
+Aurora
+Azure SQL
+Cloud SQL
+Cloud Spanner
+DynamoDB
+Cosmos DB
+
+Scoring:
+
+cloud_database_score += 4
+
+If two or more cloud-managed database services appear:
+
+cloud_database_score += 2
+
+If multi-region architecture present:
+
+cloud_database_score += 2
+
+---
 
 ## CLOUD NETWORK ENGINEER RULE
 

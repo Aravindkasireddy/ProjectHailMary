@@ -415,7 +415,29 @@ def mark_job_synced(url, page_id):
     except Exception as e:
         print(f"Error saving synced jobs: {e}")
 
+_cached_jobs_data = None
+_cached_jobs_mtimes = {}
+
 def load_all_jobs():
+    global _cached_jobs_data, _cached_jobs_mtimes
+    
+    paths_to_track = {
+        "approved": APPROVED_PATH,
+        "active": ACTIVE_PATH,
+        "failed": FAILED_PATH,
+        "synced": SYNCED_PATH
+    }
+    
+    current_mtimes = {}
+    for key, path in paths_to_track.items():
+        if os.path.exists(path):
+            current_mtimes[key] = os.path.getmtime(path)
+        else:
+            current_mtimes[key] = 0.0
+            
+    if _cached_jobs_data is not None and _cached_jobs_mtimes == current_mtimes:
+        return _cached_jobs_data
+
     jobs = []
     approved_urls = set()
     synced_jobs = load_synced_jobs()
@@ -534,6 +556,10 @@ def load_all_jobs():
             
     # Group and flag duplicates
     jobs = group_and_flag_duplicates(jobs)
+
+    # Cache results
+    _cached_jobs_data = jobs
+    _cached_jobs_mtimes = current_mtimes
 
     return jobs
 
@@ -1100,7 +1126,7 @@ def _append_pipeline_log(message):
 
 
 # Scraper worker thread
-def scraper_worker():
+def scraper_worker(past_24h_only=False):
     global scraper_state
     scraper_state["status"] = "running"
     scraper_state["message"] = "Starting search query sourcing..."
@@ -1116,7 +1142,10 @@ def scraper_worker():
         return p
 
     try:
-        p1 = run_step([sys.executable, "find_and_scrape_jobs.py"], "find_and_scrape_jobs")
+        cmd = [sys.executable, "find_and_scrape_jobs.py"]
+        if past_24h_only:
+            cmd.append("--past-24h")
+        p1 = run_step(cmd, "find_and_scrape_jobs")
         if p1.returncode != 0:
             scraper_state["status"] = "failed"
             err = (p1.stderr or p1.stdout or "").strip() or "Unknown error"
@@ -1753,7 +1782,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if scraper_state["status"] == "running":
                 res = {"success": False, "message": "Scraper is already running."}
             else:
-                threading.Thread(target=scraper_worker).start()
+                past_24h_only = payload.get("past_24h_only", False)
+                threading.Thread(target=lambda: scraper_worker(past_24h_only)).start()
                 res = {"success": True, "message": "Scraper started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))

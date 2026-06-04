@@ -90,27 +90,27 @@ def get_job_classifications():
     
     # Candidate 2: Cambiumlearning - Senior Database Engineer II
     classifications[2] = {
-        "apply_decision": "DO_NOT_APPLY",
-        "strongest_label": "OutOfScope",
+        "apply_decision": "APPLY",
+        "strongest_label": "Database Engineer",
         "confidence_score": 100,
-        "red_flags": ["Out of scope"],
+        "red_flags": [],
         "req_id_override": "REQ-4234",
-        "rationale": "The role is for a Senior Database Engineer II focusing on SQL Server development and administration, which is out of scope for the MAAS engineering categories.",
+        "rationale": "The role is for a Senior Database Engineer II focusing on SQL Server development, administration, and reliability, which fits within the Database Engineer category.",
         "payload": {
-            "all_labels": ["OutOfScope"],
-            "strongest_label": "OutOfScope",
+            "all_labels": ["Database Engineer"],
+            "strongest_label": "Database Engineer",
             "other_labels": [],
-            "apply_decision": "DO_NOT_APPLY",
-            "red_flags": ["Out of scope"],
+            "apply_decision": "APPLY",
+            "red_flags": [],
             "filters": {"domain_specialization": False},
             "confidence_score": 100,
             "cloud": {"is_cloud_role": False, "primary_cloud": "", "cloud_providers": []},
             "domain_scores": {k: 0 for k in ["database", "cloud_database", "network", "infrastructure", "platform", "automation", "devops", "cicd", "sre", "security", "devsecops", "system", "data", "mlops", "aiops"]},
-            "dominant_domains": [],
+            "dominant_domains": ["database"],
             "dominant_signals": {},
-            "decision_trace": {"top_score": 0},
-            "rationale": "The role is for a Senior Database Engineer II focusing on SQL Server development and administration, which is out of scope for the MAAS engineering categories.",
-            "rationale_formatted": ["Database engineering/DBA focus", "Not in scope for MAAS engineering categories"]
+            "decision_trace": {"top_score": 5},
+            "rationale": "The role is for a Senior Database Engineer II focusing on SQL Server development, administration, and reliability, which fits within the Database Engineer category.",
+            "rationale_formatted": ["Database engineering/DBA focus on SQL Server", "In scope for Database Engineer category"]
         }
     }
     
@@ -734,6 +734,8 @@ def classify_job_dynamically(job):
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 0,
         "Cloud Network Engineer": 0,
+        "Database Engineer": 0,
+        "Cloud Database Engineer": 0,
         "Data Platform Engineer": 0,
         "Machine Learning Engineer (MLOps)": 0,
         "AI Platform Engineer (AIOps)": 0
@@ -766,6 +768,12 @@ def classify_job_dynamically(job):
         
     if "network" in title:
         label_scores["Cloud Network Engineer"] += 10
+        
+    if "database" in title or "dba" in title or "sql" in title:
+        if "cloud" in title or any(c in title for c in ["aws", "gcp", "azure", "rds", "aurora", "dynamodb"]):
+            label_scores["Cloud Database Engineer"] += 10
+        else:
+            label_scores["Database Engineer"] += 10
         
     if "ci/cd" in title or "cicd" in title or "release" in title or "integration" in title:
         label_scores["Continuous Integration (CI/CD)"] += 10
@@ -802,7 +810,11 @@ def classify_job_dynamically(job):
         label_scores["Machine Learning Engineer (MLOps)"] += 2
     if any(k in desc for k in ["aiops", "llm infra", "gpu workload"]):
         label_scores["AI Platform Engineer (AIOps)"] += 2
-
+    if any(k in desc for k in ["database administrator", "replication", "backup and recovery", "query optimization", "database clustering", "performance tuning", "high availability"]):
+        label_scores["Database Engineer"] += 2
+    if any(k in desc for k in ["rds", "aurora", "cloud database", "managed database", "cosmos db", "spanner"]):
+        label_scores["Cloud Database Engineer"] += 2
+ 
     top_label = max(label_scores, key=label_scores.get)
     top_score = label_scores[top_label]
     if top_score == 0:

@@ -68,6 +68,8 @@ def is_recent_date(val):
         print(f"Error parsing date {val}: {e}")
     return True
 
+PAST_24H = False
+
 SEARCH_STATE = {
     "consecutive_failures": 0,
     "consecutive_zero_yields": 0,
@@ -145,40 +147,87 @@ def filter_discovered_links(links):
         try:
             parsed = urlparse(link)
             domain = parsed.netloc.lower()
-            if any(bad in domain for bad in ['duckduckgo.com', 'yahoo.com', 'google.com', 'bing.com']):
+            
+            # 1. Blacklist search engines, social media, and reference sites
+            if any(bad in domain for bad in [
+                'duckduckgo.com', 'yahoo.com', 'google.com', 'bing.com', 'github.com', 
+                'twitter.com', 'facebook.com', 'instagram.com', 'youtube.com', 'wikipedia.org', 
+                'reddit.com', 'medium.com', 'stackoverflow.com', 'npmtrends.com', 'npmjs.com'
+            ]):
                 continue
-            if any(tgt in domain for tgt in ['greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'ashbyhq.com', 'workable.com', 'smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com', 'workatastartup.com']):
-                path_parts = [p for p in parsed.path.split('/') if p]
-                if 'greenhouse.io' in domain:
-                    if len(path_parts) >= 3 and path_parts[1] == 'jobs':
-                        valid_links.append(link)
-                elif 'lever.co' in domain:
-                    if len(path_parts) >= 2:
-                        valid_links.append(link)
-                elif 'myworkdayjobs.com' in domain:
-                    if 'job' in path_parts:
-                        valid_links.append(link)
-                elif 'ashbyhq.com' in domain:
-                    if len(path_parts) >= 2:
-                        valid_links.append(link)
-                elif 'workable.com' in domain:
-                    if len(path_parts) >= 3 and path_parts[1] == 'j':
-                        valid_links.append(link)
-                elif 'smartrecruiters.com' in domain:
-                    if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
-                        valid_links.append(link)
-                elif 'weworkremotely.com' in domain:
-                    if 'remote-jobs' in path_parts:
-                        valid_links.append(link)
-                elif 'remote.co' in domain:
-                    if 'job-details' in path_parts or 'job' in path_parts:
-                        valid_links.append(link)
-                elif 'linkedin.com' in domain:
-                    if 'view' in path_parts:
-                        valid_links.append(link)
-                elif 'workatastartup.com' in domain:
-                    if 'jobs' in path_parts:
-                        valid_links.append(link)
+                
+            path_parts = [p for p in parsed.path.split('/') if p]
+            if not path_parts:
+                continue
+
+            # 2. Check existing specific ATS platforms (for backward compatibility and strictness)
+            if 'greenhouse.io' in domain:
+                if len(path_parts) >= 3 and path_parts[1] == 'jobs':
+                    valid_links.append(link)
+                    continue
+            elif 'lever.co' in domain:
+                if len(path_parts) >= 2:
+                    valid_links.append(link)
+                    continue
+            elif 'myworkdayjobs.com' in domain:
+                if 'job' in path_parts:
+                    valid_links.append(link)
+                    continue
+            elif 'ashbyhq.com' in domain:
+                if len(path_parts) >= 2:
+                    valid_links.append(link)
+                    continue
+            elif 'workable.com' in domain:
+                if len(path_parts) >= 3 and path_parts[1] == 'j':
+                    valid_links.append(link)
+                    continue
+            elif 'smartrecruiters.com' in domain:
+                if len(path_parts) >= 2 and '-' in path_parts[1] and path_parts[1].split('-')[0].isdigit():
+                    valid_links.append(link)
+                    continue
+            elif 'weworkremotely.com' in domain:
+                if 'remote-jobs' in path_parts:
+                    valid_links.append(link)
+                    continue
+            elif 'remote.co' in domain:
+                if 'job-details' in path_parts or 'job' in path_parts:
+                    valid_links.append(link)
+                    continue
+            elif 'linkedin.com' in domain:
+                if 'view' in path_parts:
+                    valid_links.append(link)
+                    continue
+            elif 'workatastartup.com' in domain:
+                if 'jobs' in path_parts:
+                    valid_links.append(link)
+                    continue
+
+            # 3. Check new targeted ATS platforms & job boards
+            is_new_ats = False
+            if any(tgt in domain for tgt in [
+                'remoterocketship.com', 'pinpointhq.com', 'remotive.com', 'remotive.io', 
+                'paylocity.com', 'keka.com', 'breezy.hr', 'wellfound.com', 'oraclecloud.com', 
+                'recruitee.com', 'rippling-ats.com', 'rippling.com', 'gusto-ats.com', 
+                'careerpuck.com', 'teamtailor.com', 'talentreef.com', 'homerun.co', 
+                'gem.com', 'trakstar.com', 'catsone.com', 'jazzhr.com', 'jazz.co', 
+                'jobvite.com', 'icims.com', 'dover.com', 'builtin', 'adp.com', 
+                'glassdoor.com', 'factorialhr.com', 'trinethire.com', 'notion.so'
+            ]):
+                is_new_ats = True
+            
+            # 4. Check custom subdomains (jobs.*, careers.*, people.*, talent.*)
+            elif any(domain.startswith(sub) for sub in ['jobs.', 'careers.', 'people.', 'talent.']):
+                is_new_ats = True
+
+            # 5. Check generic paths with careers/jobs keywords
+            elif any(part in path_parts for part in ['careers', 'jobs', 'job', 'careers-portal', 'career', 'p', 'o', 'view']):
+                is_new_ats = True
+
+            if is_new_ats:
+                # Require at least one path segment to avoid matching homepages
+                if len(path_parts) >= 1:
+                    valid_links.append(link)
+                    
         except Exception:
             pass
     return list(set(valid_links))
@@ -192,9 +241,10 @@ def search_google_custom(query):
     params = {
         "key": api_key,
         "cx": cx,
-        "q": query,
-        "dateRestrict": "d1"
+        "q": query
     }
+    if PAST_24H:
+        params["dateRestrict"] = "d1"
     try:
         r = requests.get(url, params=params, timeout=10)
         if r.status_code == 200:
@@ -213,7 +263,9 @@ def search_bing_api(query):
         return None
     url = "https://api.bing.microsoft.com/v7.0/search"
     headers = {"Ocp-Apim-Subscription-Key": api_key}
-    params = {"q": query, "count": 10, "freshness": "Day"}
+    params = {"q": query, "count": 10}
+    if PAST_24H:
+        params["freshness"] = "Day"
     try:
         r = requests.get(url, headers=headers, params=params, timeout=10)
         if r.status_code == 200:
@@ -226,6 +278,56 @@ def search_bing_api(query):
         log(f"Bing Search API error: {e}")
     return None
 
+def search_serper(query):
+    api_key = os.environ.get("SERPER_API_KEY")
+    if not api_key:
+        return None
+    url = "https://google.serper.dev/search"
+    headers = {
+        "X-API-KEY": api_key,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "q": query
+    }
+    if PAST_24H:
+        payload["tbs"] = "qdr:d"
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            organic = data.get("organic", [])
+            return [item["link"] for item in organic if "link" in item]
+        else:
+            log(f"Serper API returned status code {r.status_code}: {r.text}")
+    except Exception as e:
+        log(f"Serper API error: {e}")
+    return None
+
+def search_serpapi(query):
+    api_key = os.environ.get("SERPAPI_API_KEY")
+    if not api_key:
+        return None
+    url = "https://serpapi.com/search"
+    params = {
+        "engine": "google",
+        "q": query,
+        "api_key": api_key
+    }
+    if PAST_24H:
+        params["tbs"] = "qdr:d"
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            organic_results = data.get("organic_results", [])
+            return [item["link"] for item in organic_results if "link" in item]
+        else:
+            log(f"SerpApi returned status code {r.status_code}: {r.text}")
+    except Exception as e:
+        log(f"SerpApi error: {e}")
+    return None
+
 def search_duckduckgo(query):
     if SEARCH_STATE["aborted"]:
         return []
@@ -233,7 +335,8 @@ def search_duckduckgo(query):
         "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
-    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&df=d"
+    time_filter = "&df=d" if PAST_24H else ""
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}{time_filter}"
     links = []
     try:
         r = http_get(url, headers=headers, timeout=10)
@@ -408,10 +511,47 @@ def fetch_with_playwright(url):
                     log(f"Routing Playwright attempt {attempt} through proxy: {proxy_str}")
                 
                 browser = p.webkit.launch(**launch_kwargs)
+                
+                # Rotate viewport sizes
+                viewports = [
+                    {"width": 1920, "height": 1080},
+                    {"width": 1440, "height": 900},
+                    {"width": 1366, "height": 768},
+                    {"width": 1536, "height": 864}
+                ]
+                viewport = random.choice(viewports)
+                
+                # Rotate languages
+                locales = ["en-US", "en-GB", "en-CA"]
+                locale = random.choice(locales)
+                
                 context = browser.new_context(
-                    user_agent=get_random_user_agent()
+                    user_agent=get_random_user_agent(),
+                    viewport=viewport,
+                    locale=locale,
+                    timezone_id="America/Chicago",
+                    geolocation={"latitude": 37.7749, "longitude": -122.4194},
+                    permissions=["geolocation"]
                 )
+                
                 page = context.new_page()
+                
+                # Stealth injection
+                page.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                    window.chrome = {
+                        runtime: {}
+                    };
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en']
+                    });
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5]
+                    });
+                """)
+                
                 page.goto(url, wait_until="commit", timeout=20000)
                 # Randomized post-navigation delay (2.5-4.5s)
                 time.sleep(random.uniform(2.5, 4.5))
@@ -1117,7 +1257,8 @@ def search_yahoo(query):
         "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
-    url = f"https://search.yahoo.com/search?p={quote_plus(query)}&btf=d"
+    time_filter = "&btf=d" if PAST_24H else ""
+    url = f"https://search.yahoo.com/search?p={quote_plus(query)}{time_filter}"
     links = []
     try:
         r = http_get(url, headers=headers, timeout=10)
@@ -1126,13 +1267,15 @@ def search_yahoo(query):
             soup = BeautifulSoup(r.text, 'html.parser')
             for a in soup.find_all('a', href=True):
                 href = a['href']
-                if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
-                    m = re.search(r'RU=([^/]+)', href)
-                    if m:
-                        from urllib.parse import unquote
-                        actual_url = unquote(m.group(1))
-                        links.append(actual_url)
-                    else:
+                m = re.search(r'RU=([^/]+)', href)
+                if m:
+                    from urllib.parse import unquote
+                    actual_url = unquote(m.group(1))
+                    links.append(actual_url)
+                else:
+                    parsed = urlparse(href)
+                    domain = parsed.netloc.lower()
+                    if parsed.scheme.startswith('http') and not any(bad in domain for bad in ['yahoo.com', 'yimg.com']):
                         links.append(href)
         else:
             log(f"Yahoo search error for '{query}': status code {r.status_code}")
@@ -1170,21 +1313,28 @@ def build_yahoo_queries(title, search_cfg):
             except Exception:
                 continue
         return out if out else []
-    core = [
-        f'site:boards.greenhouse.io "{title}" {us}',
-        f'site:jobs.lever.co "{title}" {us}',
-        f'site:myworkdayjobs.com "{title}" {us}',
-        f'site:jobs.ashbyhq.com "{title}" {us}',
-        f'site:apply.workable.com "{title}" {us}',
-        f'site:jobs.smartrecruiters.com "{title}" {us}',
-        f'site:linkedin.com/jobs/view "{title}" {us}',
-        f'site:workatastartup.com/jobs "{title}" {us}',
-    ]
+
+    # Group target ATS platforms to minimize search query counts and prevent rate limits.
+    # Group 1: Core/Popular ATS
+    g1 = f'"{title}" {us} (site:boards.greenhouse.io OR site:jobs.lever.co OR site:myworkdayjobs.com OR site:jobs.ashbyhq.com OR site:apply.workable.com OR site:jobs.smartrecruiters.com)'
+    # Group 2: Job Boards & Aggregators
+    g2 = f'"{title}" {us} (site:linkedin.com/jobs/view OR site:workatastartup.com/jobs OR site:remoterocketship.com/jobs OR site:wellfound.com/jobs OR site:remotive.com OR site:remotive.io)'
+    # Group 3: Modern/Niche ATS
+    g3 = f'"{title}" {us} (site:pinpointhq.com OR site:breezy.hr OR site:recruitee.com OR site:teamtailor.com OR site:homerun.co OR site:gem.com)'
+    # Group 4: Enterprise/HR ATS
+    g4 = f'"{title}" {us} (site:oraclecloud.com OR site:rippling-ats.com OR site:gusto-ats.com OR site:jobvite.com OR site:icims.com OR site:adp.com OR site:trinethire.com)'
+    # Group 5: Custom Subdomains/Paths & General ATS
+    g5 = f'"{title}" {us} (site:catsone.com OR site:jazzhr.com OR site:jazz.co OR site:dover.com OR site:factorialhr.com OR site:paylocity.com OR site:keka.com)'
+    # Group 6: Custom Subdomain & Career Page Discovery
+    g6 = f'"{title}" {us} (inurl:jobs OR inurl:careers OR inurl:people OR inurl:talent)'
+    
+    core = [g1, g2, g3, g4, g5, g6]
+    
+    # Optional remote job boards
     if search_cfg.get("include_remote_primary_boards", True):
-        core.extend([
-            f'site:weworkremotely.com "{title}" {us}',
-            f'site:remote.co "{title}" {us}',
-        ])
+        g_remote = f'"{title}" {us} (site:weworkremotely.com OR site:remote.co)'
+        core.append(g_remote)
+        
     return core
 
 
@@ -1203,6 +1353,8 @@ def expand_target_titles_with_gemini(target_titles, api_key):
         "CI/CD Engineer": ["Release Engineer", "Build Engineer", "DevOps CI/CD"],
         "Systems Engineer": ["System Engineer", "Linux Systems Engineer", "Operations Engineer"],
         "Cloud Network Engineer": ["Network Engineer", "Cloud Network Administrator"],
+        "Database Engineer": ["Database Administrator", "DBA", "Database Reliability Engineer", "SQL Engineer"],
+        "Cloud Database Engineer": ["Cloud DBA", "AWS Database Engineer", "Cloud database admin", "NoSQL Engineer"],
         "Data Platform Engineer": ["Data Infrastructure Engineer", "Data Engineer", "Data Ops"],
         "Machine Learning Engineer": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Infrastructure"],
         "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"]
@@ -1328,6 +1480,8 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
         
         has_google = bool(os.environ.get("GOOGLE_SEARCH_API_KEY") and os.environ.get("GOOGLE_SEARCH_CX"))
         has_bing = bool(os.environ.get("BING_SEARCH_API_KEY"))
+        has_serper = bool(os.environ.get("SERPER_API_KEY"))
+        has_serpapi = bool(os.environ.get("SERPAPI_API_KEY"))
         
         if has_google:
             using_api = True
@@ -1337,6 +1491,14 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
             using_api = True
             log(f"Searching Bing Search API: {query}")
             urls = search_bing_api(query)
+        elif has_serper:
+            using_api = True
+            log(f"Searching Serper API: {query}")
+            urls = search_serper(query)
+        elif has_serpapi:
+            using_api = True
+            log(f"Searching SerpApi: {query}")
+            urls = search_serpapi(query)
             
         if not urls and not SEARCH_STATE["aborted"]:
             using_api = False
@@ -1348,6 +1510,9 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
         
         if SEARCH_STATE["aborted"]:
             break
+            
+        if urls:
+            urls = filter_discovered_links(urls)
             
         if not urls:
             SEARCH_STATE["consecutive_zero_yields"] += 1
@@ -2406,6 +2571,8 @@ def main(dry_run=False):
             "CI/CD Engineer",
             "Systems Engineer",
             "Cloud Network Engineer",
+            "Database Engineer",
+            "Cloud Database Engineer",
             "Data Platform Engineer",
             "Machine Learning Engineer",
             "AI Platform Engineer",
@@ -2429,6 +2596,9 @@ def main(dry_run=False):
             log(f"Warning: could not merge previous scraped_jobs.json: {e}")
 
     found_urls = set()
+    if merge_previous:
+        found_urls.update(merged_by_url.keys())
+        log(f"Pre-populated seen cache with {len(found_urls)} previously scraped URLs to avoid duplicate searches.")
     scraped_jobs = []
     dry_urls = []
 
@@ -2541,6 +2711,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Only collect Yahoo result URLs; write dry_run_urls.json and exit.",
     )
+    parser.add_argument(
+        "--past-24h",
+        action="store_true",
+        help="Only search for jobs posted in the last 24 hours.",
+    )
     args = parser.parse_args()
+    
+    PAST_24H = args.past_24h or os.environ.get("JOBSEARCH_PAST_24H", "").strip().lower() in ("1", "true", "yes")
+    
     dry = args.dry_run or os.environ.get("JOBSEARCH_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
     main(dry_run=dry)
