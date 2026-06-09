@@ -1,0 +1,39 @@
+# Gemini-jobsearch — API + Next.js dashboard
+#
+# Default host ports: API 8080, web 3000. If busy, set in .env (see .env.example):
+#   JOBSEARCH_API_HOST_PORT=8081
+#   JOBSEARCH_WEB_HOST_PORT=3001
+# Then: docker compose up --build  (web image rebuild picks up NEXT_PUBLIC_API_URL)
+#
+#   docker compose up --build
+#
+# Open http://localhost:${JOBSEARCH_WEB_HOST_PORT:-3000}
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      JOBSEARCH_DASHBOARD_PORT: "8080"
+    ports:
+      - "${JOBSEARCH_API_HOST_PORT:-8080}:8080"
+    volumes:
+      - .:/app
+    working_dir: /app
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    ports:
+      - "${JOBSEARCH_WEB_HOST_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

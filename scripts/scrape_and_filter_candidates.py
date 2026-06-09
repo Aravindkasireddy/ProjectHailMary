@@ -162,6 +162,11 @@ from jobsearch_paths import workspace_root
 
 WORKSPACE = workspace_root()
 
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from job_identity import enrich_job_list  # noqa: E402
+from salary_parser import extract_salary_fields  # noqa: E402
+
 def resolve_path(base_path):
     import os
     email = os.environ.get("MAAS_USER_EMAIL")
@@ -1131,6 +1136,12 @@ async def main():
                 failed_jobs.append(result)
                 
     print(f"\nProcessing complete.\nPassed jobs: {len(passed_jobs)}\nFailed jobs: {len(failed_jobs)}", flush=True)
+
+    enrich_job_list(passed_jobs)
+    enrich_job_list(failed_jobs)
+    for j in passed_jobs:
+        if isinstance(j, dict):
+            j.update(extract_salary_fields(j))
     
     with open(str(resolve_path(WORKSPACE / "active_candidate_jobs.json")), "w") as f:
         json.dump(passed_jobs, f, indent=2)

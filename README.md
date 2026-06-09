@@ -2,6 +2,8 @@
 
 Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Discovery targets US roles (remote, hybrid, or onsite), optional Notion sync and Discord/Slack webhooks.
 
+**On Windows**, running via **[Docker](#docker-api--dashboard)** is the most reliable path (Playwright + bash pipeline + one command for API + UI).
+
 ## Layout
 
 | Path | Purpose |
@@ -30,7 +32,95 @@ Inspect locally:
 sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_id, synced_at FROM notion_job_reports ORDER BY synced_at DESC LIMIT 10;"
 ```
 
-## Quick start
+## Docker (API + dashboard)
+
+Use this for a **single-command** stack: **Python API on 8080** (with **Playwright WebKit**) and **Next.js on 3000**. On **Windows**, use **Docker Desktop** with the **WSL2 backend**; keep the repo on a **WSL disk path** for faster bind mounts (a `C:\...` clone still works but can be slower).
+
+### Setup
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Compose v2) and ensure it is **running**.
+2. **First time only** — create `.env` and build images (safe if `.env` already exists):
+
+   ```bash
+   make docker-setup
+   ```
+
+   Or: `chmod +x scripts/docker-setup.sh && ./scripts/docker-setup.sh`  
+   This copies **`.env.example` → `.env`** when `.env` is missing, then runs **`docker compose build`**.
+
+3. Edit **`.env`**: set **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**, plus Notion/Gemini/webhooks as needed. Restart containers after changing env: **`docker compose up --build`**.
+4. Shell scripts must use **LF** line endings in the container. The repo has **`.gitattributes`** for `*.sh`; if you still see `/bin/bash^M` errors on Windows, re-checkout with LF or run `git add --renormalize .` once.
+
+### Run
+
+```bash
+docker compose up --build
+```
+
+Open **http://localhost:3000**. The UI is built with **`NEXT_PUBLIC_API_URL=http://localhost:8080`** so your **browser** reaches the API on the host.
+
+**Persistence:** Compose mounts **the whole repo** at **`/app`**, so **`data/`**, **`logs/`**, and pipeline **`*.json`** files are written **next to your clone** on disk.
+
+### Pipeline inside the container
+
+With `docker compose up` running:
+
+```bash
+make docker-pipeline
+```
+
+Or:
+
+```bash
+docker compose exec api bash -lc 'chmod +x scripts/run_pipeline.sh 2>/dev/null; ./scripts/run_pipeline.sh'
+```
+
+To **also push merged jobs to Supabase** after each stage, set in **`.env`**:
+
+```text
+MAAS_USER_ID=<uuid from Supabase auth.users>
+MAAS_USER_EMAIL=you@example.com
+```
+
+Shell in the API container: **`make docker-shell`**.
+
+### After dashboard code changes
+
+Rebuild the web image: **`docker compose build web`** (or `docker compose up --build`).
+
+**Images:** root **`Dockerfile`** — Playwright's official Python base. **`dashboard/Dockerfile`** — Node 20 production build.
+
+```bash
+make docker-setup      # first time: .env + build
+make docker-build      # docker compose build
+make docker-up         # docker compose up --build
+make docker-down       # docker compose down
+make docker-shell      # bash inside api (compose must be running)
+make docker-pipeline   # full pipeline script inside api
+```
+
+### Troubleshooting
+
+**`failed to connect to the docker API` / `docker.sock: no such file or directory`** — the Docker engine is not running. On **macOS**, open **Docker Desktop** (from Applications), wait until it reports **Docker is running**, then run **`make docker-setup`** or **`docker compose build`** again. If you use **Colima** or **OrbStack**, start that service instead.
+
+**`Bind for 0.0.0.0:8080 failed: port is already allocated`** — something on your Mac is already using **8080** (very often a **non-Docker** `python dashboard_server.py` you started earlier, or another container). Either:
+
+- Stop it: `lsof -nP -iTCP:8080 -sTCP:LISTEN` then quit that PID, or  
+- Use another **host** port for the API. In **`.env`** add:
+
+  ```text
+  JOBSEARCH_API_HOST_PORT=8081
+  ```
+
+  Optionally **`JOBSEARCH_WEB_HOST_PORT=3001`** if **3000** is busy too. Then run **`docker compose up --build`** so the **web** image rebuilds with the matching **`NEXT_PUBLIC_API_URL`** (e.g. `http://localhost:8081`).
+
+**`3000: bind: address already in use`** — host port **3000** is taken (often **`npm run dev`** for the dashboard). In **`.env`** set **`JOBSEARCH_WEB_HOST_PORT=3001`** (or any free port), then **`docker compose up --build`**. Open the UI at **`http://localhost:3001`** (or whatever you chose).
+
+**`Host system is missing dependencies` / `Docker image version not matching Playwright version`** — the **Playwright Python package** in `requirements.txt` must match the **`mcr.microsoft.com/playwright/python:v…-jammy`** tag in the root **`Dockerfile`**. After changing either one, rebuild the API image: **`docker compose build --no-cache api`** then **`docker compose up`**.
+
+**`Found orphan containers (…frontend… backend…)`** — left over from an older compose file that used different service names. **`make docker-up`** and **`make docker-down`** now pass **`--remove-orphans`**. You can also run once: **`docker compose down --remove-orphans`**.
+
+## Quick start (native — no Docker)
 
 1. **Python 3.11+** recommended. Create a venv and install deps:
 
@@ -68,6 +158,8 @@ sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_
    cd dashboard && npm install && npm run dev
    ```
 
+   `npm run dev` uses **Webpack** (not Turbopack) so the dev server can write `.next/` in environments where Turbopack hits a read-only path (e.g. some agent or container setups). For Turbopack locally: `npm run dev:turbo`.
+
    Set `NEXT_PUBLIC_API_URL=http://localhost:8080` in `dashboard/.env.local` if the API is not on localhost.
 
 ## Pipeline stages
@@ -76,11 +168,19 @@ sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_
 2. `scripts/scrape_and_filter_candidates.py` — refreshes postings and applies regex red-flag gates.
 3. `scripts/classify_and_save.py` — applies `candidate_jobs.json` overrides when present, else Gemini / keyword classifier.
 
-Logs append to `logs/pipeline.log` (server runs) and `logs/scrape.log` (discovery script).
+When sourcing runs from the **dashboard** with a logged-in Supabase user, **`upload_user_jobs`** merges scoped JSON (`scraped_jobs`, `active_candidate_jobs`, `failed_candidate_jobs`, `approved_jobs`, `synced_jobs`, plus the Notion SQLite mirror) into **`public.jobs`** after **each** stage (and on filter/classify failure with whatever was produced so far). Local JSON remains the pipeline’s working format; **Postgres is the published source for the UI.**
+
+Logs append to `logs/pipeline.log` (server runs) and `logs/scrape.log` (discovery script). Stage timing from **`dashboard_server.py`** scraper steps and from **`scripts/run_pipeline.sh`** is also appended as JSON lines to **`logs/pipeline_metrics.jsonl`** (best-effort). Optional classifier notes from the UI go to **`logs/classifier_feedback.jsonl`**.
+
+The Python API exposes **`GET /api/health`** (process up) and **`GET /api/health/playwright`** (WebKit launch smoke; returns 503 if browsers are missing). **`GET /api/config/default-target-titles`** returns the same default title list as `jobsearch_constants.DEFAULT_TARGET_TITLES` (no auth). Authenticated users may call **`POST /api/config/reset-target-titles`** (local scoped `config_*.json` plus optional Supabase `user_configs` update when service credentials are set) and **`POST /api/classifier-feedback`** (append-only log).
+
+**Supabase RLS:** the backend uses the **service role** key to upsert into `public.jobs` / `user_configs`, so writes bypass end-user RLS. Lock down who can reach **`dashboard_server.py`** (or your API container); treat the service role key like a root password.
+
+**Playwright:** stage 2 uses headless **WebKit**. For the same interpreter you use to run `dashboard_server.py` or the pipeline (venv or system), run `python3 -m playwright install webkit` once after installing deps. If the error mentions `Executable doesn't exist` under a `cursor-sandbox-cache` path, `PLAYWRIGHT_BROWSERS_PATH` may be pointing there—in that shell run the install command again, or unset that variable so browsers live under the default cache (e.g. `~/Library/Caches/ms-playwright` on macOS).
 
 ## Pipeline runner (local)
 
-From the **repository root**, run the same three stages as the dashboard scraper (stops on first failure):
+From the **repository root**, run the same three stages as the dashboard scraper (stops on first failure). If you use **Docker**, run **`make docker-pipeline`** while **`docker compose up`** is running (see [Docker](#docker-api--dashboard)).
 
 ```bash
 chmod +x scripts/run_pipeline.sh   # once
@@ -91,8 +191,18 @@ Or with **Make**:
 
 ```bash
 make pipeline          # uses the shell script
-make pipeline-py       # same steps, invoked directly by Make
+make pipeline-py       # same script (respects `PYTHON=...`)
 ```
+
+Publish merged jobs to **Supabase** after each finished stage (same merge as the dashboard) by exporting:
+
+```bash
+export MAAS_USER_ID='<uuid from Supabase auth.users>'
+export MAAS_USER_EMAIL='you@example.com'   # must match scoped JSON filenames
+./scripts/run_pipeline.sh
+```
+
+Requires **`.env`** with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (see `supabase_client.py`). If those variables are unset, the pipeline still runs and only updates local JSON.
 
 Skip stages when reusing existing artifacts:
 

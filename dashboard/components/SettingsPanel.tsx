@@ -18,6 +18,8 @@ interface SettingsPanelProps {
   schedulerMinute: number;
   setSchedulerMinute: (val: number) => void;
   saveSettings: () => void;
+  onResetTargetTitles?: () => void;
+  resettingTitles?: boolean;
 }
 
 export default function SettingsPanel({
@@ -36,6 +38,8 @@ export default function SettingsPanel({
   schedulerMinute,
   setSchedulerMinute,
   saveSettings,
+  onResetTargetTitles,
+  resettingTitles,
 }: SettingsPanelProps) {
   return (
     <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-3xl shadow-xl">
@@ -91,9 +95,21 @@ export default function SettingsPanel({
 
       {/* Target titles */}
       <div className="space-y-2">
-        <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-          Target Job Titles Sourcing List (One per line)
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
+            Target Job Titles Sourcing List (One per line)
+          </label>
+          {onResetTargetTitles && (
+            <button
+              type="button"
+              onClick={onResetTargetTitles}
+              disabled={resettingTitles}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-violet-600/50 transition-colors disabled:opacity-50"
+            >
+              {resettingTitles ? 'Restoring…' : 'Restore defaults'}
+            </button>
+          )}
+        </div>
         <textarea
           rows={8}
           placeholder="DevOps Engineer&#10;Platform Engineer"

@@ -1,0 +1,36 @@
+# Git / CI
+.git
+.github
+
+# Python
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+venv
+
+# Dashboard (built by dashboard/Dockerfile)
+dashboard/node_modules
+dashboard/.next
+dashboard/out
+
+# Local secrets (compose uses env_file)
+.env
+.env.*
+!.env.example
+
+# Generated job artifacts (mount a volume at runtime if you need them on the host)
+scraped_jobs*.json
+approved_jobs*.json
+active_candidate_jobs*.json
+failed_candidate_jobs*.json
+synced_jobs*.json
+candidate_jobs*.json
+dry_run_urls.json
+
+# Local DB + logs (usually mounted)
+logs
+data
+
+scratch
+.DS_Store

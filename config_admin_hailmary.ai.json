@@ -1,10 +1,83 @@
 {
+  "target_titles": [
+    "DevOps Engineer",
+    "Cloud Automation Engineer",
+    "Platform Engineer",
+    "Cloud Infrastructure Engineer",
+    "Cloud Security Engineer",
+    "DevSecOps",
+    "Site Reliability Engineer",
+    "CI/CD Engineer",
+    "Cloud Network Engineer",
+    "Data Platform Engineer"
+  ],
   "target_companies": {
-    "greenhouse": [],
-    "lever": [],
-    "ashby": [
-      "tides"
+    "greenhouse": [
+      "accenturefederalservices",
+      "rise8"
     ],
-    "smartrecruiters": []
-  }
+    "lever": [
+      "analyticpartners",
+      "artera-2",
+      "biointellisense",
+      "dnb",
+      "hermeus",
+      "hive",
+      "jobgether",
+      "minted",
+      "moonpay",
+      "pointclickcare",
+      "saviynt",
+      "trility",
+      "verygoodsecurity",
+      "whoop"
+    ],
+    "ashby": [
+      "alchemy",
+      "authzed",
+      "g2i",
+      "hackerone",
+      "helion",
+      "mach",
+      "megazone",
+      "meter",
+      "oneapp",
+      "openai",
+      "perplexity",
+      "qualified-health-pbc",
+      "real",
+      "rivianvw.tech",
+      "saronic",
+      "treeswift",
+      "virtahealth",
+      "vultr",
+      "workos"
+    ],
+    "smartrecruiters": [
+      "abbvie",
+      "captechconsulting",
+      "eurofins",
+      "experian",
+      "oteemoinc",
+      "renesaselectronics",
+      "resultant",
+      "servicenow",
+      "skysolutionsllc",
+      "sosi1"
+    ]
+  },
+  "proxies": [],
+  "scheduler": {
+    "enabled": true,
+    "run_at_hour": 8,
+    "run_at_minute": 0
+  },
+  "search": {
+    "country_phrase": "United States",
+    "include_remote_primary_boards": true,
+    "merge_previous_scrape": true,
+    "send_digest_only": true,
+    "max_digest_items": 10
+  },
+  "webhook_url": ""
 }

@@ -23,6 +23,14 @@ from services.resume_service import generate_resume
 WORKSPACE_DIR = str(workspace_root())
 load_dotenv(dotenv_path=os.path.join(WORKSPACE_DIR, ".env"))
 
+_scripts_dir = os.path.join(WORKSPACE_DIR, "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+if WORKSPACE_DIR not in sys.path:
+    sys.path.insert(0, WORKSPACE_DIR)
+from pipeline_metrics import append_pipeline_metric  # noqa: E402
+import jobsearch_constants as jc  # noqa: E402
+
 # Authentication passwords
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 USER_PASSWORD = os.environ.get("USER_PASSWORD", "user123")
@@ -352,21 +360,7 @@ def load_config(email=None):
             print(f"Error loading config file {path}: {e}")
     # Default config
     return {
-        "target_titles": [
-            "DevOps Engineer",
-            "Cloud Automation Engineer",
-            "Platform Engineer",
-            "Cloud Infrastructure Engineer",
-            "Cloud Security Engineer",
-            "DevSecOps",
-            "Site Reliability Engineer",
-            "CI/CD Engineer",
-            "Systems Engineer",
-            "Cloud Network Engineer",
-            "Data Platform Engineer",
-            "Machine Learning Engineer",
-            "AI Platform Engineer"
-        ],
+        "target_titles": list(jc.DEFAULT_TARGET_TITLES),
         "scheduler": {
             "enabled": True,
             "run_at_hour": 8,
@@ -797,8 +791,9 @@ def load_all_jobs(email=None):
         if "benefits" not in j:
             j["benefits"] = extract_benefits(j.get("job_description", ""))
             
-    # Group and flag duplicates
+    # Group and flag duplicates, then filter them out
     jobs = group_and_flag_duplicates(jobs)
+    jobs = [j for j in jobs if not j.get('is_duplicate')]
 
     # Cache results
     _cached_jobs_data[email_key] = jobs
@@ -1032,13 +1027,13 @@ def clean_text_for_notion(text, limit=2000):
         return text[:limit-3] + "..."
     return text
 
-def build_notion_properties(job):
+def build_notion_properties(job, db_properties=None):
     # Ensure correct confidence score formatting for percentage field (95% -> 0.95)
     score = float(job.get("confidence_score", 0))
     if score > 1.0:
         score = score / 100.0
         
-    props = {
+    all_possible_props = {
         "Job Title": {
             "title": [{"text": {"content": job.get("job_title", "Unknown Title")}}]
         },
@@ -1056,9 +1051,6 @@ def build_notion_properties(job):
         },
         "Job Description": {
             "rich_text": [{"text": {"content": clean_text_for_notion(job.get("job_description", ""))}}]
-        },
-        "Apply Decision": {
-            "select": {"name": job.get("apply_decision", "APPLY")}
         },
         "Strongest Label": {
             "rich_text": [{"text": {"content": job.get("strongest_label", "OutOfScope")}}]
@@ -1079,23 +1071,66 @@ def build_notion_properties(job):
     
     # Sync optional pipeline and salary fields if defined
     if job.get("pipeline_stage"):
-        props["Pipeline Stage"] = {
+        all_possible_props["Pipeline Stage"] = {
             "select": {"name": job.get("pipeline_stage")}
         }
     if job.get("salary_text"):
-        props["Salary Range"] = {
+        all_possible_props["Salary Range"] = {
             "rich_text": [{"text": {"content": job.get("salary_text")}}]
         }
 
-    # Format Red Flags
-    red_flags = job.get("red_flags", [])
-    if isinstance(red_flags, str):
-        red_flags = [red_flags] if red_flags else []
-    
-    props["Red Flags"] = {
-        "multi_select": [{"name": flag[:100]} for flag in red_flags if flag]
-    }
-
+    props = {}
+    if db_properties:
+        # Intersect keys and format dynamically based on database properties schema
+        for prop_name, prop_def in db_properties.items():
+            prop_type = prop_def.get("type")
+            
+            if prop_name == "Apply Decision":
+                decision_val = job.get("apply_decision", "APPLY")
+                if prop_type == "select":
+                    allowed = [opt.get("name") for opt in prop_def.get("select", {}).get("options", [])]
+                    if allowed and decision_val not in allowed:
+                        matched = next((opt for opt in allowed if opt.lower() == decision_val.lower()), None)
+                        decision_val = matched if matched else (allowed[0] if allowed else "APPLY")
+                    props["Apply Decision"] = {"select": {"name": decision_val}}
+                else:
+                    props["Apply Decision"] = {"rich_text": [{"text": {"content": decision_val}}]}
+                    
+            elif prop_name == "Red Flags":
+                red_flags = job.get("red_flags", [])
+                if isinstance(red_flags, str):
+                    red_flags = [red_flags] if red_flags else []
+                if prop_type == "multi_select":
+                    allowed = [opt.get("name") for opt in prop_def.get("multi_select", {}).get("options", [])]
+                    valid_flags = []
+                    for flag in red_flags:
+                        if flag:
+                            flag_name = flag[:100]
+                            if not allowed or flag_name in allowed:
+                                valid_flags.append({"name": flag_name})
+                            else:
+                                matched = next((opt for opt in allowed if opt.lower() == flag_name.lower()), None)
+                                if matched:
+                                    valid_flags.append({"name": matched})
+                    props["Red Flags"] = {"multi_select": valid_flags}
+                else:
+                    props["Red Flags"] = {"rich_text": [{"text": {"content": ", ".join(red_flags)}}]}
+                    
+            elif prop_name in all_possible_props:
+                props[prop_name] = all_possible_props[prop_name]
+    else:
+        # Fallback if DB schema retrieval failed
+        props = all_possible_props
+        props["Apply Decision"] = {
+            "select": {"name": job.get("apply_decision", "APPLY")}
+        }
+        red_flags = job.get("red_flags", [])
+        if isinstance(red_flags, str):
+            red_flags = [red_flags] if red_flags else []
+        props["Red Flags"] = {
+            "multi_select": [{"name": flag[:100]} for flag in red_flags if flag]
+        }
+        
     return props
 
 def build_page_children(job_description):
@@ -1205,6 +1240,21 @@ def sync_job_to_notion(job, token, database_id, email=None):
         _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=True, email=email)
         return True, page_id, None
 
+    # Fetch database schema to handle columns dynamically
+    db_properties = {}
+    try:
+        db_url = f"https://api.notion.com/v1/databases/{database_id}"
+        db_res = requests.get(db_url, headers={
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": "2022-06-28"
+        }, timeout=5)
+        if db_res.status_code == 200:
+            db_properties = db_res.json().get("properties", {})
+        else:
+            print(f"Notion schema check returned status {db_res.status_code}: {db_res.text}")
+    except Exception as e:
+        print(f"Notion DB schema retrieval warning: {e}")
+
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1212,7 +1262,7 @@ def sync_job_to_notion(job, token, database_id, email=None):
         "Notion-Version": "2022-06-28"
     }
     
-    properties = build_notion_properties(job)
+    properties = build_notion_properties(job, db_properties)
     children = build_page_children(job.get("job_description", ""))
     
     payload = {
@@ -1228,8 +1278,13 @@ def sync_job_to_notion(job, token, database_id, email=None):
         _mirror_notion_row_to_sqlite(job, page_id, database_id, was_duplicate=False, email=email)
         return True, page_id, None
     else:
-        # Fallback formatting
-        print(f"Notion sync warning: {response.text}. Retrying with text fallback...")
+        # Fallback formatting: if it failed, retry by stripping optional/mismatched properties
+        print(f"Notion sync warning: {response.text}. Retrying with simplified fallback...")
+        # Strip properties that might have caused a schema check failure (like Pipeline Stage or Salary Range)
+        properties.pop("Pipeline Stage", None)
+        properties.pop("Salary Range", None)
+        
+        # Override select/multi_select with simple rich_text if they caused errors
         properties["Apply Decision"] = {
             "rich_text": [{"text": {"content": job.get("apply_decision", "APPLY")}}]
         }
@@ -1374,7 +1429,14 @@ def _append_pipeline_log(message):
 
 
 # Scraper worker thread
-def scraper_worker(email=None, past_24h_only=False):
+def scraper_worker(email=None, past_24h_only=False, user_id=None):
+    if user_id:
+        try:
+            from supabase_client import download_user_configs
+            download_user_configs(user_id, email)
+        except Exception as e:
+            print(f"Failed to download configurations from Supabase for user {user_id}: {e}")
+
     state = get_scraper_state(email)
     state["status"] = "running"
     state["message"] = "Sourcing jobs..."
@@ -1384,15 +1446,42 @@ def scraper_worker(email=None, past_24h_only=False):
     state["start_time"] = start_time
 
     def run_step(cmd, label):
+        t0 = time.perf_counter()
         _append_pipeline_log(f"START {label}: {' '.join(cmd)}")
         env = os.environ.copy()
         if email:
             env["MAAS_USER_EMAIL"] = email
+        if user_id:
+            env["MAAS_USER_ID"] = user_id
         p = subprocess.run(cmd, capture_output=True, text=True, cwd=WORKSPACE_DIR, env=env)
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        append_pipeline_metric(
+            WORKSPACE_DIR,
+            "pipeline_step",
+            {
+                "step": label,
+                "returncode": p.returncode,
+                "duration_ms": elapsed_ms,
+                "email": email or "",
+                "user_id": user_id or "",
+            },
+        )
         tail_out = (p.stdout or "")[-12000:]
         tail_err = (p.stderr or "")[-8000:]
         _append_pipeline_log(f"END {label} rc={p.returncode}\n--- stdout ---\n{tail_out}\n--- stderr ---\n{tail_err}")
         return p
+
+    def push_supabase_jobs(reason):
+        """Publish merged local artifacts to Supabase after each stage (canonical UI store)."""
+        if not user_id:
+            return
+        try:
+            from supabase_client import upload_user_jobs
+            upload_user_jobs(user_id, email or "admin@hailmary.ai")
+            _append_pipeline_log(f"Supabase jobs sync ok ({reason})")
+        except Exception as e:
+            print(f"Failed to upload jobs to Supabase ({reason}): {e}")
+            _append_pipeline_log(f"WARN Supabase jobs sync ({reason}): {e}")
 
     try:
         cmd = [sys.executable, "find_and_scrape_jobs.py"]
@@ -1406,25 +1495,33 @@ def scraper_worker(email=None, past_24h_only=False):
             state["last_error"] = err[:4000]
             return
 
+        push_supabase_jobs("after scrape")
+
         state["message"] = "Running validation and filtering..."
         filter_script = os.path.join(WORKSPACE_DIR, "scripts", "scrape_and_filter_candidates.py")
         p2 = run_step([sys.executable, filter_script], "scrape_and_filter_candidates")
         if p2.returncode != 0:
+            push_supabase_jobs("after filter failure (partial)")
             state["status"] = "failed"
             err = (p2.stderr or p2.stdout or "").strip() or "Unknown error"
             state["message"] = f"Filter script failed: {err[:500]}"
             state["last_error"] = err[:4000]
             return
 
+        push_supabase_jobs("after filter")
+
         state["message"] = "Applying policy classification..."
         classify_script = os.path.join(WORKSPACE_DIR, "scripts", "classify_and_save.py")
         p3 = run_step([sys.executable, classify_script], "classify_and_save")
         if p3.returncode != 0:
+            push_supabase_jobs("after classify failure (partial)")
             state["status"] = "failed"
             err = (p3.stderr or p3.stdout or "").strip() or "Unknown error"
             state["message"] = f"Classifier failed: {err[:500]}"
             state["last_error"] = err[:4000]
             return
+
+        push_supabase_jobs("after classify")
 
         metrics = {}
         sj = resolve_path(os.path.join(WORKSPACE_DIR, "scraped_jobs.json"), email)
@@ -1503,49 +1600,142 @@ def scraper_worker(email=None, past_24h_only=False):
 
 # Background Scheduler Loop
 def scheduler_loop():
-    print("Background scheduler thread started.")
+    print("Background scheduler thread started (Supabase mode).")
     last_triggered_dates = {}
     
-    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
-    import sqlite3
-    ensure_notion_mirror_schema(WORKSPACE_DIR)
-    db_file = db_path(WORKSPACE_DIR)
-    
     while True:
+        configs = []
         try:
-            conn = sqlite3.connect(str(db_file))
-            cursor = conn.cursor()
-            cursor.execute("SELECT email FROM users")
-            emails = [row[0] for row in cursor.fetchall()]
-            conn.close()
-        except Exception:
-            # Seed / fallback defaults
-            emails = ["admin@hailmary.ai"]
+            from supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+            res = supabase.table("user_configs").select("user_id, scheduler_enabled, scheduler_run_at_hour, scheduler_run_at_minute").execute()
+            configs = res.data or []
+        except Exception as e:
+            print(f"Error querying user configs in scheduler loop: {e}")
             
-        for email in emails:
-            cfg = load_config(email)
-            sched_cfg = cfg.get("scheduler", {})
-            
-            if sched_cfg.get("enabled", False):
+        for cfg in configs:
+            user_id = cfg.get("user_id")
+            if not user_id:
+                continue
+                
+            email = None
+            try:
+                # Resolve user email from Auth using admin API
+                user_info = supabase.auth.admin.get_user_by_id(user_id)
+                if user_info and user_info.user:
+                    email = user_info.user.email
+            except Exception as e:
+                pass
+                
+            if not email:
+                email = "admin@hailmary.ai" # fallback scoped name
+                
+            enabled = cfg.get("scheduler_enabled", True)
+            if enabled:
                 now = datetime.now()
                 today = date.today()
                 
-                target_hour = sched_cfg.get("run_at_hour", 8)
-                target_minute = sched_cfg.get("run_at_minute", 0)
+                target_hour = cfg.get("scheduler_run_at_hour", 8)
+                target_minute = cfg.get("scheduler_run_at_minute", 0)
                 
-                # Check if it matches target hour and minute, and hasn't run today yet
-                last_triggered_date = last_triggered_dates.get(email)
+                last_triggered_date = last_triggered_dates.get(user_id)
                 if now.hour == target_hour and now.minute == target_minute and last_triggered_date != today:
-                    print(f"[{now.isoformat()}] Scheduled trigger for {email}: Starting daily job sourcing scraper...")
-                    last_triggered_dates[email] = today
+                    print(f"[{now.isoformat()}] Scheduled trigger for {email} ({user_id}): Starting daily job sourcing scraper...")
+                    last_triggered_dates[user_id] = today
                     
-                    # Trigger scraper run if not already running
                     state = get_scraper_state(email)
                     if state["status"] != "running":
-                        threading.Thread(target=scraper_worker, args=(email,)).start()
+                        threading.Thread(target=scraper_worker, args=(email, False, user_id)).start()
                         
-        # Sleep for 30 seconds before checking again
         time.sleep(30)
+
+# H1B Sponsor cache and name-matching helpers
+_cached_sponsors_cleaned = None
+_cached_sponsors_time = 0.0
+
+def clean_company_name(name: str) -> str:
+    if not name:
+        return ""
+    name = name.lower()
+    import re
+    # Remove common punctuation
+    name = re.sub(r'[,.\-\(\)]', ' ', name)
+    # Remove common corporate suffixes
+    suffixes = [
+        r'\binc\b', r'\bllc\b', r'\bcorp\b', r'\bcorporation\b', r'\bincorporated\b',
+        r'\bltd\b', r'\blimited\b', r'\bco\b', r'\bsystems\b', r'\btechnologies\b',
+        r'\bsolutions\b', r'\bsoftware\b', r'\btechnology\b', r'\bsystem\b', r'\bsolution\b',
+        r'\bai\b', r'\bca\b', r'\bus\b', r'\busa\b'
+    ]
+    for suffix in suffixes:
+        name = re.sub(suffix, '', name)
+    # Collapse spaces
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name
+
+def get_h1b_sponsors_cleaned():
+    global _cached_sponsors_cleaned, _cached_sponsors_time
+    import time
+    now = time.time()
+    # Cache for 1 hour
+    if _cached_sponsors_cleaned is not None and now - _cached_sponsors_time < 3600:
+        return _cached_sponsors_cleaned
+        
+    try:
+        from supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+        sponsors = {}
+        offset = 0
+        limit = 1000
+        while True:
+            # Query all metadata fields to attach to jobs
+            fields = (
+                "company_name, company_type, w2_contractor, employee_count, "
+                "linkedin_account, career_portal, website, sponsor_status, "
+                "recommended_action, opt_friendly_score, cases_2024, cases_2025, "
+                "cases_2026, recent_cases, recent_approvals, trend_label, top_state"
+            )
+            res = supabase.table("h1b_sponsors").select(fields).eq("is_sponsor", True).range(offset, offset + limit - 1).execute()
+            if not res.data:
+                break
+            for row in res.data:
+                name = row.get("company_name")
+                if not name:
+                    continue
+                cleaned = clean_company_name(name)
+                if cleaned:
+                    sponsors[cleaned] = row
+            if len(res.data) < limit:
+                break
+            offset += limit
+            
+        _cached_sponsors_cleaned = sponsors
+        _cached_sponsors_time = now
+        print(f"Loaded {len(sponsors)} cleaned H1B sponsors with metadata into cache.")
+        return _cached_sponsors_cleaned
+    except Exception as e:
+        print(f"Failed to fetch and cache H1B sponsors: {e}")
+        return _cached_sponsors_cleaned or {}
+
+def is_sponsor_match(job_company: str, sponsors_cleaned: dict):
+    job_comp_clean = clean_company_name(job_company)
+    if not job_comp_clean or len(job_comp_clean) < 2:
+        return None
+        
+    # 1. Exact cleaned match
+    if job_comp_clean in sponsors_cleaned:
+        return sponsors_cleaned[job_comp_clean]
+        
+    # 2. Part match for longer names
+    for clean_sp, sponsor_data in sponsors_cleaned.items():
+        if job_comp_clean == clean_sp:
+            return sponsor_data
+        if len(job_comp_clean) >= 4:
+            if job_comp_clean.startswith(clean_sp) or clean_sp.startswith(job_comp_clean):
+                return sponsor_data
+            if job_comp_clean in clean_sp.split() or clean_sp in job_comp_clean.split():
+                return sponsor_data
+    return None
 
 # HTTP Handler
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -1563,39 +1753,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_cors_headers()
         self.end_headers()
 
-    def get_auth_email(self):
+    def get_auth_payload(self):
         auth_header = self.headers.get("Authorization")
         if not auth_header:
             return None
         parts = auth_header.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1]
+            try:
+                from supabase_client import verify_supabase_jwt
+                payload = verify_supabase_jwt(token)
+                if payload:
+                    return payload
+            except Exception as e:
+                print(f"Supabase JWT decode exception: {e}")
+            
             session = active_sessions.get(token)
             if isinstance(session, dict):
-                return session.get("email")
-            # fallback for backward compatibility
-            return "admin@hailmary.ai"
+                return {
+                    "sub": session.get("user_id", "00000000-0000-0000-0000-000000000000"),
+                    "email": session.get("email"),
+                    "role": session.get("role")
+                }
         return None
 
+    def get_auth_email(self):
+        payload = self.get_auth_payload()
+        if payload:
+            return payload.get("email")
+        return "admin@hailmary.ai"
+
+    def get_auth_user_id(self):
+        payload = self.get_auth_payload()
+        if payload:
+            return payload.get("sub")
+        return "00000000-0000-0000-0000-000000000000"
+
     def get_auth_role(self):
-        auth_header = self.headers.get("Authorization")
-        if not auth_header:
-            return None
-        
-        parts = auth_header.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-            session = active_sessions.get(token)
-            if isinstance(session, dict):
-                return session.get("role")
-            elif isinstance(session, str):
-                return session
-            
+        payload = self.get_auth_payload()
+        if payload:
+            role = payload.get("role")
+            if role == "authenticated":
+                email = payload.get("email")
+                # Map admin user specifically or anyone authenticated to user role
+                if email == "admin@hailmary.ai":
+                    return "admin"
+                return "user"
+            return role
         return None
 
     def check_authenticated(self):
         role = self.get_auth_role()
-        if role in ["admin", "user"]:
+        if role in ["admin", "user", "authenticated"]:
             return True
         
         # Return 401 Unauthorized
@@ -1626,6 +1835,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
         
         # Authenticate all API endpoints (excluding static page rendering and 404s)
         if parsed_url.path.startswith("/api/"):
+            if parsed_url.path == "/api/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "workspace": WORKSPACE_DIR}).encode("utf-8"))
+                return
+            if parsed_url.path == "/api/health/playwright":
+                body = {"status": "ok", "webkit": True}
+                code = 200
+                try:
+                    from playwright.sync_api import sync_playwright
+
+                    with sync_playwright() as p:
+                        b = p.webkit.launch(headless=True)
+                        b.close()
+                except Exception as e:
+                    body = {"status": "error", "webkit": False, "message": str(e)}
+                    code = 503
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode("utf-8"))
+                return
+            if parsed_url.path == "/api/config/default-target-titles":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"target_titles": list(jc.DEFAULT_TARGET_TITLES)}).encode("utf-8")
+                )
+                return
             if not self.check_authenticated():
                 return
         
@@ -1637,7 +1880,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             email = self.get_auth_email()
+            uid = self.get_auth_user_id()
             jobs = load_all_jobs(email)
+            
+            # Fetch match scores from Supabase
+            if uid:
+                try:
+                    from supabase_client import get_supabase_client
+                    supabase = get_supabase_client()
+                    user_cfg = supabase.table("user_configs").select("resume_embedding").eq("user_id", uid).maybe_single().execute()
+                    if user_cfg.data and user_cfg.data.get("resume_embedding"):
+                        res_emb = user_cfg.data["resume_embedding"]
+                        match_res = supabase.rpc("match_jobs", {
+                            "query_embedding": res_emb,
+                            "match_threshold": 0.0,
+                            "match_count": 5000,
+                            "user_id_filter": uid
+                        }).execute()
+                        
+                        if match_res.data:
+                            match_dict = {row["job_url"]: row["similarity"] for row in match_res.data}
+                            for job in jobs:
+                                job_url = job.get("job_url")
+                                if job_url in match_dict:
+                                    job["match_score"] = round(match_dict[job_url] * 100, 1)
+                except Exception as ex:
+                    print(f"Failed to fetch match scores: {ex}")
+
+                # Fetch H1B Sponsors and match
+                try:
+                    sponsors_cleaned = get_h1b_sponsors_cleaned()
+                    if sponsors_cleaned:
+                        for job in jobs:
+                            company = job.get("company_name", "")
+                            if company:
+                                matched_sponsor = is_sponsor_match(company, sponsors_cleaned)
+                                if matched_sponsor:
+                                    job["visa_sponsor"] = True
+                                    job["sponsor_metadata"] = matched_sponsor
+                except Exception as ex:
+                    print(f"Failed to fetch and match H1B sponsors: {ex}")
+                    
             self.wfile.write(json.dumps(jobs).encode('utf-8'))
             return
 
@@ -1889,9 +2172,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
-        # Protect all API endpoints (excluding login and register) and require admin role
+        # Protect API: login/register open; reset-target-titles + classifier-feedback need any auth; rest admin-only
+        _user_authed_post_paths = ("/api/config/reset-target-titles", "/api/classifier-feedback")
         if parsed_url.path.startswith("/api/"):
-            if parsed_url.path not in ["/api/login", "/api/register"]:
+            if parsed_url.path in ["/api/login", "/api/register"]:
+                pass
+            elif parsed_url.path in _user_authed_post_paths:
+                if not self.check_authenticated():
+                    return
+            else:
                 if not self.check_admin():
                     return
 
@@ -1979,6 +2268,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "message": msg}).encode('utf-8'))
+            return
+
+        # API: Reset target job titles to repo defaults (local scoped config + optional Supabase)
+        elif parsed_url.path == "/api/config/reset-target-titles":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            email = self.get_auth_email()
+            uid = self.get_auth_user_id()
+            cfg = load_config(email)
+            cfg["target_titles"] = list(jc.DEFAULT_TARGET_TITLES)
+            ok = save_config(cfg, email)
+            try:
+                from supabase_client import update_user_target_titles
+
+                update_user_target_titles(uid, list(jc.DEFAULT_TARGET_TITLES))
+            except Exception as e:
+                print(f"reset-target-titles: optional Supabase update skipped: {e}")
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "success": bool(ok),
+                        "target_titles": list(jc.DEFAULT_TARGET_TITLES),
+                        "message": "Target titles reset to defaults."
+                        if ok
+                        else "Failed to save local config.",
+                    }
+                ).encode("utf-8")
+            )
+            return
+
+        # API: Classifier feedback (append-only jsonl under logs/)
+        elif parsed_url.path == "/api/classifier-feedback":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            email = self.get_auth_email()
+            rec = {"email": email, "payload": payload}
+            try:
+                log_dir = os.path.join(WORKSPACE_DIR, "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                path = os.path.join(log_dir, "classifier_feedback.jsonl")
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps({"ts": datetime.utcnow().isoformat() + "Z", **rec}, default=str) + "\n"
+                    )
+            except Exception as e:
+                self.wfile.write(json.dumps({"success": False, "message": str(e)}).encode("utf-8"))
+                return
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
             return
 
         # API: Save settings config
@@ -2311,12 +2652,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             email = self.get_auth_email()
+            user_id = self.get_auth_user_id()
             state = get_scraper_state(email)
             if state["status"] == "running":
                 res = {"success": False, "message": "Scraper is already running."}
             else:
                 past_24h_only = payload.get("past_24h_only", False)
-                threading.Thread(target=lambda: scraper_worker(email, past_24h_only)).start()
+                threading.Thread(target=lambda: scraper_worker(email, past_24h_only, user_id=user_id)).start()
                 res = {"success": True, "message": "Scraper started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
@@ -2542,6 +2884,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 with open(resume_path, "w", encoding="utf-8") as f:
                     f.write(resume_content)
+                    
+                # Generate embedding and save to Supabase
+                try:
+                    from embeddings import get_embedding
+                    from supabase_client import get_supabase_client
+                    emb = get_embedding(resume_content)
+                    if emb:
+                        supabase = get_supabase_client()
+                        uid = self.get_auth_user_id()
+                        if uid:
+                            supabase.table("user_configs").update({"resume_embedding": emb}).eq("user_id", uid).execute()
+                            print(f"Updated resume embedding for {email}")
+                except Exception as ex:
+                    print(f"Failed to update resume embedding: {ex}")
+                    
                 self.wfile.write(json.dumps({"success": True, "message": "Base resume saved successfully!"}).encode('utf-8'))
             except Exception as e:
                 self.wfile.write(json.dumps({"success": False, "message": f"Failed to save resume: {str(e)}"}).encode('utf-8'))

@@ -53,6 +53,8 @@ if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 from jobsearch_paths import workspace_root
 from benefits_extractor import extract_benefits
+from jobsearch_constants import ALLOWED_STRONGEST_LABELS
+from secrets_scrub import scrub_job_payload_for_storage
 
 WORKSPACE = workspace_root()
 
@@ -638,14 +640,22 @@ Title: {title}
 Description:
 {description}
 
-Return a JSON object conforming exactly to the following structure:
+Return a JSON object conforming exactly to the following structure (see system instruction for PASS/HUMAN_REVIEW/REJECT rules):
 {{
-  "apply_decision": "APPLY" or "DO_NOT_APPLY",
-  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "Cloud Security Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "Cloud Network Engineer" | "Data Platform Engineer" | "Machine Learning Engineer (MLOps)" | "AI Platform Engineer (AIOps)" | "OutOfScope",
+  "all_labels": ["<same as strongest_label first, optional 2nd/3rd labels>"],
+  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "Data Platform Engineer" | "Machine Learning Engineer (MLOps)" | "AI Platform Engineer (AIOps)" | "OutOfScope",
+  "other_labels": [],
+  "recommendation": "PASS" | "HUMAN_REVIEW" | "REJECT",
   "confidence_score": 0-100,
-  "red_flags": ["list of red flag categories matched, empty list if none"],
-  "rationale": "detailed general explanation of classification and red flag decisions",
-  "rationale_formatted": ["bullet point 1", "bullet point 2", ...],
+  "fit_score": 0-100,
+  "ownership_strength": "LOW" | "MEDIUM" | "HIGH",
+  "review_reason": "short string or empty string",
+  "red_flags": [],
+  "cloud": {{
+    "is_cloud_role": true,
+    "primary_cloud": "AWS" | "Azure" | "GCP" | "",
+    "cloud_providers": ["AWS", "Azure", "GCP"]
+  }},
   "domain_scores": {{
     "devops": 0-10,
     "automation": 0-10,
@@ -663,9 +673,18 @@ Return a JSON object conforming exactly to the following structure:
     "mlops": 0-10,
     "aiops": 0-10
   }},
-  "primary_cloud": "AWS" | "Azure" | "GCP" | "",
-  "cloud_providers": ["AWS", "Azure", "GCP", ...],
-  "benefits": ["list of benefit names matched, e.g. Health Insurance, Dental Insurance, Vision Insurance, 401(k), PTO / Vacation, Equity / Stock Options, Parental Leave, Stipend / Allowance, Tuition / Learning Budget"]
+  "dominant_domains": [],
+  "decision_trace": {{
+    "top_score": 0,
+    "runner_up_score": 0,
+    "tie_break_applied": false,
+    "priority_rule_used": "",
+    "strong_signal_override": false
+  }},
+  "rationale": "",
+  "rationale_formatted": [],
+  "filters": {{ "domain_specialization": false }},
+  "benefits": []
 }}
 """
     
@@ -675,55 +694,194 @@ Return a JSON object conforming exactly to the following structure:
             generation_config={"response_mime_type": "application/json"},
             system_instruction=system_instruction
         )
-        response = model.generate_content(user_prompt)
-        result = json.loads(response.text)
-        
-        # Verify result format and key constraints
-        apply_decision = result.get("apply_decision", "DO_NOT_APPLY")
+        result = None
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                response = model.generate_content(user_prompt)
+                result = json.loads(response.text)
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 3:
+                    time.sleep(0.6 * (2 ** (attempt - 1)))
+        if result is None:
+            raise last_err if last_err else RuntimeError("empty Gemini response")
+
+        allowed_label_set = set(ALLOWED_STRONGEST_LABELS)
+        domain_keys = (
+            "devops", "automation", "platform", "infrastructure", "security", "devsecops",
+            "sre", "cicd", "system", "network", "database", "cloud_database", "data", "mlops", "aiops",
+        )
+
         strongest_label = result.get("strongest_label", "OutOfScope")
-        confidence = result.get("confidence_score", 50)
+        if strongest_label not in allowed_label_set:
+            strongest_label = "OutOfScope"
+
         red_flags = result.get("red_flags", [])
-        rationale = result.get("rationale", "")
-        rationale_formatted = result.get("rationale_formatted", [])
+        if not isinstance(red_flags, list):
+            red_flags = []
+        red_flags = [str(x) for x in red_flags if x]
+
+        recommendation = str(result.get("recommendation", "REJECT")).strip().upper()
+        if recommendation not in ("PASS", "HUMAN_REVIEW", "REJECT"):
+            recommendation = "REJECT"
+
+        try:
+            confidence = int(result.get("confidence_score", 0))
+        except (TypeError, ValueError):
+            confidence = 0
+        confidence = max(0, min(100, confidence))
+
+        try:
+            fit_score = int(result.get("fit_score", 0))
+        except (TypeError, ValueError):
+            fit_score = 0
+        fit_score = max(0, min(100, fit_score))
+
+        ownership_strength = str(result.get("ownership_strength", "LOW")).strip().upper()
+        if ownership_strength not in ("LOW", "MEDIUM", "HIGH"):
+            ownership_strength = "LOW"
+
+        review_reason = str(result.get("review_reason", "") or "").strip()
+
         domain_scores = result.get("domain_scores", {})
-        primary_cloud = result.get("primary_cloud", "")
-        cloud_providers = result.get("cloud_providers", [])
-        
+        if not isinstance(domain_scores, dict):
+            domain_scores = {}
+        for k in domain_keys:
+            domain_scores.setdefault(k, 0)
+            try:
+                domain_scores[k] = max(0, min(10, int(domain_scores[k])))
+            except (TypeError, ValueError):
+                domain_scores[k] = 0
+
+        all_labels = result.get("all_labels")
+        if not isinstance(all_labels, list) or not all_labels:
+            all_labels = [strongest_label]
+        else:
+            all_labels = [str(x) for x in all_labels if x]
+            if not all_labels or all_labels[0] != strongest_label:
+                all_labels = [strongest_label] + [x for x in all_labels if x != strongest_label]
+
+        other_labels = result.get("other_labels", [])
+        if not isinstance(other_labels, list):
+            other_labels = []
+        other_labels = [str(x) for x in other_labels if x and x != strongest_label]
+
+        cloud = result.get("cloud", {})
+        if not isinstance(cloud, dict):
+            cloud = {}
+        primary_cloud = str(cloud.get("primary_cloud", "") or "")
+        if primary_cloud not in ("AWS", "Azure", "GCP", ""):
+            primary_cloud = ""
+        cloud_providers = cloud.get("cloud_providers", [])
+        if not isinstance(cloud_providers, list):
+            cloud_providers = []
+        cloud_providers = [str(p) for p in cloud_providers if p in ("AWS", "Azure", "GCP")]
+        is_cloud = bool(cloud.get("is_cloud_role")) if "is_cloud_role" in cloud else (
+            len(cloud_providers) > 0 or primary_cloud != ""
+        )
+        cloud = {
+            "is_cloud_role": bool(is_cloud),
+            "primary_cloud": primary_cloud,
+            "cloud_providers": cloud_providers,
+        }
+
+        decision_trace = result.get("decision_trace", {})
+        if not isinstance(decision_trace, dict):
+            decision_trace = {}
+        numeric_scores = [domain_scores[k] for k in domain_keys if k in domain_scores]
+        sorted_scores = sorted(numeric_scores, reverse=True) if numeric_scores else [0, 0]
+        top_score = int(decision_trace.get("top_score", sorted_scores[0]))
+        runner_up = int(decision_trace.get("runner_up_score", sorted_scores[1] if len(sorted_scores) > 1 else 0))
+        decision_trace = {
+            "top_score": top_score,
+            "runner_up_score": runner_up,
+            "tie_break_applied": bool(decision_trace.get("tie_break_applied", False)),
+            "priority_rule_used": str(decision_trace.get("priority_rule_used", "") or ""),
+            "strong_signal_override": bool(decision_trace.get("strong_signal_override", False)),
+        }
+
+        dominant_domains = result.get("dominant_domains", [])
+        if not isinstance(dominant_domains, list) or not dominant_domains:
+            dominant_domains = [strongest_label] if strongest_label != "OutOfScope" else []
+
+        filters = result.get("filters", {"domain_specialization": False})
+        if not isinstance(filters, dict):
+            filters = {"domain_specialization": False}
+        filters.setdefault("domain_specialization", False)
+
         benefits = result.get("benefits", [])
         if not benefits or not isinstance(benefits, list):
             benefits = extract_benefits(description)
-        
-        # Reconstruct full payload
+
+        rationale = str(result.get("rationale", "") or "")
+        rationale_formatted = result.get("rationale_formatted", [])
+        if not isinstance(rationale_formatted, list):
+            rationale_formatted = []
+
+        pass_labels = allowed_label_set - {"OutOfScope"}
+
+        # Enforce consistency with STEP 8 (safety net)
+        if strongest_label == "OutOfScope" or red_flags:
+            recommendation = "REJECT"
+        elif recommendation == "PASS":
+            if confidence < 70 or fit_score < 70:
+                recommendation = "REJECT"
+                review_reason = (review_reason + "; " if review_reason else "") + "PASS thresholds not met (confidence/fit)."
+            elif strongest_label not in pass_labels:
+                recommendation = "REJECT"
+                review_reason = (review_reason + "; " if review_reason else "") + "Invalid label for PASS."
+
+        if recommendation == "PASS" and ownership_strength == "MEDIUM":
+            recommendation = "HUMAN_REVIEW"
+            review_reason = (review_reason + "; " if review_reason else "") + "MEDIUM ownership requires human review."
+
+        if recommendation == "HUMAN_REVIEW" and red_flags:
+            recommendation = "REJECT"
+
+        apply_decision = (
+            "APPLY"
+            if recommendation == "PASS" and not red_flags and strongest_label in pass_labels
+            else "DO_NOT_APPLY"
+        )
+
         payload = {
-            "all_labels": [strongest_label],
+            "all_labels": all_labels,
             "strongest_label": strongest_label,
-            "other_labels": [],
+            "other_labels": other_labels,
+            "recommendation": recommendation,
+            "fit_score": fit_score,
+            "ownership_strength": ownership_strength,
+            "review_reason": review_reason,
             "apply_decision": apply_decision,
             "red_flags": red_flags,
-            "filters": {"domain_specialization": False},
+            "filters": filters,
             "confidence_score": confidence,
-            "cloud": {
-                "is_cloud_role": len(cloud_providers) > 0 or primary_cloud != "",
-                "primary_cloud": primary_cloud,
-                "cloud_providers": cloud_providers
-            },
+            "cloud": cloud,
             "domain_scores": domain_scores,
-            "dominant_domains": [strongest_label],
+            "dominant_domains": dominant_domains,
             "dominant_signals": {},
-            "decision_trace": {"top_score": max(domain_scores.values()) if domain_scores else 0},
+            "decision_trace": decision_trace,
             "rationale": rationale,
             "rationale_formatted": rationale_formatted,
-            "benefits": benefits
+            "benefits": benefits,
         }
-        
+
+        payload = scrub_job_payload_for_storage(payload)
+
         return {
             "apply_decision": apply_decision,
             "strongest_label": strongest_label,
             "confidence_score": confidence,
+            "fit_score": fit_score,
+            "ownership_strength": ownership_strength,
+            "recommendation": recommendation,
+            "review_reason": review_reason,
             "red_flags": red_flags,
             "rationale": rationale,
             "payload": payload,
-            "benefits": benefits
+            "benefits": benefits,
         }
     except Exception as e:
         print(f"Gemini API classification failed: {e}. Falling back to rule-based classification.", flush=True)
@@ -738,12 +896,10 @@ def classify_job_dynamically(job):
         "Cloud Automation Engineer": 0,
         "Platform Engineering": 0,
         "Cloud Infrastructure Engineer": 0,
-        "Cloud Security Engineer": 0,
         "DevSecOps": 0,
         "Site Reliability Engineer (SRE)": 0,
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 0,
-        "Cloud Network Engineer": 0,
         "Database Engineer": 0,
         "Cloud Database Engineer": 0,
         "Data Platform Engineer": 0,
@@ -754,8 +910,9 @@ def classify_job_dynamically(job):
     # Simple keyword mapping
     if "devsecops" in title:
         label_scores["DevSecOps"] += 10
-    elif "secops" in title or "security" in title:
-        label_scores["Cloud Security Engineer"] += 10
+    elif "secops" in title or ("security" in title and "engineer" in title):
+        label_scores["DevSecOps"] += 8
+        label_scores["Cloud Infrastructure Engineer"] += 2
         
     if "sre" in title or "reliability" in title:
         label_scores["Site Reliability Engineer (SRE)"] += 10
@@ -777,7 +934,7 @@ def classify_job_dynamically(job):
         label_scores["Cloud Infrastructure Engineer"] += 10
         
     if "network" in title:
-        label_scores["Cloud Network Engineer"] += 10
+        label_scores["Cloud Infrastructure Engineer"] += 10
         
     if "database" in title or "dba" in title or "sql" in title:
         if "cloud" in title or any(c in title for c in ["aws", "gcp", "azure", "rds", "aurora", "dynamodb"]):
@@ -813,7 +970,7 @@ def classify_job_dynamically(job):
         if label_scores["DevSecOps"] > 0 or "devsecops" in desc:
             label_scores["DevSecOps"] += 2
         else:
-            label_scores["Cloud Security Engineer"] += 1
+            label_scores["DevSecOps"] += 1
     if any(k in desc for k in ["spark", "databricks", "snowflake", "data pipeline", "etl", "data warehouse"]):
         label_scores["Data Platform Engineer"] += 2
     if any(k in desc for k in ["mlops", "model deployment", "kubeflow", "mlflow"]):
@@ -827,31 +984,81 @@ def classify_job_dynamically(job):
  
     top_label = max(label_scores, key=label_scores.get)
     top_score = label_scores[top_label]
-    if top_score == 0:
+
+    red_flags = list(job.get("red_flags", []))
+    _nw = "Cloud network specialist role — outside MAAS consultant pipeline"
+    _sw = "Cloud security specialist role — outside MAAS consultant pipeline"
+    if "cloud network engineer" in title:
+        if _nw not in red_flags:
+            red_flags.append(_nw)
+        top_label = "OutOfScope"
+        top_score = 0
+    elif "cloud security engineer" in title:
+        if _sw not in red_flags:
+            red_flags.append(_sw)
+        top_label = "OutOfScope"
+        top_score = 0
+    elif top_score == 0:
         top_label = "DevOps Engineer"
-        
-    red_flags = job.get("red_flags", [])
+
     apply_decision = "APPLY" if not red_flags else "DO_NOT_APPLY"
-    
+    recommendation = "PASS" if apply_decision == "APPLY" else "REJECT"
+    fit_score = 80 if apply_decision == "APPLY" else 35
+    ownership_strength = "HIGH" if apply_decision == "APPLY" else "LOW"
+    review_reason = ""
+
     confidence = 85
     rationale = f"This job was dynamically classified as {top_label} using rule-based keyword signals matching the target role profile."
     if red_flags:
         rationale += f" Red flags detected: {', '.join(red_flags)}."
         
     benefits = extract_benefits(job.get("job_description", ""))
+
+    domain_keys_rb = (
+        "devops", "automation", "platform", "infrastructure", "security", "devsecops",
+        "sre", "cicd", "system", "network", "database", "cloud_database", "data", "mlops", "aiops",
+    )
+    domain_scores_out = dict.fromkeys(domain_keys_rb, 0)
+    label_to_domain = {
+        "DevOps Engineer": "devops",
+        "Cloud Automation Engineer": "automation",
+        "Platform Engineering": "platform",
+        "Cloud Infrastructure Engineer": "infrastructure",
+        "DevSecOps": "devsecops",
+        "Site Reliability Engineer (SRE)": "sre",
+        "Continuous Integration (CI/CD)": "cicd",
+        "System Engineer": "system",
+        "Data Platform Engineer": "data",
+        "Machine Learning Engineer (MLOps)": "mlops",
+        "AI Platform Engineer (AIOps)": "aiops",
+        "Database Engineer": "database",
+        "Cloud Database Engineer": "cloud_database",
+        "OutOfScope": "devops",
+    }
+    primary_dk = label_to_domain.get(top_label, "devops")
+    domain_scores_out[primary_dk] = min(10, max(0, int(top_score)))
+    if label_scores.get("Database Engineer", 0) > 0:
+        domain_scores_out["database"] = min(10, label_scores["Database Engineer"])
+    if label_scores.get("Cloud Database Engineer", 0) > 0:
+        domain_scores_out["cloud_database"] = min(10, label_scores["Cloud Database Engineer"])
+
     payload = {
         "all_labels": [top_label],
         "strongest_label": top_label,
         "other_labels": [],
+        "recommendation": recommendation,
+        "fit_score": fit_score,
+        "ownership_strength": ownership_strength,
+        "review_reason": review_reason,
         "apply_decision": apply_decision,
         "red_flags": red_flags,
         "filters": {"domain_specialization": False},
         "confidence_score": confidence,
         "cloud": {"is_cloud_role": "cloud" in desc or "aws" in desc or "azure" in desc or "gcp" in desc, "primary_cloud": "", "cloud_providers": []},
-        "domain_scores": label_scores,
+        "domain_scores": domain_scores_out,
         "dominant_domains": [top_label],
         "dominant_signals": {},
-        "decision_trace": {"top_score": top_score},
+        "decision_trace": {"top_score": top_score, "runner_up_score": 0, "tie_break_applied": False, "priority_rule_used": "", "strong_signal_override": False},
         "rationale": rationale,
         "rationale_formatted": [rationale],
         "benefits": benefits
@@ -861,6 +1068,10 @@ def classify_job_dynamically(job):
         "apply_decision": apply_decision,
         "strongest_label": top_label,
         "confidence_score": confidence,
+        "fit_score": fit_score,
+        "ownership_strength": ownership_strength,
+        "recommendation": recommendation,
+        "review_reason": review_reason,
         "red_flags": red_flags,
         "rationale": rationale,
         "payload": payload,
@@ -971,6 +1182,13 @@ def main():
         job["rationale"] = cls["rationale"]
         job["apply_decision_payload"] = cls["payload"]
         job["benefits"] = cls.get("benefits", [])
+        _pl = cls.get("payload") or {}
+        job["recommendation"] = cls.get("recommendation") or _pl.get(
+            "recommendation", "PASS" if cls["apply_decision"] == "APPLY" else "REJECT"
+        )
+        job["fit_score"] = cls.get("fit_score", _pl.get("fit_score", 80 if cls["apply_decision"] == "APPLY" else 35))
+        job["ownership_strength"] = cls.get("ownership_strength", _pl.get("ownership_strength", "LOW"))
+        job["review_reason"] = cls.get("review_reason", _pl.get("review_reason", ""))
         
         # Override requirement ID if needed
         if "req_id_override" in cls:
@@ -978,10 +1196,10 @@ def main():
             
         # Notion save gate
         allowed_categories = {
-            "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering", 
-            "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps", 
-            "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)", 
-            "System Engineer", "Cloud Network Engineer", "Data Platform Engineer", 
+            "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
+            "Cloud Infrastructure Engineer", "DevSecOps",
+            "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
+            "System Engineer", "Data Platform Engineer",
             "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
         }
         if (job["apply_decision"] == "APPLY" and 
@@ -995,10 +1213,10 @@ def main():
     # Final sanity check: ensure no invalid jobs are written to approved_jobs.json
     from scripts.scrape_and_filter_candidates import check_red_flags
     allowed_categories = {
-        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering", 
-        "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps", 
-        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)", 
-        "System Engineer", "Cloud Network Engineer", "Data Platform Engineer", 
+        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
+        "Cloud Infrastructure Engineer", "DevSecOps",
+        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
+        "System Engineer", "Data Platform Engineer",
         "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
     }
     approved_jobs = [

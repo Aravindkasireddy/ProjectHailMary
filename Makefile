@@ -3,7 +3,7 @@
 
 PYTHON ?= python3
 
-.PHONY: help install-py install-dashboard test lint-dashboard build-dashboard pipeline pipeline-py ci ci-check compile
+.PHONY: help install-py install-dashboard test lint-dashboard build-dashboard pipeline pipeline-py ci ci-check compile docker-setup docker-build docker-up docker-down docker-shell docker-pipeline
 
 help:
 	@echo "Targets:"
@@ -14,7 +14,13 @@ help:
 	@echo "  make lint-dashboard    - eslint (dashboard)"
 	@echo "  make build-dashboard   - next build (dashboard)"
 	@echo "  make pipeline          - ./scripts/run_pipeline.sh (scrape → filter → classify)"
-	@echo "  make pipeline-py       - same stages via Makefile (no shell script)"
+	@echo "  make pipeline-py       - same as pipeline (shell script; set PYTHON=... if needed)"
+	@echo "  make docker-setup      - create .env from .env.example if needed, then docker compose build"
+	@echo "  make docker-build      - docker compose build"
+	@echo "  make docker-up         - docker compose up --build"
+	@echo "  make docker-down       - docker compose down"
+	@echo "  make docker-shell      - shell in api container (compose must be running)"
+	@echo "  make docker-pipeline   - run ./scripts/run_pipeline.sh inside api container"
 	@echo "  make ci-check          - test + compile + dashboard build (matches required GH CI)"
 	@echo "  make ci                - ci-check + strict dashboard lint"
 
@@ -45,11 +51,28 @@ pipeline:
 	@./scripts/run_pipeline.sh
 
 pipeline-py:
-	@test -f find_and_scrape_jobs.py
-	$(PYTHON) find_and_scrape_jobs.py
-	$(PYTHON) scripts/scrape_and_filter_candidates.py
-	$(PYTHON) scripts/classify_and_save.py
+	@chmod +x scripts/run_pipeline.sh 2>/dev/null || true
+	@PYTHON=$(PYTHON) ./scripts/run_pipeline.sh
 
 ci-check: test compile build-dashboard
 
 ci: ci-check lint-dashboard
+
+docker-setup:
+	@chmod +x scripts/docker-setup.sh 2>/dev/null || true
+	@./scripts/docker-setup.sh
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up --build --remove-orphans
+
+docker-down:
+	docker compose down --remove-orphans
+
+docker-shell:
+	docker compose exec api bash
+
+docker-pipeline:
+	docker compose exec api bash -lc 'chmod +x scripts/run_pipeline.sh 2>/dev/null; ./scripts/run_pipeline.sh'

@@ -9,11 +9,17 @@ import requests
 import hashlib
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, quote_plus, parse_qs
 from playwright.sync_api import sync_playwright
+try:
+    from playwright_stealth import stealth_sync
+except ImportError:
+    stealth_sync = None
 from dotenv import load_dotenv
 
 def resolve_path(base_path):
@@ -451,6 +457,9 @@ WORKSPACE = workspace_root()
 load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
 CONFIG_PATH = resolve_path(WORKSPACE / "config.json")
 SCRAPED_OUTPUT = resolve_path(WORKSPACE / "scraped_jobs.json")
+_scripts_path = str(WORKSPACE / "scripts")
+if _scripts_path not in sys.path:
+    sys.path.insert(0, _scripts_path)
 
 
 def _ensure_log_dir():
@@ -477,26 +486,31 @@ def _setup_run_logging():
 log = _setup_run_logging().info
 
 
-def http_get(url, headers=None, timeout=10, attempts=2):
-    """GET with simple exponential backoff on connection errors, proxy and User-Agent rotation."""
-    last_exc = None
-    for i in range(attempts):
-        h = (headers or {}).copy()
-        if "User-Agent" not in h:
-            h["User-Agent"] = get_random_user_agent()
+def http_get(url, headers=None, timeout=10, attempts=3):
+    """GET with automatic exponential backoff on connection errors and 429/50x codes, plus proxy and User-Agent rotation."""
+    h = (headers or {}).copy()
+    if "User-Agent" not in h:
+        h["User-Agent"] = get_random_user_agent()
+    
+    proxy_str = get_random_proxy()
+    proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+    if proxy_str:
+        log(f"Routing http_get through proxy: {proxy_str}")
         
-        proxy_str = get_random_proxy()
-        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
-        if proxy_str:
-            log(f"Routing http_get through proxy: {proxy_str} (attempt {i+1})")
-        try:
-            return requests.get(url, headers=h, proxies=proxies, timeout=timeout)
-        except (requests.RequestException, OSError) as e:
-            last_exc = e
-            if i < attempts - 1:
-                time.sleep(min(2 ** i, 8))
-    if last_exc:
-        raise last_exc
+    session = requests.Session()
+    retry = Retry(
+        total=attempts,
+        read=attempts,
+        connect=attempts,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"]
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    return session.get(url, headers=h, proxies=proxies, timeout=timeout)
 
 
 def clean_text(html_content):
@@ -550,21 +564,9 @@ def fetch_with_playwright(url):
                 
                 page = context.new_page()
                 
-                # Stealth injection
-                page.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
-                    window.chrome = {
-                        runtime: {}
-                    };
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en']
-                    });
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
-                    });
-                """)
+                # Apply stealth mode if library is available
+                if stealth_sync:
+                    stealth_sync(page)
                 
                 page.goto(url, wait_until="commit", timeout=20000)
                 # Randomized post-navigation delay (2.5-4.5s)
@@ -1356,22 +1358,25 @@ def expand_target_titles_with_gemini(target_titles, api_key):
     """
     Expand target titles using Gemini 2.5 Flash, falling back to a static mapping if it fails or key is missing.
     """
+    # Keys align with Job_classifier_prompt ROLE LABELS; legacy title strings kept for older configs.
     STATIC_SYNONYM_FALLBACK = {
         "DevOps Engineer": ["DevOps", "Site Reliability Engineer", "SRE"],
         "Cloud Automation Engineer": ["Cloud Infrastructure Engineer", "Automation Engineer", "Cloud Engineer"],
+        "Platform Engineering": ["Platform Engineer", "Infrastructure Engineer", "Internal Developer Platform"],
         "Platform Engineer": ["Platform Engineering", "Infrastructure Engineer", "DevOps Engineer"],
         "Cloud Infrastructure Engineer": ["Cloud Engineer", "Infrastructure Engineer", "DevOps"],
-        "Cloud Security Engineer": ["Security Engineer", "DevSecOps", "Cloud SecOps"],
-        "DevSecOps": ["DevSecOps Engineer", "Security Engineer", "DevOps Security"],
+        "DevSecOps": ["DevSecOps Engineer", "Security Engineer", "DevOps Security", "Cloud SecOps"],
+        "Site Reliability Engineer (SRE)": ["SRE", "Site Reliability Engineer", "Reliability Engineer", "DevOps Engineer"],
         "Site Reliability Engineer": ["SRE", "Reliability Engineer", "DevOps Engineer"],
+        "Continuous Integration (CI/CD)": ["CI/CD Engineer", "Release Engineer", "Build Engineer", "DevOps CI/CD"],
         "CI/CD Engineer": ["Release Engineer", "Build Engineer", "DevOps CI/CD"],
+        "System Engineer": ["Systems Engineer", "Linux Systems Engineer", "Operations Engineer"],
         "Systems Engineer": ["System Engineer", "Linux Systems Engineer", "Operations Engineer"],
-        "Cloud Network Engineer": ["Network Engineer", "Cloud Network Administrator"],
-        "Database Engineer": ["Database Administrator", "DBA", "Database Reliability Engineer", "SQL Engineer"],
-        "Cloud Database Engineer": ["Cloud DBA", "AWS Database Engineer", "Cloud database admin", "NoSQL Engineer"],
         "Data Platform Engineer": ["Data Infrastructure Engineer", "Data Engineer", "Data Ops"],
+        "Machine Learning Engineer (MLOps)": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Engineer"],
         "Machine Learning Engineer": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Infrastructure"],
-        "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"]
+        "AI Platform Engineer (AIOps)": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform Engineer"],
+        "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"],
     }
     
     if not api_key:
@@ -1647,7 +1652,17 @@ def is_us_location(location_str):
         "shanghai", "hong kong", "taiwan", "taipei", "vietnam", "thailand", "bangkok",
         "croatia", "zagreb", "czech", "republic", "türkiye", "turkey", "noida",
         "argentina", "ankara", "mississauga", "copenhagen", "denmark", "south korea",
-        "korea", "belgrade", "serbia", "yerevan", "armenia"
+        "korea", "belgrade", "serbia", "yerevan", "armenia", "calgary", "ottawa", 
+        "ontario", "british columbia", "quebec", "alberta", "pune", "hyderabad", 
+        "chennai", "mumbai", "delhi", "gurugram", "gurgaon", "south america", "africa", 
+        "middle east", "nz", "new zealand", "auckland", "wellington", "brisbane", 
+        "perth", "adelaide", "cape town", "johannesburg", "nairobi", "lagos", "egypt", 
+        "cairo", "dubai", "uae", "abu dhabi", "saudi arabia", "riyadh", "israel", 
+        "tel aviv", "colombia", "bogota", "medellin", "chile", "santiago", "peru", 
+        "lima", "ecuador", "quito", "bolivia", "uruguay", "montevideo", "costa rica",
+        "panama", "guatemala", "malaysia", "kuala lumpur", "indonesia", "jakarta",
+        "manila", "seoul", "oslo", "norway", "helsinki", "finland", "vienna", "austria",
+        "belgium", "brussels", "switzerland", "geneva", "greece", "athens"
     }
     
     has_negative = any(ni in loc_lower for ni in negative_indicators)
@@ -1691,9 +1706,22 @@ def is_us_location(location_str):
 
 
 
+# Titles we never source (still filtered at classify; this avoids discovery noise).
+_EXCLUDED_JOB_TITLE_RES = [
+    re.compile(r"database\s+engineer", re.I),
+    re.compile(r"cloud\s+database\s+engineer", re.I),
+    re.compile(r"\bcloud\s+database\b", re.I),
+    re.compile(r"\bdba\b", re.I),
+    re.compile(r"cloud\s+network(ing)?\s+engineer", re.I),
+    re.compile(r"cloud\s+security\s+engineer", re.I),
+]
+
+
 def is_target_job(job_title, target_titles):
     jt = job_title.lower()
-    
+    if job_title and any(rx.search(job_title) for rx in _EXCLUDED_JOB_TITLE_RES):
+        return False
+
     # 1. Strict substring and all-tokens checks
     for t in target_titles:
         t_lower = t.lower()
@@ -1703,12 +1731,15 @@ def is_target_job(job_title, target_titles):
         if len(parts) > 1 and all(p in jt for p in parts):
             return True
             
-    # 2. Acronym expansion check
+    # 2. Acronym expansion check (aligned with ROLE LABEL strings in Job_classifier_prompt.txt)
     acronyms = {
-        "sre": "site reliability engineer",
-        "ml": "machine learning engineer",
-        "ai": "ai platform engineer",
-        "cicd": "ci/cd engineer"
+        "sre": "site reliability",
+        "ml": "machine learning",
+        "mlops": "machine learning",
+        "aiops": "ai platform",
+        "cicd": "continuous integration",
+        "iac": "infrastructure",
+        "ai": "ai platform",
     }
     words = re.findall(r'\b[a-z]+\b', jt)
     for ac, expanded in acronyms.items():
@@ -1760,7 +1791,9 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                 log(f"Failed to fetch RSS feed {feed_name}: status code {r.status_code}")
                 continue
             
-            soup = BeautifulSoup(r.content, "xml")
+            import warnings
+            warnings.filterwarnings("ignore", module="bs4")
+            soup = BeautifulSoup(r.content, "html.parser")
             items = soup.find_all("item")
             log(f"Found {len(items)} items in RSS feed: {feed_name}")
             
@@ -1775,7 +1808,7 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                 raw_title = title_elem.text.strip()
                 job_url = link_elem.text.strip()
                 
-                pub_date_elem = item.find("pubDate")
+                pub_date_elem = item.find("pubdate") or item.find("pubDate")
                 pub_date_str = pub_date_elem.text.strip() if pub_date_elem else None
                 if not is_recent_date(pub_date_str):
                     continue
@@ -1828,7 +1861,11 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                 exclude_keywords = [
                     "europe only", "uk only", "canada only", "asia only", "latam only", 
                     "eu only", "apac only", "emea only", "germany only", "france only", 
-                    "outside us", "outside the us", "outside the united states"
+                    "outside us", "outside the us", "outside the united states",
+                    "india only", "australia only", "south america only", "africa only",
+                    "must be located in europe", "must be based in europe",
+                    "must be located in uk", "must be based in uk",
+                    "must be located in canada", "must be based in canada"
                 ]
                 if any(kw in desc_lower for kw in exclude_keywords):
                     continue
@@ -1882,16 +1919,17 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
-    # 1. Greenhouse Boards API
-    for company in greenhouse_companies:
+
+    def process_greenhouse(company):
+        local_discovered = []
+        local_matched = 0
         url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true"
         try:
             log(f"Querying Greenhouse API for: {company}")
-            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            r = http_get(url, headers=headers, timeout=10, attempts=3)
             if r.status_code != 200:
                 log(f"Greenhouse API for {company} returned status code {r.status_code}")
-                continue
+                return local_discovered, local_matched
             
             data = r.json()
             jobs = data.get("jobs", [])
@@ -1917,12 +1955,14 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
+                
                 if nu in found_urls:
                     continue
+                # Add to set (thread-safe in CPython due to GIL)
                 found_urls.add(nu)
                 
                 if dry_run:
-                    matched_count += 1
+                    local_matched += 1
                     log(f"  [DRY RUN MATCH] Greenhouse '{company}': '{title}' - {job_url}")
                     dry_urls.append({
                         "job_url": job_url,
@@ -1939,8 +1979,8 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 
                 desc_hash = compute_description_hash(jd_text)
                 
-                matched_count += 1
-                discovered.append({
+                local_matched += 1
+                local_discovered.append({
                     "job_title": title,
                     "company_name": comp_name,
                     "job_url": job_url,
@@ -1953,21 +1993,23 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 })
         except Exception as e:
             log(f"Error querying Greenhouse board '{company}': {e}")
-            
-    # 2. Lever Public Postings API
-    for company in lever_companies:
+        return local_discovered, local_matched
+
+    def process_lever(company):
+        local_discovered = []
+        local_matched = 0
         url = f"https://api.lever.co/v0/postings/{company}?mode=json"
         try:
             log(f"Querying Lever API for: {company}")
-            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            r = http_get(url, headers=headers, timeout=10, attempts=3)
             if r.status_code != 200:
                 log(f"Lever API for {company} returned status code {r.status_code}")
-                continue
+                return local_discovered, local_matched
             
             jobs = r.json()
             if not isinstance(jobs, list):
                 log(f"Lever API for {company} returned invalid format")
-                continue
+                return local_discovered, local_matched
                 
             log(f"  Lever board '{company}': Found {len(jobs)} total jobs")
             
@@ -2004,7 +2046,7 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 found_urls.add(nu)
                 
                 if dry_run:
-                    matched_count += 1
+                    local_matched += 1
                     log(f"  [DRY RUN MATCH] Lever '{company}': '{title}' - {job_url}")
                     dry_urls.append({
                         "job_url": job_url,
@@ -2045,8 +2087,8 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 
                 desc_hash = compute_description_hash(jd_text)
                 
-                matched_count += 1
-                discovered.append({
+                local_matched += 1
+                local_discovered.append({
                     "job_title": title,
                     "company_name": comp_name,
                     "job_url": job_url,
@@ -2059,10 +2101,25 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 })
         except Exception as e:
             log(f"Error querying Lever board '{company}': {e}")
+        return local_discovered, local_matched
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = []
+        for company in greenhouse_companies:
+            futures.append(executor.submit(process_greenhouse, company))
+        for company in lever_companies:
+            futures.append(executor.submit(process_lever, company))
+            
+        for future in as_completed(futures):
+            try:
+                res_disc, res_match = future.result()
+                discovered.extend(res_disc)
+                matched_count += res_match
+            except Exception as e:
+                log(f"Error processing future: {e}")
             
     log(f"Company API Sourcing complete. Found {matched_count} matching US jobs.")
     return discovered
-
 
 def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
     log("Fetching direct Ashby company board APIs...")
@@ -2074,14 +2131,16 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    for company in ashby_companies:
+    def process_ashby(company):
+        local_discovered = []
+        local_matched = 0
         url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
         try:
             log(f"Querying Ashby API for: {company}")
-            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            r = http_get(url, headers=headers, timeout=10, attempts=3)
             if r.status_code != 200:
                 log(f"Ashby API for {company} returned status code {r.status_code}")
-                continue
+                return local_discovered, local_matched
                 
             data = r.json()
             jobs = data.get("jobs", [])
@@ -2124,7 +2183,7 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
                 found_urls.add(nu)
                 
                 if dry_run:
-                    matched_count += 1
+                    local_matched += 1
                     log(f"  [DRY RUN MATCH] Ashby '{company}': '{title}' - {job_url}")
                     dry_urls.append({
                         "job_url": job_url,
@@ -2133,26 +2192,16 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
                     })
                     continue
                 
-                desc_plain = job.get("descriptionPlain")
-                desc_html = job.get("descriptionHtml")
+                jd_html = job.get("descriptionHtml", "")
+                jd_text = clean_text(jd_html).strip()
                 
-                if desc_plain:
-                    jd_text = desc_plain.strip()
-                elif desc_html:
-                    jd_text = clean_text(desc_html).strip()
-                else:
-                    jd_text = ""
-                
-                if not jd_text:
-                    continue
-                    
                 req_id = str(job.get("id"))
                 comp_name = company.title()
                 
                 desc_hash = compute_description_hash(jd_text)
                 
-                matched_count += 1
-                discovered.append({
+                local_matched += 1
+                local_discovered.append({
                     "job_title": title,
                     "company_name": comp_name,
                     "job_url": job_url,
@@ -2165,10 +2214,23 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
                 })
         except Exception as e:
             log(f"Error querying Ashby board '{company}': {e}")
+        return local_discovered, local_matched
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = []
+        for company in ashby_companies:
+            futures.append(executor.submit(process_ashby, company))
             
+        for future in as_completed(futures):
+            try:
+                res_disc, res_match = future.result()
+                discovered.extend(res_disc)
+                matched_count += res_match
+            except Exception as e:
+                log(f"Error processing future: {e}")
+                
     log(f"Ashby API Sourcing complete. Found {matched_count} matching US jobs.")
     return discovered
-
 
 def fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls):
     log("Fetching direct Workable Global Search API...")
@@ -2378,15 +2440,17 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
-    for company in smart_companies:
+
+    def process_smart(company):
+        local_discovered = []
+        local_matched = 0
         url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings"
         try:
             log(f"Querying SmartRecruiters API for: {company}")
-            r = http_get(url, headers=headers, timeout=10, attempts=2)
+            r = http_get(url, headers=headers, timeout=10, attempts=3)
             if r.status_code != 200:
                 log(f"SmartRecruiters API for {company} returned status code {r.status_code}")
-                continue
+                return local_discovered, local_matched
                 
             data = r.json()
             jobs = data.get("content", [])
@@ -2428,7 +2492,7 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
                 found_urls.add(nu)
                 
                 if dry_run:
-                    matched_count += 1
+                    local_matched += 1
                     log(f"  [DRY RUN MATCH] SmartRecruiters '{company}': '{title}' - {job_url}")
                     dry_urls.append({
                         "job_url": job_url,
@@ -2440,7 +2504,7 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
                 posting_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
                 
                 try:
-                    p_r = http_get(posting_url, headers=headers, timeout=10, attempts=2)
+                    p_r = http_get(posting_url, headers=headers, timeout=10, attempts=3)
                     if p_r.status_code == 200:
                         p_data = p_r.json()
                         sections = p_data.get("sections", {}) or {}
@@ -2463,11 +2527,11 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
                 if not jd_text:
                     continue
                     
-                desc_hash = compute_description_hash(jd_text)
                 comp_name = company.title()
+                desc_hash = compute_description_hash(jd_text)
                 
-                matched_count += 1
-                discovered.append({
+                local_matched += 1
+                local_discovered.append({
                     "job_title": title,
                     "company_name": comp_name,
                     "job_url": job_url,
@@ -2480,7 +2544,22 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
                 })
         except Exception as e:
             log(f"Error querying SmartRecruiters board '{company}': {e}")
+        return local_discovered, local_matched
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = []
+        for company in smart_companies:
+            futures.append(executor.submit(process_smart, company))
             
+        for future in as_completed(futures):
+            try:
+                res_disc, res_match = future.result()
+                discovered.extend(res_disc)
+                matched_count += res_match
+            except Exception as e:
+                log(f"Error processing future: {e}")
+                
     log(f"SmartRecruiters API Sourcing complete. Found {matched_count} matching US jobs.")
     return discovered
 
@@ -2574,23 +2653,26 @@ def main(dry_run=False):
             log(f"Warning: Failed to load config.json: {e}")
 
     if not target_titles:
-        target_titles = [
-            "DevOps Engineer",
-            "Cloud Automation Engineer",
-            "Platform Engineer",
-            "Cloud Infrastructure Engineer",
-            "Cloud Security Engineer",
-            "DevSecOps",
-            "Site Reliability Engineer",
-            "CI/CD Engineer",
-            "Systems Engineer",
-            "Cloud Network Engineer",
-            "Database Engineer",
-            "Cloud Database Engineer",
-            "Data Platform Engineer",
-            "Machine Learning Engineer",
-            "AI Platform Engineer",
-        ]
+        try:
+            if str(WORKSPACE) not in sys.path:
+                sys.path.insert(0, str(WORKSPACE))
+            from jobsearch_constants import DEFAULT_TARGET_TITLES
+
+            target_titles = list(DEFAULT_TARGET_TITLES)
+        except Exception:
+            target_titles = [
+                "DevOps Engineer",
+                "Cloud Automation Engineer",
+                "Platform Engineering",
+                "Cloud Infrastructure Engineer",
+                "DevSecOps",
+                "Site Reliability Engineer (SRE)",
+                "Continuous Integration (CI/CD)",
+                "System Engineer",
+                "Data Platform Engineer",
+                "Machine Learning Engineer (MLOps)",
+                "AI Platform Engineer (AIOps)",
+            ]
 
     search_cfg = config_data.get("search") or {}
     merge_previous = search_cfg.get("merge_previous_scrape", True)
@@ -2712,6 +2794,35 @@ def main(dry_run=False):
                 j["benefits"] = extract_benefits(j.get("job_description", ""))
     except Exception as e:
         log(f"Warning: Failed to extract salary/benefits/posted_at data: {e}")
+
+    try:
+        from job_identity import enrich_job_list
+
+        enrich_job_list(out_list)
+    except Exception as e:
+        log(f"Warning: job_identity enrich failed: {e}")
+
+    # Enforce that only jobs from the target 10k H-1B sponsors are kept
+    try:
+        log("Filtering scraped jobs against the 10k H-1B/OPT sponsors database...")
+        from dashboard_server import get_h1b_sponsors_cleaned, is_sponsor_match
+        sponsors = get_h1b_sponsors_cleaned()
+        if sponsors:
+            filtered_out_list = []
+            for j in out_list:
+                company = j.get("company_name", "")
+                if company:
+                    match_data = is_sponsor_match(company, sponsors)
+                    if match_data:
+                        j["visa_sponsor"] = True
+                        j["sponsor_metadata"] = match_data
+                        filtered_out_list.append(j)
+            log(f"H-1B Sponsor Filter: kept {len(filtered_out_list)} of {len(out_list)} jobs.")
+            out_list = filtered_out_list
+        else:
+            log("Warning: H-1B sponsors cache is empty. Skipping filtering.")
+    except Exception as e:
+        log(f"Error filtering jobs against H-1B sponsors database: {e}")
 
     SCRAPED_OUTPUT.write_text(json.dumps(out_list, indent=2), encoding="utf-8")
 

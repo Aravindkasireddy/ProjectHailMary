@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Briefcase,
   Settings as SettingsIcon,
@@ -30,13 +30,15 @@ import {
   Type,
   FileText,
   Lock,
-  LogOut
+  LogOut,
+  Globe
 } from 'lucide-react';
 import ResumeGenerator from '../../components/ResumeGenerator';
 import CopyButton from '../../components/CopyButton';
 import LogConsole from '../../components/LogConsole';
 import SettingsPanel from '../../components/SettingsPanel';
 import PolicyPanel from '../../components/PolicyPanel';
+import { supabase } from '../supabaseClient';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
@@ -46,6 +48,10 @@ interface DecisionPayload {
   red_flags?: string[];
   confidence_score?: number;
   rationale?: string;
+  recommendation?: string;
+  fit_score?: number;
+  ownership_strength?: string;
+  review_reason?: string;
   cloud?: {
     primary_cloud?: string;
   };
@@ -62,6 +68,7 @@ interface Job {
   apply_decision: string;
   strongest_label: string;
   confidence_score: number;
+  match_score?: number;
   rationale: string;
   red_flags?: string[];
   apply_decision_payload?: DecisionPayload;
@@ -78,7 +85,32 @@ interface Job {
   min_salary?: number;
   max_salary?: number;
   is_hourly?: boolean;
+  visa_sponsor?: boolean;
+  sponsor_metadata?: SponsorMetadata;
   salary_text?: string;
+  job_id?: string;
+  description_hash?: string;
+}
+
+interface SponsorMetadata {
+  id?: string;
+  company_name: string;
+  company_type?: string;
+  w2_contractor?: string;
+  employee_count?: number;
+  linkedin_account?: string;
+  career_portal?: string;
+  website?: string;
+  sponsor_status?: string;
+  recommended_action?: string;
+  opt_friendly_score?: number;
+  cases_2024?: number;
+  cases_2025?: number;
+  cases_2026?: number;
+  recent_cases?: number;
+  recent_approvals?: number;
+  trend_label?: string;
+  top_state?: string;
 }
 
 interface AnalyticsData {
@@ -118,23 +150,53 @@ interface Config {
   };
 }
 
+/** Avoid replacing `jobs` every poll tick when nothing material changed (reduces list flicker). */
+function jobListPollUnchanged(prev: Job[], next: Job[]): boolean {
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (!b || a.job_url !== b.job_url) return false;
+    if (
+      a.scraped_at !== b.scraped_at ||
+      a.apply_decision !== b.apply_decision ||
+      a.pipeline_stage !== b.pipeline_stage ||
+      a.archived !== b.archived ||
+      a.synced !== b.synced
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const CATEGORIES = [
   "DevOps Engineer",
   "Cloud Automation Engineer",
   "Platform Engineering",
   "Cloud Infrastructure Engineer",
-  "Cloud Security Engineer",
   "DevSecOps",
   "Site Reliability Engineer (SRE)",
   "Continuous Integration (CI/CD)",
-  "System Engineer",
-  "Cloud Network Engineer",
   "Data Platform Engineer",
-  "Machine Learning Engineer (MLOps)",
-  "AI Platform Engineer (AIOps)",
   "OutOfScope"
 ];
 
+const getJobSource = (url: string) => {
+  if (!url) return 'Other';
+  const lUrl = url.toLowerCase();
+  if (lUrl.includes('greenhouse.io')) return 'Greenhouse';
+  if (lUrl.includes('lever.co')) return 'Lever';
+  if (lUrl.includes('myworkdayjobs.com')) return 'Workday';
+  if (lUrl.includes('ashbyhq.com')) return 'Ashby';
+  if (lUrl.includes('workable.com')) return 'Workable';
+  if (lUrl.includes('smartrecruiters.com')) return 'SmartRecruiters';
+  if (lUrl.includes('weworkremotely.com')) return 'We Work Remotely';
+  if (lUrl.includes('remote.co')) return 'Remote.co';
+  if (lUrl.includes('linkedin.com')) return 'LinkedIn';
+  if (lUrl.includes('workatastartup.com') || lUrl.includes('ycombinator.com')) return 'Y Combinator';
+  return 'Other';
+};
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -174,7 +236,9 @@ export default function Dashboard() {
   });
   const [notionConnection, setNotionConnection] = useState({ connected: false, message: 'Checking...', dbName: '' });
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy' | 'resume'>('approved');
+  const [activeTab, setActiveTab] = useState<
+    'approved' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume'
+  >('approved');
   const [resume, setResume] = useState<string>('');
   const [resumeLoading, setResumeLoading] = useState<boolean>(false);
   const [resumeSaving, setResumeSaving] = useState<boolean>(false);
@@ -190,6 +254,10 @@ export default function Dashboard() {
   const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
   const [showActiveOnly, setShowActiveOnly] = useState(true);
   const [past24hOnly, setPast24hOnly] = useState(false);
+
+  const handleLogoutRef = useRef<() => Promise<void>>(async () => {});
+  const handling401Ref = useRef(false);
+  const jobsForPollRef = useRef<Job[]>([]);
 
   // Custom States for Advanced Sourcing, Notion Sync, and Live Logs Console
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string | null>(null);
@@ -246,6 +314,7 @@ export default function Dashboard() {
   // General Loading & Notification UI States
   const [syncingJobUrl, setSyncingJobUrl] = useState<string | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
+  const [resettingTitles, setResettingTitles] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Core helpers (hoisted to prevent temporal dead zone)
@@ -259,41 +328,47 @@ export default function Dashboard() {
     setLoginError('');
     setLoginLoading(true);
     try {
-      const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
-      const bodyPayload = { email: loginEmail, password: loginPassword };
-      
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyPayload),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (authMode === 'login') {
-          localStorage.setItem('maas_auth_token', data.token);
-          localStorage.setItem('maas_auth_role', data.role);
-          localStorage.setItem('maas_auth_email', data.email || loginEmail);
-          setAuthToken(data.token);
-          setAuthRole(data.role as 'admin' | 'user');
-          setAuthEmail(data.email || loginEmail);
+      if (authMode === 'login') {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: loginEmail,
+          password: loginPassword,
+        });
+        if (error) throw error;
+        if (data.session) {
+          const token = data.session.access_token;
+          const userEmail = data.session.user.email || loginEmail;
+          const role = userEmail === 'admin@hailmary.ai' ? 'admin' : 'user';
+          
+          localStorage.setItem('maas_auth_token', token);
+          localStorage.setItem('maas_auth_role', role);
+          localStorage.setItem('maas_auth_email', userEmail);
+          
+          setAuthToken(token);
+          setAuthRole(role);
+          setAuthEmail(userEmail);
           setLoginPassword('');
           setLoginEmail('');
-          showStatus(`Welcome, logged in as ${data.role === 'admin' ? 'Admin' : 'Read-Only User'}.`, 'success');
-        } else {
-          setAuthMode('login');
-          showStatus('Account created successfully! Please log in.', 'success');
+          showStatus(`Welcome, logged in as ${role === 'admin' ? 'Admin' : 'User'}.`, 'success');
         }
       } else {
-        setLoginError(data.message || (authMode === 'login' ? 'Invalid credentials.' : 'Registration failed.'));
+        const { error } = await supabase.auth.signUp({
+          email: loginEmail,
+          password: loginPassword,
+        });
+        if (error) throw error;
+        setAuthMode('login');
+        showStatus('Account created successfully! Please check your email or log in.', 'success');
       }
     } catch (err) {
-      setLoginError('Error connecting to authentication server.');
+      const errMsg = err instanceof Error ? err.message : 'Authentication failed.';
+      setLoginError(errMsg);
     } finally {
       setLoginLoading(false);
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem('maas_auth_token');
     localStorage.removeItem('maas_auth_role');
     localStorage.removeItem('maas_auth_email');
@@ -303,19 +378,55 @@ export default function Dashboard() {
     showStatus('Logged out successfully.', 'info');
   };
 
-  // Restore session from localStorage on mount & intercept fetch
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedToken = localStorage.getItem('maas_auth_token');
-      const savedRole = localStorage.getItem('maas_auth_role');
-      const savedEmail = localStorage.getItem('maas_auth_email');
-      if (savedToken && savedRole) {
-        setAuthToken(savedToken);
-        setAuthRole(savedRole as 'admin' | 'user');
-        setAuthEmail(savedEmail || 'user@hailmary.ai');
+    handleLogoutRef.current = handleLogout;
+  });
+
+  // Restore session from Supabase on mount & listen to changes
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        const token = session.access_token;
+        const userEmail = session.user.email || 'user@hailmary.ai';
+        const role = userEmail === 'admin@hailmary.ai' ? 'admin' : 'user';
+        setAuthToken(token);
+        setAuthEmail(userEmail);
+        setAuthRole(role);
+      } else {
+        setAuthToken(null);
+        setAuthEmail(null);
+        setAuthRole(null);
       }
       setIsAuthChecking(false);
-    }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        const token = session.access_token;
+        const userEmail = session.user.email || 'user@hailmary.ai';
+        const role = userEmail === 'admin@hailmary.ai' ? 'admin' : 'user';
+        
+        localStorage.setItem('maas_auth_token', token);
+        localStorage.setItem('maas_auth_email', userEmail);
+        localStorage.setItem('maas_auth_role', role);
+        
+        setAuthToken(token);
+        setAuthEmail(userEmail);
+        setAuthRole(role);
+      } else {
+        localStorage.removeItem('maas_auth_token');
+        localStorage.removeItem('maas_auth_email');
+        localStorage.removeItem('maas_auth_role');
+        
+        setAuthToken(null);
+        setAuthEmail(null);
+        setAuthRole(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -331,7 +442,14 @@ export default function Dashboard() {
           }
           const res = await originalFetch(input, { ...init, headers });
           if (res.status === 401) {
-            handleLogout();
+            if (!handling401Ref.current) {
+              handling401Ref.current = true;
+              void Promise.resolve(handleLogoutRef.current()).finally(() => {
+                window.setTimeout(() => {
+                  handling401Ref.current = false;
+                }, 1500);
+              });
+            }
           }
           return res;
         }
@@ -388,29 +506,127 @@ export default function Dashboard() {
     }
   };
 
+  // Client-Side Analytics Calculations
+  const computeAnalyticsLocally = (jobsList: Job[]) => {
+    const total_sourced = jobsList.length;
+    const approvedJobs = jobsList.filter(j => j.apply_decision === 'APPLY');
+    const rejectedJobs = jobsList.filter(j => j.apply_decision === 'DO_NOT_APPLY');
+    const approved = approvedJobs.length;
+    const rejected = rejectedJobs.length;
+    const approval_rate = total_sourced > 0 ? (approved / total_sourced) * 100 : 0;
+
+    const labels_distribution: Record<string, number> = {};
+    const sources_distribution: Record<string, number> = {};
+    const rejection_reasons: Record<string, number> = {};
+
+    jobsList.forEach(j => {
+      const label = j.strongest_label || 'OutOfScope';
+      labels_distribution[label] = (labels_distribution[label] || 0) + 1;
+
+      const source = getJobSource(j.job_url);
+      sources_distribution[source] = (sources_distribution[source] || 0) + 1;
+
+      if (j.apply_decision === 'DO_NOT_APPLY' && j.red_flags) {
+        j.red_flags.forEach(flag => {
+          rejection_reasons[flag] = (rejection_reasons[flag] || 0) + 1;
+        });
+      }
+    });
+
+    setAnalyticsData({
+      total_sourced,
+      approved,
+      rejected,
+      approval_rate,
+      labels_distribution,
+      sources_distribution,
+      rejection_reasons
+    });
+  };
+
+  // Client-Side Salary Insights Calculations
+  const computeSalaryInsightsLocally = (jobsList: Job[]) => {
+    const approvedJobs = jobsList.filter(j => j.apply_decision === 'APPLY' && !j.archived);
+    const yearly_salaries: number[] = [];
+    const hourly_salaries: number[] = [];
+
+    approvedJobs.forEach(j => {
+      const min = j.min_salary;
+      const max = j.max_salary;
+      const is_h = j.is_hourly;
+      if (min !== undefined && min !== null && max !== undefined && max !== null) {
+        const avg = (min + max) / 2.0;
+        if (is_h) {
+          hourly_salaries.push(avg);
+        } else {
+          yearly_salaries.push(avg);
+        }
+      }
+    });
+
+    const calculateStats = (arr: number[]) => {
+      if (arr.length === 0) return { count: 0, avg: 0, min: 0, max: 0, distribution: [] };
+      const sum = arr.reduce((a, b) => a + b, 0);
+      const avg = sum / arr.length;
+      const min = Math.min(...arr);
+      const max = Math.max(...arr);
+      return { count: arr.length, avg, min, max, distribution: arr };
+    };
+
+    const yearly = calculateStats(yearly_salaries);
+    const hourly = calculateStats(hourly_salaries);
+
+    setSalaryInsights({
+      yearly_count: yearly.count,
+      yearly_avg: yearly.avg,
+      yearly_min: yearly.min,
+      yearly_max: yearly.max,
+      hourly_count: hourly.count,
+      hourly_avg: hourly.avg,
+      hourly_min: hourly.min,
+      hourly_max: hourly.max,
+      yearly_distribution: yearly.distribution,
+      hourly_distribution: hourly.distribution
+    });
+  };
+
+  // Trigger local calculations when jobs update
+  useEffect(() => {
+    if (jobs.length > 0) {
+      setTimeout(() => {
+        computeAnalyticsLocally(jobs);
+        computeSalaryInsightsLocally(jobs);
+      }, 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs]);
+
   // Fetch API Functions
   const fetchAnalytics = async () => {
-    setAnalyticsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/analytics`);
-      if (res.ok) {
-        const data = await res.json();
-        setAnalyticsData(data);
-      }
-    } catch {
-      showStatus('Failed to load analytics data.', 'error');
-    } finally {
-      setAnalyticsLoading(false);
+    // Analytics computed locally via useEffect
+    if (jobs.length > 0) {
+      computeAnalyticsLocally(jobs);
     }
   };
 
   const fetchPolicy = async () => {
     setPolicyLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/policy`);
-      if (res.ok) {
-        const data = await res.json();
-        setPolicyConfig(data);
+      const { data, error } = await supabase
+        .from('user_configs')
+        .select('policy_max_experience_years, policy_min_salary_annual, policy_min_salary_hourly, policy_enforce_visa_sponsorship, policy_enforce_no_clearance, policy_custom_red_flag_keywords')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) {
+        setPolicyConfig({
+          max_experience_years: data.policy_max_experience_years ?? 8,
+          min_salary_annual: data.policy_min_salary_annual ?? 80000,
+          min_salary_hourly: data.policy_min_salary_hourly ?? 50,
+          enforce_visa_sponsorship: data.policy_enforce_visa_sponsorship ?? true,
+          enforce_no_clearance: data.policy_enforce_no_clearance ?? true,
+          custom_red_flag_keywords: data.policy_custom_red_flag_keywords || []
+        });
       }
     } catch {
       showStatus('Failed to load policy config.', 'error');
@@ -420,27 +636,23 @@ export default function Dashboard() {
   };
 
   const fetchSalaryInsights = async () => {
-    setSalaryInsightsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/salary-insights`);
-      if (res.ok) {
-        const data = await res.json();
-        setSalaryInsights(data);
-      }
-    } catch {
-      showStatus('Failed to load salary insights.', 'error');
-    } finally {
-      setSalaryInsightsLoading(false);
+    // Salary insights computed locally via useEffect
+    if (jobs.length > 0) {
+      computeSalaryInsightsLocally(jobs);
     }
   };
 
   const fetchResume = async () => {
     setResumeLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/resume`);
-      if (res.ok) {
-        const data = await res.json();
-        setResume(data.resume || '');
+      const { data, error } = await supabase
+        .from('user_configs')
+        .select('base_resume')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) {
+        setResume(data.base_resume || '');
       }
     } catch {
       showStatus('Failed to load base resume.', 'error');
@@ -452,21 +664,19 @@ export default function Dashboard() {
   const saveResume = async () => {
     setResumeSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/api/resume`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resume }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus(data.message, 'success');
-        } else {
-          showStatus(data.message || 'Failed to save resume.', 'error');
-        }
-      } else {
-        showStatus('Failed to save resume.', 'error');
-      }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('user_configs')
+        .upsert({
+          user_id: user.id,
+          base_resume: resume,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+      showStatus('Base resume saved successfully!', 'success');
     } catch {
       showStatus('Error saving resume.', 'error');
     } finally {
@@ -509,20 +719,14 @@ export default function Dashboard() {
 
   const updatePipelineStage = async (jobUrl: string, newStage: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/update-pipeline-stage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_url: jobUrl, pipeline_stage: newStage })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus(data.message, 'success');
-          setJobs(prev => prev.map(j => j.job_url === jobUrl ? { ...j, pipeline_stage: newStage } : j));
-        } else {
-          showStatus(data.message, 'error');
-        }
-      }
+      const { error } = await supabase
+        .from('jobs')
+        .update({ pipeline_stage: newStage })
+        .eq('job_url', jobUrl);
+
+      if (error) throw error;
+      showStatus('Job pipeline stage updated successfully!', 'success');
+      setJobs(prev => prev.map(j => j.job_url === jobUrl ? { ...j, pipeline_stage: newStage } : j));
     } catch {
       showStatus('Failed to update pipeline stage.', 'error');
     }
@@ -537,7 +741,6 @@ export default function Dashboard() {
       if (data.success) {
         showStatus(data.message, 'success');
         fetchData();
-        fetchAnalytics();
       } else {
         showStatus(data.message || 'Batch Notion Sync failed.', 'error');
       }
@@ -557,7 +760,6 @@ export default function Dashboard() {
       if (data.success) {
         showStatus(data.message, 'success');
         fetchData();
-        fetchAnalytics();
       } else {
         showStatus(data.message || 'Two-way Notion status sync failed.', 'error');
       }
@@ -591,24 +793,29 @@ export default function Dashboard() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isLogsExpanded]);
+  }, [isLogsExpanded, authToken]);
 
   const savePolicyConfig = async (updatedPolicy: PolicyConfig) => {
     try {
-      const res = await fetch(`${API_BASE}/api/policy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedPolicy)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus(data.message, 'success');
-          setPolicyConfig(updatedPolicy);
-        } else {
-          showStatus(data.message, 'error');
-        }
-      }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('user_configs')
+        .upsert({
+          user_id: user.id,
+          policy_max_experience_years: updatedPolicy.max_experience_years,
+          policy_min_salary_annual: updatedPolicy.min_salary_annual,
+          policy_min_salary_hourly: updatedPolicy.min_salary_hourly,
+          policy_enforce_visa_sponsorship: updatedPolicy.enforce_visa_sponsorship,
+          policy_enforce_no_clearance: updatedPolicy.enforce_no_clearance,
+          policy_custom_red_flag_keywords: updatedPolicy.custom_red_flag_keywords,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+      showStatus('Policy configuration saved successfully!', 'success');
+      setPolicyConfig(updatedPolicy);
     } catch {
       showStatus('Failed to save policy configuration.', 'error');
     }
@@ -616,24 +823,69 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      // 1. Fetch Jobs
-      const resJobs = await fetch(`${API_BASE}/api/jobs`);
-      if (resJobs.ok) {
-        const jobsData = await resJobs.json();
+      // 1. Fetch Jobs from Supabase
+      const { data: jobsData, error: jobsError } = await supabase
+        .from('jobs')
+        .select('*')
+        .order('scraped_at', { ascending: false });
+
+      if (jobsError) {
+        console.error('Error fetching jobs:', jobsError);
+      } else if (jobsData) {
         setJobs(jobsData);
       }
 
-      // 2. Fetch Config
-      const resConfig = await fetch(`${API_BASE}/api/config`);
-      if (resConfig.ok) {
-        const configData: Config = await resConfig.json();
-        setConfig(configData);
-        setTitlesInput(configData.target_titles.join('\n'));
-        setWebhookUrlInput(configData.webhook_url);
-        setSchedulerHour(configData.scheduler?.run_at_hour ?? 8);
-        setSchedulerMinute(configData.scheduler?.run_at_minute ?? 0);
-        setSchedulerEnabled(configData.scheduler?.enabled ?? true);
-        setSendDigestOnly(configData.search?.send_digest_only ?? true);
+      // 2. Fetch Config from Supabase
+      const { data: configData, error: configError } = await supabase
+        .from('user_configs')
+        .select('*')
+        .maybeSingle();
+
+      if (configError) {
+        console.error('Error fetching config:', configError);
+      } else if (configData) {
+        const mappedConfig: Config = {
+          target_titles: configData.target_titles || [],
+          scheduler: {
+            enabled: configData.scheduler_enabled ?? true,
+            run_at_hour: configData.scheduler_run_at_hour ?? 8,
+            run_at_minute: configData.scheduler_run_at_minute ?? 0,
+          },
+          webhook_url: configData.webhook_url || '',
+          search: {
+            country_phrase: configData.search_country_phrase || 'United States',
+            include_remote_primary_boards: configData.search_include_remote_primary_boards ?? true,
+            merge_previous_scrape: configData.search_merge_previous_scrape ?? true,
+            send_digest_only: configData.search_send_digest_only ?? true,
+            max_digest_items: configData.search_max_digest_items ?? 10,
+          }
+        };
+        setConfig(mappedConfig);
+        setTitlesInput((configData.target_titles || []).join('\n'));
+        setWebhookUrlInput(configData.webhook_url || '');
+        setSchedulerHour(configData.scheduler_run_at_hour ?? 8);
+        setSchedulerMinute(configData.scheduler_run_at_minute ?? 0);
+        setSchedulerEnabled(configData.scheduler_enabled ?? true);
+        setSendDigestOnly(configData.search_send_digest_only ?? true);
+      } else {
+        // Create an empty config for new users
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user) {
+          const defaultTitles = [
+            'DevOps Engineer',
+            'Cloud Automation Engineer',
+            'Platform Engineering',
+            'Cloud Infrastructure Engineer',
+            'DevSecOps',
+            'Site Reliability Engineer (SRE)',
+            'Continuous Integration (CI/CD)',
+            'Data Platform Engineer'
+          ];
+          await supabase.from('user_configs').insert({
+            user_id: sessionData.session.user.id,
+            target_titles: defaultTitles
+          });
+        }
       }
 
       // Check Notion status
@@ -643,19 +895,22 @@ export default function Dashboard() {
       // Check stale status
       checkStaleStatus();
     } catch {
-      showStatus('Failed to communicate with local dashboard API.', 'error');
+      showStatus('Failed to communicate with Supabase database.', 'error');
     }
   };
 
-  // Fetch new jobs list from backend
+  // Fetch new jobs list
   const fetchNewJobs = async () => {
     setNewJobsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/new-jobs`, {
-        headers: { Authorization: authToken ? `Bearer ${authToken}` : '' },
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const { data, error } = await supabase
+        .from('jobs')
+        .select('*')
+        .gt('scraped_at', new Date(Date.now() - 15 * 60 * 1000).toISOString()) // Scraped in the last 15 minutes
+        .order('scraped_at', { ascending: false });
+
+      if (error) throw error;
+      if (data) {
         setNewJobs(data);
         setNewJobsCount(data.length);
       }
@@ -669,16 +924,18 @@ export default function Dashboard() {
   // Watch scraper status to trigger fetch of new jobs after scrape completes
   useEffect(() => {
     if (scraperStatus.status === 'completed') {
-      // Scrape just finished — fetch the new jobs list from the backend
-      fetchNewJobs();
-      // Also refresh the main jobs list
-      fetchData();
+      setTimeout(() => {
+        fetchNewJobs();
+        fetchData();
+      }, 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scraperStatus.status]);
 
   // Tab change handler replacing side-effect useEffect
-  const handleTabChange = (tab: 'approved' | 'pending' | 'rejected' | 'settings' | 'analytics' | 'policy' | 'resume') => {
+  const handleTabChange = (
+    tab: 'approved' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume'
+  ) => {
     if (authRole !== 'admin' && ['policy', 'resume', 'settings'].includes(tab)) {
       showStatus('Admin role required to access this tab.', 'error');
       return;
@@ -703,18 +960,17 @@ export default function Dashboard() {
         checkScraperStatus();
         // Periodically refresh jobs list too
         fetch(`${API_BASE}/api/jobs`)
-          .then(res => res.ok && res.json())
-          .then(data => {
-            if (data) {
-                // If we want to track new jobs
-                if (jobs.length > 0) {
-                    const newIds = data.map((j: Job) => j.job_url);
-                    const oldIds = jobs.map((j: Job) => j.job_url);
-                    const newlyAdded = newIds.filter((id: string) => !oldIds.includes(id));
-                    setNewJobsCount(newlyAdded.length);
-                }
-                setJobs(data);
+          .then((res) => res.ok && res.json())
+          .then((data: Job[] | undefined) => {
+            if (!data) return;
+            const prev = jobsForPollRef.current;
+            if (jobListPollUnchanged(prev, data)) return;
+            if (prev.length > 0) {
+              const oldIds = new Set(prev.map((j) => j.job_url));
+              const newlyAdded = data.filter((j) => !oldIds.has(j.job_url)).length;
+              setNewJobsCount(newlyAdded);
             }
+            setJobs(data);
           })
           .catch(() => {
             // Silence
@@ -732,6 +988,10 @@ export default function Dashboard() {
     }
   }, [isAuthChecking, authToken]);
   /* eslint-enable react-hooks/exhaustive-deps */
+
+  useEffect(() => {
+    jobsForPollRef.current = jobs;
+  }, [jobs]);
 
   // Start scraper
   const triggerScrape = async () => {
@@ -787,38 +1047,65 @@ export default function Dashboard() {
     if (staleCheckStatus.status === 'running' && authToken) {
       interval = setInterval(() => {
         checkStaleStatus();
-        // Periodically refresh jobs list too
-        fetch(`${API_BASE}/api/jobs`)
-          .then(res => res.ok && res.json())
-          .then(data => {
-            if (data) setJobs(data);
-          })
-          .catch(() => {
-            // Silence
+        // Periodically refresh jobs list directly from Supabase
+        supabase
+          .from('jobs')
+          .select('*')
+          .order('scraped_at', { ascending: false })
+          .then(({ data }) => {
+            if (!data) return;
+            setJobs((prev) => (jobListPollUnchanged(prev, data as Job[]) ? prev : (data as Job[])));
           });
       }, 2000);
     }
     return () => clearInterval(interval);
   }, [staleCheckStatus.status, authToken]);
 
+  // Supabase Realtime changes listener
+  useEffect(() => {
+    if (!authToken) return;
+
+    const channel = supabase
+      .channel('public:jobs')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jobs' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newJob = payload.new as Job;
+            setJobs(prev => {
+              if (prev.some(j => j.job_url === newJob.job_url)) return prev;
+              return [newJob, ...prev];
+            });
+            setNewJobsCount(c => c + 1);
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedJob = payload.new as Job;
+            setJobs(prev => prev.map(j => j.job_url === updatedJob.job_url ? { ...j, ...updatedJob } : j));
+          } else if (payload.eventType === 'DELETE') {
+            const deletedJob = payload.old as { job_url?: string };
+            setJobs(prev => prev.filter(j => j.job_url !== deletedJob.job_url));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authToken]);
+
   // Delete / Archive Job
   const deleteJob = async (job_url: string) => {
     if (!confirm('Are you sure you want to archive this job posting? It will be hidden from the dashboard.')) return;
     try {
-      const res = await fetch(`${API_BASE}/api/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_url })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus('Job archived successfully!', 'success');
-          setJobs(prev => prev.map(j => j.job_url === job_url ? { ...j, archived: true } : j));
-        } else {
-          showStatus(data.message, 'error');
-        }
-      }
+      const { error } = await supabase
+        .from('jobs')
+        .update({ archived: true })
+        .eq('job_url', job_url);
+        
+      if (error) throw error;
+      showStatus('Job archived successfully!', 'success');
+      setJobs(prev => prev.map(j => j.job_url === job_url ? { ...j, archived: true } : j));
     } catch {
       showStatus('Failed to archive job.', 'error');
     }
@@ -868,22 +1155,94 @@ export default function Dashboard() {
     };
 
     try {
-      const res = await fetch(`${API_BASE}/api/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedConfig)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus('Configuration settings saved successfully!', 'success');
-          setConfig(updatedConfig);
-        } else {
-          showStatus('Failed to save settings.', 'error');
-        }
-      }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('user_configs')
+        .upsert({
+          user_id: user.id,
+          target_titles: updatedConfig.target_titles,
+          scheduler_enabled: updatedConfig.scheduler.enabled,
+          scheduler_run_at_hour: updatedConfig.scheduler.run_at_hour,
+          scheduler_run_at_minute: updatedConfig.scheduler.run_at_minute,
+          webhook_url: updatedConfig.webhook_url,
+          search_send_digest_only: updatedConfig.search?.send_digest_only,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+      showStatus('Configuration settings saved successfully!', 'success');
+      setConfig(updatedConfig);
     } catch {
-      showStatus('Failed to reach settings API.', 'error');
+      showStatus('Failed to save settings to database.', 'error');
+    }
+  };
+
+  const resetTargetTitles = async () => {
+    setResettingTitles(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/config/default-target-titles`);
+      if (!res.ok) throw new Error('defaults');
+      const data = await res.json();
+      const target_titles: string[] = data.target_titles || [];
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { error } = await supabase.from('user_configs').upsert({
+          user_id: user.id,
+          target_titles,
+          updated_at: new Date().toISOString()
+        });
+        if (error) throw error;
+      }
+
+      const { data: sess } = await supabase.auth.getSession();
+      const bearer = authToken || sess?.session?.access_token;
+      if (bearer) {
+        await fetch(`${API_BASE}/api/config/reset-target-titles`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${bearer}`
+          },
+          body: '{}'
+        });
+      }
+
+      setTitlesInput(target_titles.join('\n'));
+      setConfig(prev => ({ ...prev, target_titles }));
+      showStatus('Target titles restored to defaults.', 'success');
+    } catch {
+      showStatus('Could not restore default target titles.', 'error');
+    } finally {
+      setResettingTitles(false);
+    }
+  };
+
+  const submitClassifierFeedback = async (job: Job) => {
+    const note = window.prompt('Optional note for classifier feedback (sent to server log only)');
+    if (note === null) return;
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const bearer = authToken || sess?.session?.access_token;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (bearer) headers.Authorization = `Bearer ${bearer}`;
+      const p = job.apply_decision_payload;
+      const res = await fetch(`${API_BASE}/api/classifier-feedback`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          job_url: job.job_url,
+          job_title: job.job_title,
+          note,
+          recommendation: p && typeof p === 'object' && 'recommendation' in p ? (p as { recommendation?: string }).recommendation : undefined
+        })
+      });
+      if (!res.ok) throw new Error('bad status');
+      showStatus('Classifier feedback recorded.', 'success');
+    } catch {
+      showStatus('Failed to record classifier feedback.', 'error');
     }
   };
 
@@ -1056,7 +1415,6 @@ export default function Dashboard() {
     }
 
     const payload = {
-      job_url: editUrl.trim(),
       job_title: editTitle.trim(),
       company_name: editCompany.trim(),
       requirement_id: editReqId.trim(),
@@ -1072,28 +1430,22 @@ export default function Dashboard() {
       cloud: editCloud,
       seniority: editSeniority,
       source: editSource,
-      apply_decision_payload: parsedPayload
+      apply_decision_payload: parsedPayload,
+      pipeline_stage: editDecision === 'APPLY' ? 'Approved' : 'Rejected'
     };
 
     try {
-      const res = await fetch(`${API_BASE}/api/override`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus('Manual classification override applied successfully!', 'success');
-          setIsModalOpen(false);
-          // Refresh list
-          fetch(`${API_BASE}/api/jobs`)
-            .then(res => res.ok && res.json())
-            .then(data => data && setJobs(data));
-        } else {
-          showStatus(data.message, 'error');
-        }
-      }
+      const { error } = await supabase
+        .from('jobs')
+        .update(payload)
+        .eq('job_url', editUrl.trim());
+
+      if (error) throw error;
+      showStatus('Manual classification override applied successfully!', 'success');
+      setIsModalOpen(false);
+      
+      // Update local state directly
+      setJobs(prev => prev.map(j => j.job_url === editUrl.trim() ? { ...j, ...payload } : j));
     } catch {
       showStatus('Failed to send classification override.', 'error');
     }
@@ -1103,25 +1455,27 @@ export default function Dashboard() {
   const approvedJobs = jobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0));
   const rejectedJobs = jobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0)));
   const pendingJobs = jobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
+  const humanReviewJobs = jobs.filter(j => {
+    if (j.archived) return false;
+    const p = j.apply_decision_payload;
+    const rec =
+      p && typeof p === 'object' && 'recommendation' in p
+        ? String((p as { recommendation?: string }).recommendation || '').toUpperCase()
+        : '';
+    return rec === 'HUMAN_REVIEW';
+  });
 
-  const getJobSource = (url: string) => {
-    if (!url) return 'Other';
-    const lUrl = url.toLowerCase();
-    if (lUrl.includes('greenhouse.io')) return 'Greenhouse';
-    if (lUrl.includes('lever.co')) return 'Lever';
-    if (lUrl.includes('myworkdayjobs.com')) return 'Workday';
-    if (lUrl.includes('ashbyhq.com')) return 'Ashby';
-    if (lUrl.includes('workable.com')) return 'Workable';
-    if (lUrl.includes('smartrecruiters.com')) return 'SmartRecruiters';
-    if (lUrl.includes('weworkremotely.com')) return 'We Work Remotely';
-    if (lUrl.includes('remote.co')) return 'Remote.co';
-    if (lUrl.includes('linkedin.com')) return 'LinkedIn';
-    if (lUrl.includes('workatastartup.com') || lUrl.includes('ycombinator.com')) return 'Y Combinator';
-    return 'Other';
-  };
+
 
   const filteredJobs = () => {
-    let list = activeTab === 'approved' ? approvedJobs : activeTab === 'rejected' ? rejectedJobs : pendingJobs;
+    let list =
+      activeTab === 'approved'
+        ? approvedJobs
+        : activeTab === 'rejected'
+          ? rejectedJobs
+          : activeTab === 'human_review'
+            ? humanReviewJobs
+            : pendingJobs;
 
     // Filter out stale/closed jobs if showActiveOnly is enabled
     if (activeTab === 'approved' && showActiveOnly) {
@@ -1472,7 +1826,7 @@ export default function Dashboard() {
 
       {/* Floating Status Message */}
       {statusMessage && (
-        <div className={`fixed bottom-6 right-6 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl border shadow-xl animate-bounce ${statusMessage.type === 'success'
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl border shadow-xl animate-in fade-in duration-300 ${statusMessage.type === 'success'
             ? 'bg-emerald-950/90 text-emerald-300 border-emerald-800/80 shadow-emerald-900/20'
             : statusMessage.type === 'error'
               ? 'bg-rose-950/90 text-rose-300 border-rose-800/80 shadow-rose-900/20'
@@ -1606,6 +1960,15 @@ export default function Dashboard() {
                   }`}
               >
                 Unreviewed ({pendingJobs.length})
+              </button>
+              <button
+                onClick={() => handleTabChange('human_review')}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'human_review'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                Human review ({humanReviewJobs.length})
               </button>
               <button
                 onClick={() => handleTabChange('rejected')}
@@ -2163,6 +2526,8 @@ export default function Dashboard() {
               schedulerMinute={schedulerMinute}
               setSchedulerMinute={setSchedulerMinute}
               saveSettings={saveSettings}
+              onResetTargetTitles={resetTargetTitles}
+              resettingTitles={resettingTitles}
             />
           ) : activeTab === 'resume' ? (
             <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-4xl shadow-xl flex flex-col h-[70vh]">
@@ -2211,7 +2576,13 @@ export default function Dashboard() {
                 <div className="flex items-center space-x-2">
                   <Sliders className="w-4 h-4 text-violet-400" />
                   <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                    {activeTab === 'approved' ? 'Approved Postings' : activeTab === 'rejected' ? 'Filtered Postings' : 'Pending Review'}
+                    {activeTab === 'approved'
+                      ? 'Approved Postings'
+                      : activeTab === 'rejected'
+                        ? 'Filtered Postings'
+                        : activeTab === 'human_review'
+                          ? 'Classifier: human review'
+                          : 'Pending Review'}
                   </h2>
                 </div>
                 <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-900">
@@ -2254,7 +2625,7 @@ export default function Dashboard() {
                     {searchTerm ? 'No results matched your search term.' : 'Try running the sourcing agent to scrape jobs or override filter settings.'}
                   </p>
                 </div>
-              ) : isKanbanView ? (
+              ) : isKanbanView && activeTab !== 'human_review' ? (
                 /* Kanban Board Columns */
                 <div className="flex space-x-4 overflow-x-auto pb-4 custom-scrollbar items-start select-none">
                   {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(stage => {
@@ -2329,6 +2700,8 @@ export default function Dashboard() {
                           ? 'border-emerald-500/20 hover:border-emerald-500/50 hover:bg-emerald-950/5'
                           : activeTab === 'rejected'
                             ? 'border-rose-500/20 hover:border-rose-500/50 hover:bg-rose-950/5'
+                            : activeTab === 'human_review'
+                              ? 'border-violet-500/25 hover:border-violet-500/50 hover:bg-violet-950/10'
                             : 'border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-950/5'
                         }`}
                     >
@@ -2351,6 +2724,8 @@ export default function Dashboard() {
                                 ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
                                 : activeTab === 'rejected'
                                   ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
+                                  : activeTab === 'human_review'
+                                    ? 'bg-violet-950/60 text-violet-300 border border-violet-800/40'
                                   : 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
                               }`}>
                               {job.strongest_label}
@@ -2364,6 +2739,197 @@ export default function Dashboard() {
                             )}
                           </div>
                         </div>
+
+                        {job.visa_sponsor && (
+                          <div className="mt-3 mb-3 p-4 bg-gradient-to-br from-slate-900/95 to-slate-950/95 border border-blue-900/30 rounded-2xl shadow-xl backdrop-blur-md">
+                            {/* Panel Header */}
+                            <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-800/60">
+                              <div className="flex items-center space-x-2">
+                                <div className="p-1.5 bg-blue-950/80 border border-blue-800/40 rounded-lg text-blue-400">
+                                  <Globe className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider block">Visa Sponsorship Profile</span>
+                                  <span className="text-xs text-slate-300 font-semibold">{job.company_name}</span>
+                                </div>
+                              </div>
+                              
+                              {/* Status Badge */}
+                              {job.sponsor_metadata?.sponsor_status && (
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
+                                  job.sponsor_metadata.sponsor_status.toLowerCase().includes('strong') 
+                                    ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60'
+                                    : job.sponsor_metadata.sponsor_status.toLowerCase().includes('active')
+                                      ? 'bg-blue-950/80 text-blue-400 border-blue-800/60'
+                                      : 'bg-amber-950/80 text-amber-400 border-amber-800/60'
+                                }`}>
+                                  {job.sponsor_metadata.sponsor_status}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Detailed Metadata Grid */}
+                            {job.sponsor_metadata ? (
+                              <div className="space-y-3">
+                                {/* Score Indicator & Trend */}
+                                <div className="grid grid-cols-2 gap-3 items-center">
+                                  {job.sponsor_metadata.opt_friendly_score !== undefined && job.sponsor_metadata.opt_friendly_score !== null && (
+                                    <div>
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Hiring Score</span>
+                                        <span className={`text-xs font-bold ${
+                                          job.sponsor_metadata.opt_friendly_score >= 75
+                                            ? 'text-emerald-400'
+                                            : job.sponsor_metadata.opt_friendly_score >= 40
+                                              ? 'text-blue-400'
+                                              : 'text-amber-400'
+                                        }`}>
+                                          {Math.round(job.sponsor_metadata.opt_friendly_score)}/100
+                                        </span>
+                                      </div>
+                                      {/* Gradient Progress Bar */}
+                                      <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                        <div 
+                                          className={`h-full rounded-full bg-gradient-to-r ${
+                                            job.sponsor_metadata.opt_friendly_score >= 75
+                                              ? 'from-emerald-500 to-teal-400'
+                                              : job.sponsor_metadata.opt_friendly_score >= 40
+                                                ? 'from-blue-500 to-indigo-400'
+                                                : 'from-amber-500 to-orange-400'
+                                          }`} 
+                                          style={{ width: `${job.sponsor_metadata.opt_friendly_score}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Growth Trend */}
+                                  {job.sponsor_metadata.trend_label && (
+                                    <div className="bg-slate-950/40 p-2 rounded-xl border border-slate-800/30 flex items-center justify-between">
+                                      <div>
+                                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Filing Trend</span>
+                                        <span className="text-xs font-medium text-slate-200">{job.sponsor_metadata.trend_label}</span>
+                                      </div>
+                                      {job.sponsor_metadata.trend_label.toLowerCase().includes('grow') ? (
+                                        <svg className="w-5 h-5 text-emerald-400 shrink-0 bg-emerald-950/40 p-1 border border-emerald-900/40 rounded-lg" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8L11 17l-5-5-5 5" />
+                                        </svg>
+                                      ) : (
+                                        <svg className="w-5 h-5 text-blue-400 shrink-0 bg-blue-950/40 p-1 border border-blue-900/40 rounded-lg" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" />
+                                        </svg>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Filings Grid (2024-2026) */}
+                                <div className="p-2.5 bg-slate-950/50 border border-slate-800/40 rounded-xl">
+                                  <div className="flex justify-between items-center mb-2">
+                                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Annual Sponsorship Cases</span>
+                                    {job.sponsor_metadata.recent_cases ? (
+                                      <span className="text-[10px] font-bold text-slate-300">
+                                        Total: {job.sponsor_metadata.recent_cases}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                                    <div className="bg-slate-900/50 p-1.5 rounded-lg border border-slate-800/30">
+                                      <span className="text-[9px] text-slate-500 uppercase tracking-wider block">2024</span>
+                                      <span className="font-bold text-slate-200">{job.sponsor_metadata.cases_2024 !== null && job.sponsor_metadata.cases_2024 !== undefined ? job.sponsor_metadata.cases_2024 : '-'}</span>
+                                    </div>
+                                    <div className="bg-slate-900/50 p-1.5 rounded-lg border border-slate-800/30">
+                                      <span className="text-[9px] text-slate-500 uppercase tracking-wider block">2025</span>
+                                      <span className="font-bold text-slate-200">{job.sponsor_metadata.cases_2025 !== null && job.sponsor_metadata.cases_2025 !== undefined ? job.sponsor_metadata.cases_2025 : '-'}</span>
+                                    </div>
+                                    <div className="bg-slate-900/50 p-1.5 rounded-lg border border-slate-800/30">
+                                      <span className="text-[9px] text-slate-500 uppercase tracking-wider block">2026</span>
+                                      <span className="font-bold text-slate-200">{job.sponsor_metadata.cases_2026 !== null && job.sponsor_metadata.cases_2026 !== undefined ? job.sponsor_metadata.cases_2026 : '-'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* General Details Footer */}
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 bg-slate-950/20 p-2 rounded-xl border border-slate-800/20">
+                                  {job.sponsor_metadata.top_state && (
+                                    <div className="flex items-center space-x-1">
+                                      <span className="font-semibold text-slate-500 uppercase">Top State:</span>
+                                      <span className="text-slate-300 font-medium">{job.sponsor_metadata.top_state}</span>
+                                    </div>
+                                  )}
+                                  {job.sponsor_metadata.w2_contractor && (
+                                    <div className="flex items-center space-x-1">
+                                      <span className="font-semibold text-slate-500 uppercase">Type:</span>
+                                      <span className="text-slate-300 font-medium">{job.sponsor_metadata.w2_contractor}</span>
+                                    </div>
+                                  )}
+                                  {job.sponsor_metadata.employee_count !== undefined && job.sponsor_metadata.employee_count !== null && (
+                                    <div className="flex items-center space-x-1">
+                                      <span className="font-semibold text-slate-500 uppercase">Employees:</span>
+                                      <span className="text-slate-300 font-medium">
+                                        {job.sponsor_metadata.employee_count.toLocaleString()}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Recommended Action / Note */}
+                                {job.sponsor_metadata.recommended_action && (
+                                  <div className="text-[10px] text-blue-300/80 bg-blue-950/20 p-2 rounded-lg border border-blue-900/30 italic">
+                                    💡 <span className="font-medium text-slate-300">Recommendation:</span> {job.sponsor_metadata.recommended_action}
+                                  </div>
+                                )}
+
+                                {/* Portal & Social Links Row */}
+                                <div className="flex items-center space-x-2 pt-1">
+                                  {job.sponsor_metadata.website && (
+                                    <a 
+                                      href={job.sponsor_metadata.website} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="flex-1 flex items-center justify-center space-x-1 py-1.5 bg-slate-800/40 hover:bg-slate-800/80 border border-slate-700/40 hover:border-slate-600/60 rounded-xl transition text-xs font-semibold text-slate-300 hover:text-slate-100"
+                                    >
+                                      <Globe className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>Website</span>
+                                    </a>
+                                  )}
+                                  
+                                  {job.sponsor_metadata.career_portal && (
+                                    <a 
+                                      href={job.sponsor_metadata.career_portal} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="flex-1 flex items-center justify-center space-x-1 py-1.5 bg-blue-950/40 hover:bg-blue-950/80 border border-blue-900/40 hover:border-blue-800/60 rounded-xl transition text-xs font-semibold text-blue-300 hover:text-blue-200"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                                      <span>Careers</span>
+                                    </a>
+                                  )}
+
+                                  {job.sponsor_metadata.linkedin_account && (
+                                    <a 
+                                      href={job.sponsor_metadata.linkedin_account} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="flex items-center justify-center p-1.5 bg-sky-950/40 hover:bg-sky-950/80 border border-sky-900/40 hover:border-sky-800/60 rounded-xl transition text-sky-400 hover:text-sky-300"
+                                      title="Company LinkedIn Profile"
+                                    >
+                                      <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                                        <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/>
+                                      </svg>
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              /* Fallback Card for historical visa sponsor when metadata is missing */
+                              <div className="flex items-center space-x-2 text-xs text-blue-200/70">
+                                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shrink-0" />
+                                <span>Historically sponsored H-1B visas. No detailed OPT metadata profile loaded.</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Location / Req ID details */}
                         <div className={`mt-3 grid ${job.salary_text ? 'grid-cols-5' : 'grid-cols-4'} gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40`}>
@@ -2453,6 +3019,71 @@ export default function Dashboard() {
                             </div>
                           </div>
                         )}
+                        
+                        {/* Semantic Match Scorer */}
+                        {job.match_score !== undefined && (
+                          <div className="mt-2 flex items-center justify-between text-xs">
+                            <span className="text-purple-300 font-medium">Semantic Match Score:</span>
+                            <div className="flex items-center space-x-1.5 font-bold">
+                              <span className={
+                                job.match_score >= 80 ? 'text-purple-400' : job.match_score >= 60 ? 'text-indigo-400' : 'text-slate-400'
+                              }>
+                                {job.match_score}%
+                              </span>
+                              <div className="w-20 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${job.match_score >= 80 ? 'bg-purple-500' : job.match_score >= 60 ? 'bg-indigo-500' : 'bg-slate-500'
+                                    }`}
+                                  style={{ width: `${job.match_score}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {(() => {
+                          const pl = job.apply_decision_payload;
+                          if (!pl || typeof pl !== 'object') return null;
+                          const d = pl as DecisionPayload;
+                          if (
+                            !d.recommendation &&
+                            d.fit_score == null &&
+                            !d.ownership_strength &&
+                            !d.review_reason
+                          ) {
+                            return null;
+                          }
+                          return (
+                            <div className="mt-3 text-xs bg-violet-950/20 p-3 rounded-xl border border-violet-900/30 space-y-1.5">
+                              <span className="font-bold text-violet-400 uppercase text-[9px] tracking-wider block">Classifier output</span>
+                              <div className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
+                                {d.recommendation != null && d.recommendation !== '' && (
+                                  <span>
+                                    <span className="text-slate-500">Recommendation:</span>{' '}
+                                    <span className="font-semibold text-white">{String(d.recommendation)}</span>
+                                  </span>
+                                )}
+                                {d.fit_score != null && (
+                                  <span>
+                                    <span className="text-slate-500">Fit:</span>{' '}
+                                    <span className="font-semibold text-white">{d.fit_score}</span>
+                                  </span>
+                                )}
+                                {d.ownership_strength != null && d.ownership_strength !== '' && (
+                                  <span>
+                                    <span className="text-slate-500">Ownership:</span>{' '}
+                                    <span className="font-semibold text-white">{String(d.ownership_strength)}</span>
+                                  </span>
+                                )}
+                              </div>
+                              {d.review_reason != null && String(d.review_reason).trim() !== '' && (
+                                <p className="text-slate-400 leading-relaxed">
+                                  <span className="text-slate-500">Review reason:</span> {String(d.review_reason)}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {/* Decision Rationale */}
                         {job.rationale && (
@@ -2514,6 +3145,15 @@ export default function Dashboard() {
                             )
                           )}
 
+                          {activeTab === 'human_review' && (
+                            <button
+                              type="button"
+                              onClick={() => submitClassifierFeedback(job)}
+                              className="inline-flex items-center px-3 py-1.5 bg-violet-950/50 hover:bg-violet-900/60 text-violet-200 rounded-xl text-xs font-semibold border border-violet-800/40 transition-colors"
+                            >
+                              Log feedback
+                            </button>
+                          )}
                           {/* Inspect details button */}
                           <button
                             onClick={() => openModal(job)}
