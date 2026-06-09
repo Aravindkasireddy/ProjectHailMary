@@ -838,7 +838,7 @@ def check_red_flags(job):
     auth_patterns = [
         r"us citizen", r"u\.s\. citizen", r"united states citizen",
         r"security clearance", r"active clearance", r"secret clearance", r"top secret", r"ts/sci", r"government clearance",
-        r"itar", r"export control", r"export-controlled", r"u\.s\. export",
+        r"\bitar\b", r"export control", r"export-controlled", r"u\.s\. export",
         r"must be u\.s\. person", r"u\.s\. persons only",
         r"no visa sponsorship", r"not eligible for sponsorship", r"unable to sponsor", 
         r"does not sponsor", r"cannot sponsor", r"no current or future sponsorship",
