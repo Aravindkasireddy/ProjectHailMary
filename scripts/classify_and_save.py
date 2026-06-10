@@ -68,9 +68,57 @@ def resolve_path(base_path):
     return p.parent / f"{p.stem}_{suffix}{p.suffix}"
 
 load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+
+import threading
+
+gemini_keys_lock = threading.Lock()
+current_key_index = 0
+
+def get_gemini_api_keys():
+    keys = []
+    gkey = os.getenv("GEMINI_API_KEY")
+    if gkey:
+        for k in gkey.split(","):
+            k_stripped = k.strip()
+            if k_stripped and k_stripped not in keys:
+                keys.append(k_stripped)
+    idx = 1
+    while True:
+        key_i = os.getenv(f"GEMINI_API_KEY_{idx}")
+        if key_i:
+            key_i = key_i.strip()
+            if key_i and key_i not in keys:
+                keys.append(key_i)
+            idx += 1
+        else:
+            break
+    return keys
+
+def get_active_gemini_key():
+    global current_key_index
+    keys = get_gemini_api_keys()
+    if not keys:
+        return None
+    with gemini_keys_lock:
+        if current_key_index >= len(keys):
+            return None
+        return keys[current_key_index]
+
+def rotate_gemini_key(failed_key=None):
+    global current_key_index
+    keys = get_gemini_api_keys()
+    if not keys:
+        return False
+    with gemini_keys_lock:
+        if failed_key and current_key_index < len(keys) and keys[current_key_index] != failed_key:
+            return True # already rotated
+        current_key_index += 1
+        if current_key_index < len(keys):
+            print(f"Rotating to Gemini API Key #{current_key_index + 1}...", flush=True)
+            return True
+        else:
+            print("All Gemini API keys in the pool have been exhausted.", flush=True)
+            return False
 
 def get_job_classifications():
     classifications = {}
@@ -689,24 +737,55 @@ Return a JSON object conforming exactly to the following structure (see system i
 """
     
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
-            generation_config={"response_mime_type": "application/json"},
-            system_instruction=system_instruction
-        )
         result = None
-        last_err = None
-        for attempt in range(1, 4):
+        while True:
+            active_key = get_active_gemini_key()
+            if not active_key:
+                break
+                
             try:
-                response = model.generate_content(user_prompt)
-                result = json.loads(response.text)
+                genai.configure(api_key=active_key)
+                model = genai.GenerativeModel(
+                    model_name="gemini-2.5-flash",
+                    generation_config={"response_mime_type": "application/json"},
+                    system_instruction=system_instruction
+                )
+                last_err = None
+                for attempt in range(1, 4):
+                    try:
+                        response = model.generate_content(user_prompt)
+                        result = json.loads(response.text)
+                        break
+                    except Exception as e:
+                        last_err = e
+                        err_msg = str(e).lower()
+                        if any(term in err_msg for term in ["429", "400", "403", "quota", "limit", "exhausted", "invalid", "blocked", "denied", "resourceexhausted"]):
+                            print(f"  Gemini key {active_key[:8]}... hit failure/quota. Rotating...", flush=True)
+                            if rotate_gemini_key(active_key):
+                                last_err = "rotated"
+                                break
+                            else:
+                                break
+                        if attempt < 3:
+                            time.sleep(0.6 * (2 ** (attempt - 1)))
+                
+                if last_err == "rotated":
+                    continue
+                    
+                if result is None:
+                    raise last_err if last_err and not isinstance(last_err, str) else RuntimeError("empty Gemini response")
+                
                 break
             except Exception as e:
-                last_err = e
-                if attempt < 3:
-                    time.sleep(0.6 * (2 ** (attempt - 1)))
+                err_msg = str(e).lower()
+                if any(term in err_msg for term in ["429", "400", "403", "quota", "limit", "exhausted", "invalid", "blocked", "denied", "resourceexhausted"]):
+                    print(f"  Gemini key {active_key[:8]}... error during configure. Rotating...", flush=True)
+                    if rotate_gemini_key(active_key):
+                        continue
+                raise e
+
         if result is None:
-            raise last_err if last_err else RuntimeError("empty Gemini response")
+            return None
 
         allowed_label_set = set(ALLOWED_STRONGEST_LABELS)
         domain_keys = (
@@ -884,7 +963,289 @@ Return a JSON object conforming exactly to the following structure (see system i
             "benefits": benefits,
         }
     except Exception as e:
-        print(f"Gemini API classification failed: {e}. Falling back to rule-based classification.", flush=True)
+        print(f"Gemini API classification failed: {e}. Falling back to OpenAI/rule-based.", flush=True)
+        return None
+
+def classify_job_with_openai(job):
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        return None
+
+    # Read systemic prompt / policy from Job_classifier_prompt.txt
+    prompt_path = str(WORKSPACE / "Job_classifier_prompt.txt")
+    system_instruction = ""
+    if os.path.exists(prompt_path):
+        try:
+            with open(prompt_path, 'r') as f:
+                system_instruction = f.read()
+        except Exception as e:
+            print(f"Error reading Job_classifier_prompt.txt: {e}")
+            
+    if not system_instruction:
+        print("Systemic prompt file not found! Falling back to rule-based classification.")
+        return None
+
+    # Load API key and build user prompt
+    title = job.get("job_title", "Unknown Title")
+    description = job.get("job_description", "")
+    
+    user_prompt = f"""
+Analyze this job posting:
+Title: {title}
+Description:
+{description}
+
+Return a JSON object conforming exactly to the following structure (see system instruction for PASS/HUMAN_REVIEW/REJECT rules):
+{{
+  "all_labels": ["<same as strongest_label first, optional 2nd/3rd labels>"],
+  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "Data Platform Engineer" | "Machine Learning Engineer (MLOps)" | "AI Platform Engineer (AIOps)" | "OutOfScope",
+  "other_labels": [],
+  "recommendation": "PASS" | "HUMAN_REVIEW" | "REJECT",
+  "confidence_score": 0-100,
+  "fit_score": 0-100,
+  "ownership_strength": "LOW" | "MEDIUM" | "HIGH",
+  "review_reason": "short string or empty string",
+  "red_flags": [],
+  "cloud": {{
+    "is_cloud_role": true,
+    "primary_cloud": "AWS" | "Azure" | "GCP" | "",
+    "cloud_providers": ["AWS", "Azure", "GCP"]
+  }},
+  "domain_scores": {{
+    "devops": 0-10,
+    "automation": 0-10,
+    "platform": 0-10,
+    "infrastructure": 0-10,
+    "security": 0-10,
+    "devsecops": 0-10,
+    "sre": 0-10,
+    "cicd": 0-10,
+    "system": 0-10,
+    "network": 0-10,
+    "database": 0-10,
+    "cloud_database": 0-10,
+    "data": 0-10,
+    "mlops": 0-10,
+    "aiops": 0-10
+  }},
+  "dominant_domains": [],
+  "decision_trace": {{
+    "top_score": 0,
+    "runner_up_score": 0,
+    "tie_break_applied": false,
+    "priority_rule_used": "",
+    "strong_signal_override": false
+  }},
+  "rationale": "",
+  "rationale_formatted": [],
+  "filters": {{ "domain_specialization": false }},
+  "benefits": []
+}}
+"""
+    
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=openai_key)
+        result = None
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                raw_text = response.choices[0].message.content
+                result = json.loads(raw_text)
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 3:
+                    time.sleep(1.0 * (2 ** (attempt - 1)))
+        
+        if result is None:
+            raise last_err if last_err else RuntimeError("empty OpenAI response")
+
+        allowed_label_set = set(ALLOWED_STRONGEST_LABELS)
+        domain_keys = (
+            "devops", "automation", "platform", "infrastructure", "security", "devsecops",
+            "sre", "cicd", "system", "network", "database", "cloud_database", "data", "mlops", "aiops",
+        )
+
+        strongest_label = result.get("strongest_label", "OutOfScope")
+        if strongest_label not in allowed_label_set:
+            strongest_label = "OutOfScope"
+
+        red_flags = result.get("red_flags", [])
+        if not isinstance(red_flags, list):
+            red_flags = []
+        red_flags = [str(x) for x in red_flags if x]
+
+        recommendation = str(result.get("recommendation", "REJECT")).strip().upper()
+        if recommendation not in ("PASS", "HUMAN_REVIEW", "REJECT"):
+            recommendation = "REJECT"
+
+        try:
+            confidence = int(result.get("confidence_score", 0))
+        except (TypeError, ValueError):
+            confidence = 0
+        confidence = max(0, min(100, confidence))
+
+        try:
+            fit_score = int(result.get("fit_score", 0))
+        except (TypeError, ValueError):
+            fit_score = 0
+        fit_score = max(0, min(100, fit_score))
+
+        ownership_strength = str(result.get("ownership_strength", "LOW")).strip().upper()
+        if ownership_strength not in ("LOW", "MEDIUM", "HIGH"):
+            ownership_strength = "LOW"
+
+        review_reason = str(result.get("review_reason", "") or "").strip()
+
+        domain_scores = result.get("domain_scores", {})
+        if not isinstance(domain_scores, dict):
+            domain_scores = {}
+        for k in domain_keys:
+            domain_scores.setdefault(k, 0)
+            try:
+                domain_scores[k] = max(0, min(10, int(domain_scores[k])))
+            except (TypeError, ValueError):
+                domain_scores[k] = 0
+
+        all_labels = result.get("all_labels")
+        if not isinstance(all_labels, list) or not all_labels:
+            all_labels = [strongest_label]
+        else:
+            all_labels = [str(x) for x in all_labels if x]
+            if not all_labels or all_labels[0] != strongest_label:
+                all_labels = [strongest_label] + [x for x in all_labels if x != strongest_label]
+
+        other_labels = result.get("other_labels", [])
+        if not isinstance(other_labels, list):
+            other_labels = []
+        other_labels = [str(x) for x in other_labels if x and x != strongest_label]
+
+        cloud = result.get("cloud", {})
+        if not isinstance(cloud, dict):
+            cloud = {}
+        primary_cloud = str(cloud.get("primary_cloud", "") or "")
+        if primary_cloud not in ("AWS", "Azure", "GCP", ""):
+            primary_cloud = ""
+        cloud_providers = cloud.get("cloud_providers", [])
+        if not isinstance(cloud_providers, list):
+            cloud_providers = []
+        cloud_providers = [str(p) for p in cloud_providers if p in ("AWS", "Azure", "GCP")]
+        is_cloud = bool(cloud.get("is_cloud_role")) if "is_cloud_role" in cloud else (
+            len(cloud_providers) > 0 or primary_cloud != ""
+        )
+        cloud = {
+            "is_cloud_role": bool(is_cloud),
+            "primary_cloud": primary_cloud,
+            "cloud_providers": cloud_providers,
+        }
+
+        decision_trace = result.get("decision_trace", {})
+        if not isinstance(decision_trace, dict):
+            decision_trace = {}
+        numeric_scores = [domain_scores[k] for k in domain_keys if k in domain_scores]
+        sorted_scores = sorted(numeric_scores, reverse=True) if numeric_scores else [0, 0]
+        top_score = int(decision_trace.get("top_score", sorted_scores[0]))
+        runner_up = int(decision_trace.get("runner_up_score", sorted_scores[1] if len(sorted_scores) > 1 else 0))
+        decision_trace = {
+            "top_score": top_score,
+            "runner_up_score": runner_up,
+            "tie_break_applied": bool(decision_trace.get("tie_break_applied", False)),
+            "priority_rule_used": str(decision_trace.get("priority_rule_used", "") or ""),
+            "strong_signal_override": bool(decision_trace.get("strong_signal_override", False)),
+        }
+
+        dominant_domains = result.get("dominant_domains", [])
+        if not isinstance(dominant_domains, list) or not dominant_domains:
+            dominant_domains = [strongest_label] if strongest_label != "OutOfScope" else []
+
+        filters = result.get("filters", {"domain_specialization": False})
+        if not isinstance(filters, dict):
+            filters = {"domain_specialization": False}
+        filters.setdefault("domain_specialization", False)
+
+        benefits = result.get("benefits", [])
+        if not benefits or not isinstance(benefits, list):
+            benefits = extract_benefits(description)
+
+        rationale = str(result.get("rationale", "") or "")
+        rationale_formatted = result.get("rationale_formatted", [])
+        if not isinstance(rationale_formatted, list):
+            rationale_formatted = []
+
+        pass_labels = allowed_label_set - {"OutOfScope"}
+
+        # Enforce consistency with STEP 8 (safety net)
+        if strongest_label == "OutOfScope" or red_flags:
+            recommendation = "REJECT"
+        elif recommendation == "PASS":
+            if confidence < 70 or fit_score < 70:
+                recommendation = "REJECT"
+                review_reason = (review_reason + "; " if review_reason else "") + "PASS thresholds not met (confidence/fit)."
+            elif strongest_label not in pass_labels:
+                recommendation = "REJECT"
+                review_reason = (review_reason + "; " if review_reason else "") + "Invalid label for PASS."
+
+        if recommendation == "PASS" and ownership_strength == "MEDIUM":
+            recommendation = "HUMAN_REVIEW"
+            review_reason = (review_reason + "; " if review_reason else "") + "MEDIUM ownership requires human review."
+
+        if recommendation == "HUMAN_REVIEW" and red_flags:
+            recommendation = "REJECT"
+
+        apply_decision = (
+            "APPLY"
+            if recommendation == "PASS" and not red_flags and strongest_label in pass_labels
+            else "DO_NOT_APPLY"
+        )
+
+        payload = {
+            "all_labels": all_labels,
+            "strongest_label": strongest_label,
+            "other_labels": other_labels,
+            "recommendation": recommendation,
+            "fit_score": fit_score,
+            "ownership_strength": ownership_strength,
+            "review_reason": review_reason,
+            "apply_decision": apply_decision,
+            "red_flags": red_flags,
+            "filters": filters,
+            "confidence_score": confidence,
+            "cloud": cloud,
+            "domain_scores": domain_scores,
+            "dominant_domains": dominant_domains,
+            "dominant_signals": {},
+            "decision_trace": decision_trace,
+            "rationale": rationale,
+            "rationale_formatted": rationale_formatted,
+            "benefits": benefits,
+        }
+
+        payload = scrub_job_payload_for_storage(payload)
+
+        return {
+            "apply_decision": apply_decision,
+            "strongest_label": strongest_label,
+            "confidence_score": confidence,
+            "fit_score": fit_score,
+            "ownership_strength": ownership_strength,
+            "recommendation": recommendation,
+            "review_reason": review_reason,
+            "red_flags": red_flags,
+            "rationale": rationale,
+            "payload": payload,
+            "benefits": benefits,
+        }
+    except Exception as e:
+        print(f"OpenAI API classification failed: {e}. Falling back to rule-based classification.", flush=True)
         return None
 
 def classify_job_dynamically(job):
@@ -1160,15 +1521,18 @@ def main():
                         job[key] = matched[key]
             
         if not cls:
-            # Try LLM-driven classification if API key is present
-            global api_key
-            if api_key:
+            # Try LLM-driven classification if active Gemini key exists
+            active_gemini_key = get_active_gemini_key()
+            if active_gemini_key:
                 print(f"  Classifying '{job.get('job_title')}' dynamically using Gemini API...", flush=True)
                 time.sleep(4)
                 cls = classify_job_with_gemini(job)
-                if not cls:
-                    print("  Gemini classification failed/quota exceeded. Disabling Gemini for the rest of this run to avoid sleep delays.", flush=True)
-                    api_key = None
+                
+            # Try OpenAI fallback if Gemini failed or is not available
+            if not cls and os.getenv("OPENAI_API_KEY"):
+                print(f"  Classifying '{job.get('job_title')}' dynamically using OpenAI API (gpt-4o-mini)...", flush=True)
+                time.sleep(1)
+                cls = classify_job_with_openai(job)
                 
             if not cls:
                 # Fall back to dynamic rule-based classifier

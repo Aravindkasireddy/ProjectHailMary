@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
   notion_database_id TEXT,
   webhook_url TEXT,
   base_resume TEXT,
+  jooble_api_key TEXT,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 

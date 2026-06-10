@@ -90,6 +90,7 @@ interface Job {
   salary_text?: string;
   job_id?: string;
   description_hash?: string;
+  id?: string;
 }
 
 interface SponsorMetadata {
@@ -147,6 +148,7 @@ interface Config {
     merge_previous_scrape?: boolean;
     send_digest_only?: boolean;
     max_digest_items?: number;
+    jooble_api_key?: string;
   };
 }
 
@@ -232,6 +234,7 @@ export default function Dashboard() {
     status: 'idle',
     message: 'Ready.',
     last_error: null as string | null,
+    last_run: null as string | null,
     last_metrics: {} as Record<string, number>,
   });
   const [notionConnection, setNotionConnection] = useState({ connected: false, message: 'Checking...', dbName: '' });
@@ -250,7 +253,7 @@ export default function Dashboard() {
   const [isTailorModalOpen, setIsTailorModalOpen] = useState<boolean>(false);
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
-  const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week'>('all');
+  const [scrapedTimeframe, setScrapedTimeframe] = useState<'all' | 'recent' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week'>('all');
   const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
   const [showActiveOnly, setShowActiveOnly] = useState(true);
   const [past24hOnly, setPast24hOnly] = useState(false);
@@ -310,6 +313,7 @@ export default function Dashboard() {
   const [schedulerMinute, setSchedulerMinute] = useState(0);
   const [schedulerEnabled, setSchedulerEnabled] = useState(true);
   const [sendDigestOnly, setSendDigestOnly] = useState(true);
+  const [joobleApiKeyInput, setJoobleApiKeyInput] = useState('');
 
   // General Loading & Notification UI States
   const [syncingJobUrl, setSyncingJobUrl] = useState<string | null>(null);
@@ -844,6 +848,12 @@ export default function Dashboard() {
       if (configError) {
         console.error('Error fetching config:', configError);
       } else if (configData) {
+        const dbJoobleKey = configData.jooble_api_key || '';
+        const fallbackJoobleKey = (configData.target_companies && typeof configData.target_companies === 'object')
+          ? (configData.target_companies as any).jooble_api_key || ''
+          : '';
+        const joobleKey = dbJoobleKey || fallbackJoobleKey;
+
         const mappedConfig: Config = {
           target_titles: configData.target_titles || [],
           scheduler: {
@@ -858,7 +868,8 @@ export default function Dashboard() {
             merge_previous_scrape: configData.search_merge_previous_scrape ?? true,
             send_digest_only: configData.search_send_digest_only ?? true,
             max_digest_items: configData.search_max_digest_items ?? 10,
-          }
+            jooble_api_key: joobleKey,
+          },
         };
         setConfig(mappedConfig);
         setTitlesInput((configData.target_titles || []).join('\n'));
@@ -867,6 +878,7 @@ export default function Dashboard() {
         setSchedulerMinute(configData.scheduler_run_at_minute ?? 0);
         setSchedulerEnabled(configData.scheduler_enabled ?? true);
         setSendDigestOnly(configData.search_send_digest_only ?? true);
+        setJoobleApiKeyInput(joobleKey);
       } else {
         // Create an empty config for new users
         const { data: sessionData } = await supabase.auth.getSession();
@@ -932,16 +944,46 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scraperStatus.status]);
 
+  // Synchronize dynamic URL changes with pushState
+  const updateUrl = (tab: string, jobId: string | null) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('tab', tab);
+    if (jobId) {
+      params.set('job', jobId);
+    } else {
+      params.delete('job');
+    }
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    if (window.location.search !== `?${params.toString()}`) {
+      window.history.pushState({ tab, jobId }, '', newUrl);
+    }
+  };
+
+  const closeModal = (skipHistoryPush = false) => {
+    setIsModalOpen(false);
+    setSelectedJob(null);
+    if (!skipHistoryPush) {
+      updateUrl(activeTab, null);
+    }
+  };
+
   // Tab change handler replacing side-effect useEffect
   const handleTabChange = (
     tab: 'approved' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume'
   ) => {
-    if (authRole !== 'admin' && ['policy', 'resume', 'settings'].includes(tab)) {
+    if (authRole === 'user' && ['policy', 'resume', 'settings'].includes(tab)) {
       showStatus('Admin role required to access this tab.', 'error');
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        params.set('tab', activeTab);
+        window.history.replaceState({ tab: activeTab, jobId: params.get('job') }, '', `${window.location.pathname}?${params.toString()}`);
+      }
       return;
     }
     setActiveTab(tab);
     setSelectedRoleFilter('all');
+    updateUrl(tab, null);
     if (tab === 'analytics') {
       fetchAnalytics();
       fetchSalaryInsights();
@@ -992,6 +1034,60 @@ export default function Dashboard() {
   useEffect(() => {
     jobsForPollRef.current = jobs;
   }, [jobs]);
+
+  // Redirect non-admins if they somehow end up on admin tabs
+  useEffect(() => {
+    if (authRole === 'user' && ['policy', 'resume', 'settings'].includes(activeTab)) {
+      handleTabChange('approved');
+    }
+  }, [authRole, activeTab]);
+
+  // Synchronize browser history / URL parameters with React state
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncStateFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      const jobParam = params.get('job');
+
+      // 1. Sync active tab
+      if (tabParam && ['approved', 'pending', 'rejected', 'human_review', 'settings', 'analytics', 'policy', 'resume'].includes(tabParam)) {
+        if (tabParam !== activeTab) {
+          handleTabChange(tabParam as any);
+        }
+      } else if (!tabParam) {
+        const newParams = new URLSearchParams(window.location.search);
+        newParams.set('tab', activeTab);
+        window.history.replaceState({ tab: activeTab, jobId: jobParam }, '', `${window.location.pathname}?${newParams.toString()}`);
+      }
+
+      // 2. Sync modal open/close state based on ?job=<id>
+      if (jobParam) {
+        const matchedJob = jobs.find(j => j.id === jobParam);
+        if (matchedJob) {
+          if (!isModalOpen || !selectedJob || selectedJob.id !== jobParam) {
+            openModal(matchedJob, true);
+          }
+        }
+      } else {
+        if (isModalOpen) {
+          closeModal(true);
+        }
+      }
+    };
+
+    syncStateFromUrl();
+
+    const handlePopState = () => {
+      syncStateFromUrl();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [jobs, activeTab, isModalOpen, selectedJob, authRole]);
 
   // Start scraper
   const triggerScrape = async () => {
@@ -1150,7 +1246,8 @@ export default function Dashboard() {
       webhook_url: webhookUrlInput.trim(),
       search: {
         ...(config.search || {}),
-        send_digest_only: sendDigestOnly
+        send_digest_only: sendDigestOnly,
+        jooble_api_key: joobleApiKeyInput.trim()
       }
     };
 
@@ -1158,6 +1255,7 @@ export default function Dashboard() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      // 1. Try to upsert directly with jooble_api_key column
       const { error } = await supabase
         .from('user_configs')
         .upsert({
@@ -1168,10 +1266,50 @@ export default function Dashboard() {
           scheduler_run_at_minute: updatedConfig.scheduler.run_at_minute,
           webhook_url: updatedConfig.webhook_url,
           search_send_digest_only: updatedConfig.search?.send_digest_only,
+          jooble_api_key: joobleApiKeyInput.trim(),
           updated_at: new Date().toISOString()
         });
 
-      if (error) throw error;
+      if (error) {
+        // If the database complains about a missing column, fallback to storing it in target_companies JSONB
+        if (error.message && (error.message.includes('column') || error.message.includes('does not exist'))) {
+          console.warn("jooble_api_key column does not exist in user_configs. Falling back to target_companies JSONB.");
+          
+          // Fetch current target_companies to preserve them
+          const { data: currentCfg } = await supabase
+            .from('user_configs')
+            .select('target_companies')
+            .maybeSingle();
+            
+          const currentCompanies = (currentCfg && currentCfg.target_companies && typeof currentCfg.target_companies === 'object')
+            ? currentCfg.target_companies
+            : {};
+            
+          const companiesWithJooble = {
+            ...currentCompanies,
+            jooble_api_key: joobleApiKeyInput.trim()
+          };
+
+          const { error: fallbackError } = await supabase
+            .from('user_configs')
+            .upsert({
+              user_id: user.id,
+              target_titles: updatedConfig.target_titles,
+              scheduler_enabled: updatedConfig.scheduler.enabled,
+              scheduler_run_at_hour: updatedConfig.scheduler.run_at_hour,
+              scheduler_run_at_minute: updatedConfig.scheduler.run_at_minute,
+              webhook_url: updatedConfig.webhook_url,
+              search_send_digest_only: updatedConfig.search?.send_digest_only,
+              target_companies: companiesWithJooble,
+              updated_at: new Date().toISOString()
+            });
+
+          if (fallbackError) throw fallbackError;
+        } else {
+          throw error;
+        }
+      }
+
       showStatus('Configuration settings saved successfully!', 'success');
       setConfig(updatedConfig);
     } catch {
@@ -1350,7 +1488,7 @@ export default function Dashboard() {
   };
 
   // Open inspection / override modal
-  const openModal = (job: Job) => {
+  const openModal = (job: Job, skipHistoryPush = false) => {
     setSelectedJob(job);
     setEditTitle(job.job_title || '');
     setEditCompany(job.company_name || '');
@@ -1398,6 +1536,17 @@ export default function Dashboard() {
 
     setIsPayloadExpanded(false);
     setIsModalOpen(true);
+
+    if (!skipHistoryPush && typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (job.id) {
+        params.set('job', job.id);
+        const newUrl = `${window.location.pathname}?${params.toString()}`;
+        if (window.location.search !== `?${params.toString()}`) {
+          window.history.pushState({ tab: activeTab, jobId: job.id }, '', newUrl);
+        }
+      }
+    }
   };
 
   // Submit manual review override
@@ -1442,7 +1591,7 @@ export default function Dashboard() {
 
       if (error) throw error;
       showStatus('Manual classification override applied successfully!', 'success');
-      setIsModalOpen(false);
+      closeModal();
       
       // Update local state directly
       setJobs(prev => prev.map(j => j.job_url === editUrl.trim() ? { ...j, ...payload } : j));
@@ -1506,10 +1655,11 @@ export default function Dashboard() {
       const now = new Date().getTime();
       const oneDay = 24 * 60 * 60 * 1000;
       list = list.filter(j => {
-        if (scrapedTimeframe === 'today' || scrapedTimeframe === 'week' || scrapedTimeframe === 'month') {
+        if (scrapedTimeframe === 'recent' || scrapedTimeframe === 'today' || scrapedTimeframe === 'week' || scrapedTimeframe === 'month') {
           if (!j.scraped_at) return false;
           const scrapedTime = new Date(j.scraped_at).getTime();
           const diff = now - scrapedTime;
+          if (scrapedTimeframe === 'recent') return diff <= 4 * 60 * 60 * 1000;
           if (scrapedTimeframe === 'today') return diff <= oneDay;
           if (scrapedTimeframe === 'week') return diff <= 7 * oneDay;
           if (scrapedTimeframe === 'month') return diff <= 30 * oneDay;
@@ -1547,6 +1697,28 @@ export default function Dashboard() {
       });
     } catch {
       return dateStr;
+    }
+  };
+
+  const getRelativeScrapedTime = (dateStr?: string) => {
+    if (!dateStr) return null;
+    try {
+      const now = new Date().getTime();
+      const scraped = new Date(dateStr).getTime();
+      const diffMs = now - scraped;
+      const diffMins = Math.floor(diffMs / (60 * 1000));
+      const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+      
+      if (diffMins < 60) {
+        return { text: `${diffMins}m ago`, isRecent: true };
+      } else if (diffHours < 24) {
+        return { text: `${diffHours}h ago`, isRecent: diffHours < 4 };
+      } else {
+        const days = Math.floor(diffHours / 24);
+        return { text: `${days}d ago`, isRecent: false };
+      }
+    } catch {
+      return null;
     }
   };
 
@@ -1873,11 +2045,40 @@ export default function Dashboard() {
         )}
 
         {scraperStatus.last_metrics && Object.keys(scraperStatus.last_metrics || {}).length > 0 && scraperStatus.status !== 'running' && (
-          <div className="bg-slate-900/50 border border-slate-800 p-3 rounded-xl text-xs text-slate-400">
-            Last run counts:{' '}
-            {Object.entries(scraperStatus.last_metrics)
-              .map(([k, v]) => `${k}: ${v}`)
-              .join(' · ')}
+          <div className="bg-slate-900/20 backdrop-blur-md border border-slate-800/80 p-5 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center space-x-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <h4 className="text-sm font-bold text-slate-200">Sourcing Agent Last Run Results</h4>
+              </div>
+              <p className="text-xs text-slate-400">
+                {scraperStatus.last_run ? `Completed: ${new Date(scraperStatus.last_run).toLocaleString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit'
+                })} (${getRelativeScrapedTime(scraperStatus.last_run)?.text || 'just now'})` : 'Last run details updated.'}
+              </p>
+            </div>
+            
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1 md:flex-none max-w-xl w-full">
+              <div className="bg-slate-950/60 border border-slate-900/60 p-3 rounded-xl text-center shadow-inner">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Scraped Jobs</span>
+                <span className="text-lg font-bold text-violet-400 mt-1 block">{scraperStatus.last_metrics.scraped_jobs_count ?? 0}</span>
+              </div>
+              <div className="bg-slate-950/60 border border-slate-900/60 p-3 rounded-xl text-center shadow-inner">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Approved Match</span>
+                <span className="text-lg font-bold text-emerald-400 mt-1 block">{scraperStatus.last_metrics.approved_jobs_count ?? 0}</span>
+              </div>
+              <div className="bg-slate-950/60 border border-slate-900/60 p-3 rounded-xl text-center shadow-inner">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Unreviewed</span>
+                <span className="text-lg font-bold text-amber-400 mt-1 block">{scraperStatus.last_metrics.active_candidates_count ?? 0}</span>
+              </div>
+              <div className="bg-slate-950/60 border border-slate-900/60 p-3 rounded-xl text-center shadow-inner">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Rejected</span>
+                <span className="text-lg font-bold text-rose-400 mt-1 block">{scraperStatus.last_metrics.failed_candidates_count ?? 0}</span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2126,15 +2327,16 @@ export default function Dashboard() {
                 </span>
                 <select
                   value={scrapedTimeframe}
-                  onChange={e => setScrapedTimeframe(e.target.value as 'all' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week')}
+                  onChange={e => setScrapedTimeframe(e.target.value as 'all' | 'recent' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week')}
                   className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[170px]"
                 >
                   <option value="all">All Times</option>
-                  <option value="today">Scraped Today (24h)</option>
-                  <option value="posted_today">Posted Today (24h)</option>
-                  <option value="week">Scraped Last 7 Days</option>
-                  <option value="posted_week">Posted Last 7 Days</option>
-                  <option value="month">Scraped Last 30 Days</option>
+                  <option value="recent">Sourced: Last 4 Hours</option>
+                  <option value="today">Sourced: Last 24 Hours</option>
+                  <option value="posted_today">Posted: Last 24 Hours</option>
+                  <option value="week">Sourced: Last 7 Days</option>
+                  <option value="posted_week">Posted: Last 7 Days</option>
+                  <option value="month">Sourced: Last 30 Days</option>
                 </select>
                 <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
                   <ChevronRight className="w-4 h-4 rotate-90" />
@@ -2528,6 +2730,8 @@ export default function Dashboard() {
               saveSettings={saveSettings}
               onResetTargetTitles={resetTargetTitles}
               resettingTitles={resettingTitles}
+              joobleApiKeyInput={joobleApiKeyInput}
+              setJoobleApiKeyInput={setJoobleApiKeyInput}
             />
           ) : activeTab === 'resume' ? (
             <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-4xl shadow-xl flex flex-col h-[70vh]">
@@ -2645,9 +2849,22 @@ export default function Dashboard() {
                             >
                               <div className="flex justify-between items-start">
                                 <span className="text-[10px] font-bold text-violet-400 tracking-wider truncate max-w-[150px]">{job.company_name}</span>
-                                <span className="text-[10px] font-mono text-slate-500 shrink-0" title={`Posted: ${job.posted_at ? formatScrapedDate(job.posted_at) : 'N/A'}\nScraped: ${formatScrapedDate(job.scraped_at || '')}`}>
-                                  {job.posted_at ? formatScrapedDate(job.posted_at) : formatScrapedDate(job.scraped_at || '')}
-                                </span>
+                                {(() => {
+                                  const rel = getRelativeScrapedTime(job.scraped_at);
+                                  if (!rel) return null;
+                                  return (
+                                    <span 
+                                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider shrink-0 transition-all ${
+                                        rel.isRecent 
+                                          ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/40' 
+                                          : 'bg-slate-900/60 text-slate-500'
+                                      }`}
+                                      title={`Posted: ${job.posted_at ? formatScrapedDate(job.posted_at) : 'N/A'}\nScraped: ${formatScrapedDate(job.scraped_at || '')}`}
+                                    >
+                                      {rel.text}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               <h4 className="text-xs font-bold text-slate-200 line-clamp-2 leading-snug group-hover:text-white transition-colors">{job.job_title}</h4>
                               
@@ -2709,11 +2926,25 @@ export default function Dashboard() {
                       <div>
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center space-x-1.5 mr-2">
-                              <h3 className="text-base font-bold text-white group-hover:text-violet-400 transition-colors truncate">
+                            <div className="flex items-center flex-wrap gap-1.5 mr-2">
+                              <h3 className="text-base font-bold text-white group-hover:text-violet-400 transition-colors truncate max-w-[250px] sm:max-w-md">
                                 {job.job_title}
                               </h3>
                               <CopyButton text={job.job_title} />
+                              {(() => {
+                                const rel = getRelativeScrapedTime(job.scraped_at);
+                                if (!rel) return null;
+                                return (
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase tracking-wider shrink-0 transition-all ${
+                                    rel.isRecent 
+                                      ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 animate-pulse' 
+                                      : 'bg-slate-950/60 text-slate-400 border border-slate-850'
+                                  }`}>
+                                    {rel.isRecent && <span className="w-1 h-1 rounded-full bg-emerald-400 mr-1 shrink-0 animate-ping"></span>}
+                                    {rel.text}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <p className="text-xs font-semibold text-slate-400 mt-0.5">{job.company_name}</p>
                           </div>
@@ -3271,7 +3502,7 @@ export default function Dashboard() {
                 </h3>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => closeModal()}
                 className="p-1 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 rounded-lg transition-colors text-xs font-bold px-2.5"
               >
                 Close
@@ -3677,7 +3908,7 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIsModalOpen(false);
+                      closeModal();
                       generateTailoring(selectedJob.job_url);
                     }}
                     className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold border border-emerald-500/20 active:scale-95 shadow-md transition-all"
@@ -3694,7 +3925,7 @@ export default function Dashboard() {
                 </div>
               )}
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => closeModal()}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition-all"
               >
                 {authRole === 'admin' ? 'Cancel' : 'Close'}

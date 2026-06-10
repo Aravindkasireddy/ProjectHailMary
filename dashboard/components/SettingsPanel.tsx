@@ -20,6 +20,8 @@ interface SettingsPanelProps {
   saveSettings: () => void;
   onResetTargetTitles?: () => void;
   resettingTitles?: boolean;
+  joobleApiKeyInput: string;
+  setJoobleApiKeyInput: (val: string) => void;
 }
 
 export default function SettingsPanel({
@@ -40,6 +42,8 @@ export default function SettingsPanel({
   saveSettings,
   onResetTargetTitles,
   resettingTitles,
+  joobleApiKeyInput,
+  setJoobleApiKeyInput,
 }: SettingsPanelProps) {
   return (
     <div className="bg-slate-900/20 backdrop-blur-md border border-slate-850 p-6 rounded-2xl space-y-6 max-w-3xl shadow-xl">
@@ -158,6 +162,59 @@ export default function SettingsPanel({
               />
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Active Sourcing Channels */}
+      <div className="space-y-4 pt-4 border-t border-slate-850">
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
+          Active Sourcing Channels & Intelligence
+        </label>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-slate-950/40 border border-slate-850 p-4 rounded-xl space-y-2">
+            <div className="flex items-center space-x-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-xs font-bold text-slate-200">LinkedIn Guest Finder</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Stealthily crawls LinkedIn's public guest listings for your target job titles in the US. Runs out-of-the-box.
+            </p>
+          </div>
+          <div className="bg-slate-950/40 border border-slate-850 p-4 rounded-xl space-y-2">
+            <div className="flex items-center space-x-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-xs font-bold text-slate-200">HN Startup Sourcing</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Scrapes the monthly Ask HN: Who is hiring? threads to discover remote startup roles. Runs out-of-the-box.
+            </p>
+          </div>
+          <div className="bg-slate-950/40 border border-slate-850 p-4 rounded-xl space-y-2 col-span-1 md:col-span-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <span className={`w-2 h-2 rounded-full ${joobleApiKeyInput ? 'bg-emerald-500 animate-pulse' : 'bg-violet-500'}`}></span>
+                <span className="text-xs font-bold text-slate-200">Jooble Aggregator API</span>
+              </div>
+              <a
+                href="https://jooble.org/api/about"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[10px] text-violet-400 hover:text-violet-300 transition-colors hover:underline"
+              >
+                Get free API Key
+              </a>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Enter your Jooble API key to aggregate listings from thousands of other job boards. You can also configure it as <code className="text-violet-400 font-mono text-[10px]">JOOBLE_API_KEY</code> in your <code className="text-slate-400 font-mono text-[10px]">.env</code> file.
+            </p>
+            <input
+              type="password"
+              placeholder="Paste your Jooble API Key here..."
+              value={joobleApiKeyInput}
+              onChange={(e) => setJoobleApiKeyInput(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-violet-600/70 shadow-inner transition-colors"
+            />
+          </div>
         </div>
       </div>
 

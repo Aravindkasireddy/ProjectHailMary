@@ -151,6 +151,11 @@ def download_user_configs(user_id: str, email: str):
         src_digest = cfg_row.get("search_send_digest_only")
         src_max = cfg_row.get("search_max_digest_items")
         
+        db_jooble_key = cfg_row.get("jooble_api_key") or ""
+        target_companies_val = cfg_row.get("target_companies")
+        fallback_jooble_key = target_companies_val.get("jooble_api_key") if isinstance(target_companies_val, dict) else ""
+        jooble_key = db_jooble_key or fallback_jooble_key or ""
+
         config_obj = {
             "target_titles": cfg_row.get("target_titles") or [],
             "target_companies": cfg_row.get("target_companies") or {"greenhouse": [], "lever": [], "ashby": [], "smartrecruiters": []},
@@ -165,7 +170,8 @@ def download_user_configs(user_id: str, email: str):
                 "include_remote_primary_boards": src_boards if src_boards is not None else True,
                 "merge_previous_scrape": src_merge if src_merge is not None else True,
                 "send_digest_only": src_digest if src_digest is not None else True,
-                "max_digest_items": src_max if src_max is not None else 10
+                "max_digest_items": src_max if src_max is not None else 10,
+                "jooble_api_key": jooble_key
             },
             "webhook_url": cfg_row.get("webhook_url") or ""
         }

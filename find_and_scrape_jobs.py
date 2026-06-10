@@ -114,8 +114,80 @@ USER_AGENTS = [
 def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
+import threading
+
+gemini_keys_lock = threading.Lock()
+current_key_index = 0
+
+FOUND_URLS_LOCK = threading.Lock()
+DRY_URLS_LOCK = threading.Lock()
+
+def add_if_new_url(url, found_urls):
+    with FOUND_URLS_LOCK:
+        if url in found_urls:
+            return False
+        found_urls.add(url)
+        return True
+
+def append_dry_url(dry_url, dry_urls):
+    with DRY_URLS_LOCK:
+        dry_urls.append(dry_url)
+
+def get_gemini_api_keys():
+    keys = []
+    gkey = os.environ.get("GEMINI_API_KEY")
+    if gkey:
+        for k in gkey.split(","):
+            k_stripped = k.strip()
+            if k_stripped and k_stripped not in keys:
+                keys.append(k_stripped)
+    idx = 1
+    while True:
+        key_i = os.environ.get(f"GEMINI_API_KEY_{idx}")
+        if key_i:
+            key_i = key_i.strip()
+            if key_i and key_i not in keys:
+                keys.append(key_i)
+            idx += 1
+        else:
+            break
+    return keys
+
+def get_active_gemini_key():
+    global current_key_index
+    keys = get_gemini_api_keys()
+    if not keys:
+        return None
+    with gemini_keys_lock:
+        if current_key_index >= len(keys):
+            return None
+        return keys[current_key_index]
+
+def rotate_gemini_key(failed_key=None):
+    global current_key_index
+    keys = get_gemini_api_keys()
+    if not keys:
+        return False
+    with gemini_keys_lock:
+        if failed_key and current_key_index < len(keys) and keys[current_key_index] != failed_key:
+            return True # already rotated by another thread
+        current_key_index += 1
+        if current_key_index < len(keys):
+            print(f"Rotating to Gemini API Key #{current_key_index + 1}...", flush=True)
+            return True
+        else:
+            print("All Gemini API keys in the pool have been exhausted.", flush=True)
+            return False
+
 def get_random_proxy():
     try:
+        # Try loading from env variable first
+        env_proxies = os.environ.get("PROXIES")
+        if env_proxies:
+            proxies_list = [p.strip() for p in env_proxies.split(",") if p.strip()]
+            if proxies_list:
+                return random.choice(proxies_list)
+
         from jobsearch_paths import workspace_root
         config_path = resolve_path(workspace_root() / "config.json")
         if config_path.exists():
@@ -440,14 +512,89 @@ Conform exactly to this JSON schema:
         print(f"Gemini fallback extraction failed for {url}: {e}", flush=True)
     return None
 
-def scrape_url_with_gemini_fallback(url, api_key):
-    if not api_key:
+def extract_job_with_openai(url, html):
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_key:
         return None
-    log(f"Triggering Gemini fallback parser for: {url}")
+    try:
+        from openai import OpenAI
+        body_text = clean_text(html)
+        body_text = body_text[:12000]
+        
+        client = OpenAI(api_key=openai_key)
+        prompt = f"""
+You are an expert technical sourcing parser. Given a job posting webpage's text content, extract the job details.
+URL: {url}
+
+Page Content:
+\"\"\"
+{body_text}
+\"\"\"
+
+Extract the following fields and return ONLY a JSON object:
+- "job_title": The official title of the job.
+- "company_name": The hiring company's name.
+- "requirement_id": A unique job ID, requisition number, or code found in the text or URL. If not found, look at the URL path segments. If still not found, return "Unknown".
+- "job_description": The full text of the job description/requirements. Keep formatting clean.
+- "location_work_type": The location and work type (e.g. Remote, Hybrid, or city/state).
+
+Conform exactly to this JSON schema:
+{{
+  "job_title": "string",
+  "company_name": "string",
+  "requirement_id": "string",
+  "job_description": "string",
+  "location_work_type": "string"
+}}
+"""
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        text = response.choices[0].message.content.strip()
+        data = json.loads(text)
+        if data.get("job_title") and data.get("job_description"):
+            data["job_url"] = url
+            return data
+    except Exception as e:
+        print(f"OpenAI extraction fallback failed for {url}: {e}", flush=True)
+    return None
+
+def scrape_url_with_gemini_fallback(url, api_key=None):
+    log(f"Triggering LLM fallback parser for: {url}")
     html = fetch_with_playwright(url)
     if not html:
         return None
-    return extract_job_with_gemini(url, html, api_key)
+    
+    # Try Gemini first with key rotation support
+    while True:
+        active_key = get_active_gemini_key()
+        if not active_key:
+            break
+            
+        try:
+            res = extract_job_with_gemini(url, html, active_key)
+            if res:
+                return res
+            else:
+                raise RuntimeError("Empty Gemini response")
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(term in err_msg for term in ["429", "400", "403", "quota", "limit", "exhausted", "invalid", "blocked", "denied", "resourceexhausted"]):
+                print(f"Gemini key rate-limited/exhausted/invalid during scrape: {active_key[:8]}... Rotating...", flush=True)
+                if rotate_gemini_key(active_key):
+                    continue
+            break
+            
+    # Try OpenAI gpt-4o-mini fallback
+    if os.environ.get("OPENAI_API_KEY"):
+        log(f"Using OpenAI fallback parser for: {url}")
+        res = extract_job_with_openai(url, html)
+        if res:
+            return res
+            
+    return None
 
 
 
@@ -487,30 +634,38 @@ log = _setup_run_logging().info
 
 
 def http_get(url, headers=None, timeout=10, attempts=3):
-    """GET with automatic exponential backoff on connection errors and 429/50x codes, plus proxy and User-Agent rotation."""
-    h = (headers or {}).copy()
-    if "User-Agent" not in h:
-        h["User-Agent"] = get_random_user_agent()
-    
-    proxy_str = get_random_proxy()
-    proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
-    if proxy_str:
-        log(f"Routing http_get through proxy: {proxy_str}")
+    """GET with automatic exponential backoff on connection errors and 429/50x codes, plus proxy and User-Agent rotation on each attempt."""
+    last_err = None
+    last_response = None
+    for attempt in range(1, attempts + 1):
+        h = (headers or {}).copy()
+        if "User-Agent" not in h:
+            h["User-Agent"] = get_random_user_agent()
         
-    session = requests.Session()
-    retry = Retry(
-        total=attempts,
-        read=attempts,
-        connect=attempts,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET"]
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    
-    return session.get(url, headers=h, proxies=proxies, timeout=timeout)
+        proxy_str = get_random_proxy()
+        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+        if proxy_str:
+            log(f"Routing http_get attempt {attempt}/{attempts} through proxy: {proxy_str}")
+        
+        try:
+            r = requests.get(url, headers=h, proxies=proxies, timeout=timeout)
+            last_response = r
+            if r.status_code in [200, 201, 204, 301, 302]:
+                return r
+            log(f"http_get attempt {attempt}/{attempts} returned status code {r.status_code} for URL: {url}")
+            last_err = f"Status code {r.status_code}"
+        except Exception as e:
+            log(f"http_get attempt {attempt}/{attempts} failed for URL: {url}: {e}")
+            last_err = e
+            
+        if attempt < attempts:
+            time.sleep(1.0 * (2 ** (attempt - 1)))
+            
+    if last_response is not None:
+        return last_response
+    if isinstance(last_err, Exception):
+        raise last_err
+    raise RuntimeError(f"All http_get attempts failed for {url}: {last_err}")
 
 
 def clean_text(html_content):
@@ -1305,6 +1460,302 @@ def search_yahoo(query):
         SEARCH_STATE["aborted"] = True
     return links
 
+
+def fetch_linkedin_guest_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
+    log("Starting LinkedIn Guest API job discovery...")
+    urls_to_scrape = []
+    country = search_cfg.get("country_phrase", "United States")
+    headers = {
+        "User-Agent": get_random_user_agent(),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "*/*"
+    }
+
+    for title in target_titles:
+        if SEARCH_STATE["aborted"]:
+            break
+        url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={quote_plus(title)}&location={quote_plus(country)}&start=0"
+        try:
+            log(f"Querying LinkedIn guest API for title: '{title}'")
+            r = http_get(url, headers=headers, timeout=12, attempts=3)
+            if r.status_code != 200:
+                log(f"  LinkedIn guest API for '{title}' returned status code {r.status_code}")
+                continue
+            
+            soup = BeautifulSoup(r.text, 'html.parser')
+            cards = soup.find_all('li')
+            if not cards:
+                log("  No job cards found.")
+                continue
+            
+            log(f"  Found {len(cards)} raw cards for '{title}'")
+            for card in cards:
+                a_tag = card.find('a', href=True)
+                if not a_tag:
+                    continue
+                job_url = a_tag['href']
+                if '?' in job_url:
+                    job_url = job_url.split('?')[0]
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                
+                title_tag = card.find('h3', class_=re.compile('title|base-search-card__title')) or card.find('h3')
+                job_title = title_tag.text.strip() if title_tag else ""
+                
+                if not is_target_job(job_title, [title]):
+                    continue
+                
+                if not add_if_new_url(nu, found_urls):
+                    continue
+                
+                if dry_run:
+                    log(f"  [DRY RUN MATCH] LinkedIn guest: '{job_title}' - {job_url}")
+                    append_dry_url({
+                        "job_url": job_url,
+                        "query": f"LinkedIn Guest API: {title}",
+                        "title_keyword": job_title
+                    }, dry_urls)
+                    continue
+                
+                urls_to_scrape.append(job_url)
+        except Exception as e:
+            log(f"Error fetching LinkedIn guest API for '{title}': {e}")
+            
+        time.sleep(random.uniform(1.0, 2.5))
+
+    scraped = []
+    if not dry_run and urls_to_scrape:
+        log(f"Scraping {len(urls_to_scrape)} LinkedIn URLs in parallel...")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_url = {executor.submit(scrape_single_url, url): url for url in urls_to_scrape}
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    job_data = future.result()
+                    if job_data and job_data.get("job_description"):
+                        job_data["scraped_at"] = get_cdt_now_iso()
+                        scraped.append(job_data)
+                        log(f"  Scraped LinkedIn Guest Job: '{job_data['job_title']}' at '{job_data['company_name']}'")
+                except Exception as e:
+                    log(f"Thread execution error scraping LinkedIn URL {url}: {e}")
+    return scraped
+
+
+def fetch_hn_hiring_jobs(target_titles, found_urls, dry_run, dry_urls):
+    log("Starting Hacker News 'Who is Hiring' sourcing...")
+    discovered = []
+    
+    search_url = "https://hn.algolia.com/api/v1/search?tags=story,author_whoishiring&query=Who+is+hiring"
+    try:
+        r = requests.get(search_url, timeout=10)
+        if r.status_code != 200:
+            log(f"  HN Algolia search API returned status code {r.status_code}")
+            return []
+        
+        hits = r.json().get("hits", [])
+        story_id = None
+        story_title = ""
+        for hit in hits:
+            title = hit.get("title", "")
+            if title.startswith("Ask HN: Who is hiring?"):
+                story_id = hit.get("objectID")
+                story_title = title
+                break
+                
+        if not story_id:
+            log("  Could not find any recent 'Who is Hiring' story on Hacker News.")
+            return []
+            
+        log(f"  Found latest HN hiring thread: '{story_title}' (ID: {story_id})")
+        
+        item_url = f"https://hn.algolia.com/api/v1/items/{story_id}"
+        r = requests.get(item_url, timeout=15)
+        if r.status_code != 200:
+            log(f"  HN Algolia item API returned status code {r.status_code}")
+            return []
+            
+        comments = r.json().get("children", [])
+        log(f"  Processing {len(comments)} top-level comments...")
+        
+        import html as html_lib
+        def clean_hn_html(html_str):
+            if not html_str:
+                return ""
+            text = html_str.replace("<p>", "\n\n").replace("</p>", "")
+            text = text.replace("<pre><code>", "\n```\n").replace("</code></pre>", "\n```\n")
+            text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+            text = html_lib.unescape(text)
+            text = re.sub(r'<[^>]+>', '', text)
+            return text.strip()
+            
+        matched_count = 0
+        for comment in comments:
+            raw_text = comment.get("text")
+            if not raw_text:
+                continue
+                
+            clean_text = clean_hn_html(raw_text)
+            lines = clean_text.split('\n')
+            first_line = lines[0].strip() if lines else ""
+            parts = [p.strip() for p in re.split(r'[|•–-]', first_line) if p.strip()]
+            
+            company_name = "HN Startup"
+            job_title = "Tech / Engineering Role"
+            title_found = False
+            
+            for part in parts:
+                if is_target_job(part, target_titles):
+                    job_title = part
+                    title_found = True
+                    break
+                    
+            if not title_found:
+                has_keyword = False
+                for t in target_titles:
+                    if t.lower() in clean_text.lower():
+                        has_keyword = True
+                        job_title = f"{t} Role"
+                        break
+                if not has_keyword:
+                    continue
+                if parts:
+                    company_name = parts[0]
+            else:
+                if parts:
+                    company_name = parts[0]
+                    if company_name.lower() == job_title.lower() and len(parts) > 1:
+                        company_name = "HN Startup"
+            
+            job_url = f"https://news.ycombinator.com/item?id={comment.get('id')}"
+            nu = normalize_job_url(job_url)
+            if not nu:
+                continue
+                
+            if not add_if_new_url(nu, found_urls):
+                continue
+                
+            matched_count += 1
+            
+            loc = "Hacker News Sourced"
+            if "remote" in clean_text.lower():
+                loc = "Remote (Hacker News)"
+            elif parts and len(parts) > 2:
+                loc = f"{parts[2]} (Hacker News)"
+                
+            if dry_run:
+                log(f"  [DRY RUN MATCH] HN Sourced: '{job_title}' at '{company_name}' - {job_url}")
+                append_dry_url({
+                    "job_url": job_url,
+                    "query": f"HN Sourced: {story_title}",
+                    "title_keyword": job_title
+                }, dry_urls)
+                continue
+                
+            discovered.append({
+                "job_title": job_title,
+                "company_name": company_name,
+                "job_url": job_url,
+                "requirement_id": f"hn-{comment.get('id')}",
+                "job_description": clean_text,
+                "location_work_type": loc,
+                "description_hash": compute_description_hash(clean_text),
+                "scraped_at": get_cdt_now_iso(),
+                "posted_at": datetime.fromtimestamp(comment.get("created_at_i", time.time()), tz=timezone.utc).isoformat()
+            })
+            
+        log(f"  HN Sourcing complete. Sourced {matched_count} matching startup jobs.")
+    except Exception as e:
+        log(f"Error during HN sourcing: {e}")
+        
+    return discovered
+
+
+def fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
+    api_key = os.environ.get("JOOBLE_API_KEY")
+    if not api_key and isinstance(search_cfg, dict):
+        api_key = search_cfg.get("jooble_api_key")
+    if not api_key:
+        return []
+    
+    log("Starting Jooble API job discovery...")
+    urls_to_scrape = []
+    country = search_cfg.get("country_phrase", "United States")
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    for title in target_titles:
+        if SEARCH_STATE["aborted"]:
+            break
+        url = f"https://jooble.org/api/{api_key}"
+        payload = {
+            "keywords": title,
+            "location": country,
+            "page": "1"
+        }
+        try:
+            log(f"Querying Jooble API for title: '{title}'")
+            r = requests.post(url, headers=headers, json=payload, timeout=10)
+            if r.status_code != 200:
+                log(f"  Jooble API returned status code {r.status_code}")
+                continue
+            
+            data = r.json()
+            jobs = data.get("jobs", [])
+            log(f"  Found {len(jobs)} jobs from Jooble for '{title}'")
+            
+            for job in jobs:
+                job_url = job.get("link")
+                if not job_url:
+                    continue
+                
+                nu = normalize_job_url(job_url)
+                if not nu:
+                    continue
+                
+                job_title = job.get("title", "")
+                if not is_target_job(job_title, [title]):
+                    continue
+                
+                if not add_if_new_url(nu, found_urls):
+                    continue
+                
+                if dry_run:
+                    log(f"  [DRY RUN MATCH] Jooble API: '{job_title}' - {job_url}")
+                    append_dry_url({
+                        "job_url": job_url,
+                        "query": f"Jooble API: {title}",
+                        "title_keyword": job_title
+                    }, dry_urls)
+                    continue
+                
+                urls_to_scrape.append(job_url)
+        except Exception as e:
+            log(f"Error querying Jooble API for '{title}': {e}")
+            
+        time.sleep(random.uniform(1.0, 2.0))
+
+    scraped = []
+    if not dry_run and urls_to_scrape:
+        log(f"Scraping {len(urls_to_scrape)} Jooble URLs in parallel...")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_url = {executor.submit(scrape_single_url, url): url for url in urls_to_scrape}
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    job_data = future.result()
+                    if job_data and job_data.get("job_description"):
+                        job_data["scraped_at"] = get_cdt_now_iso()
+                        scraped.append(job_data)
+                        log(f"  Scraped Jooble Job: '{job_data['job_title']}' at '{job_data['company_name']}'")
+                except Exception as e:
+                    log(f"Thread execution error scraping Jooble URL {url}: {e}")
+    return scraped
+
+
 def normalize_job_url(url):
     if not url:
         return ""
@@ -1354,11 +1805,10 @@ def build_yahoo_queries(title, search_cfg):
     return core
 
 
-def expand_target_titles_with_gemini(target_titles, api_key):
+def expand_target_titles_with_gemini(target_titles, api_key=None):
     """
-    Expand target titles using Gemini 2.5 Flash, falling back to a static mapping if it fails or key is missing.
+    Expand target titles using Gemini 2.5 Flash, falling back to a static mapping if it fails or keys are exhausted.
     """
-    # Keys align with Job_classifier_prompt ROLE LABELS; legacy title strings kept for older configs.
     STATIC_SYNONYM_FALLBACK = {
         "DevOps Engineer": ["DevOps", "Site Reliability Engineer", "SRE"],
         "Cloud Automation Engineer": ["Cloud Infrastructure Engineer", "Automation Engineer", "Cloud Engineer"],
@@ -1379,18 +1829,7 @@ def expand_target_titles_with_gemini(target_titles, api_key):
         "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"],
     }
     
-    if not api_key:
-        log("No Gemini API key found for query expansion. Falling back to static synonym mapping.")
-        return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
-
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
-            generation_config={"response_mime_type": "application/json"}
-        )
-        prompt = f"""
+    prompt = f"""
 You are an expert technical recruiter and sourcing agent.
 Given the following list of target job titles:
 {json.dumps(target_titles)}
@@ -1406,30 +1845,49 @@ Conform exactly to this structure:
   "Title 2": ["Synonym C", "Synonym D"]
 }}
 """
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines[-1].startswith("```"):
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        expanded = json.loads(text)
-        
-        result = {}
-        for title in target_titles:
-            syns = expanded.get(title, expanded.get(title.strip(), []))
-            if isinstance(syns, list):
-                clean_syns = [str(s).strip() for s in syns if s][:3]
-                result[title] = clean_syns
-            else:
-                result[title] = STATIC_SYNONYM_FALLBACK.get(title, [])
-        log(f"Successfully generated query expansions with Gemini for {len(result)} titles.")
-        return result
-    except Exception as e:
-        log(f"Gemini query expansion failed: {e}. Falling back to static synonym mapping.")
-        return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
+
+    while True:
+        active_key = get_active_gemini_key()
+        if not active_key:
+            log("No Gemini API keys left in the pool for query expansion. Falling back to static synonym mapping.")
+            return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
+
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=active_key)
+            model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                generation_config={"response_mime_type": "application/json"}
+            )
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                text = "\n".join(lines).strip()
+            expanded = json.loads(text)
+            
+            result = {}
+            for title in target_titles:
+                syns = expanded.get(title, expanded.get(title.strip(), []))
+                if isinstance(syns, list):
+                    clean_syns = [str(s).strip() for s in syns if s][:3]
+                    result[title] = clean_syns
+                else:
+                    result[title] = STATIC_SYNONYM_FALLBACK.get(title, [])
+            log(f"Successfully generated query expansions with Gemini for {len(result)} titles.")
+            return result
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(term in err_msg for term in ["429", "400", "403", "quota", "limit", "exhausted", "invalid", "blocked", "denied", "resourceexhausted"]):
+                log(f"Gemini key rate-limited/exhausted/invalid during query expansion: {active_key[:8]}... Rotating...")
+                if rotate_gemini_key(active_key):
+                    continue
+            log(f"Gemini query expansion failed: {e}. Falling back to static synonym mapping.")
+            return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
 
 
 def scrape_single_url(href, api_key=None):
@@ -1459,7 +1917,7 @@ def scrape_single_url(href, api_key=None):
         elif 'workatastartup.com' in domain:
             job_data = scrape_yc(href)
         else:
-            job_data = scrape_url_with_gemini_fallback(href, api_key)
+            job_data = scrape_url_with_gemini_fallback(href)
     except Exception as e:
         print(f"Scraper error for {href}: {e}", flush=True)
 
@@ -1467,11 +1925,10 @@ def scrape_single_url(href, api_key=None):
         return None
 
     if not job_data or len(job_data.get("job_description", "")) < 200:
-        if api_key:
-            try:
-                job_data = scrape_url_with_gemini_fallback(href, api_key)
-            except Exception as e:
-                print(f"Gemini fallback scraper failed for {href}: {e}", flush=True)
+        try:
+            job_data = scrape_url_with_gemini_fallback(href)
+        except Exception as e:
+            print(f"Gemini fallback scraper failed for {href}: {e}", flush=True)
                 
     if job_data:
         desc = job_data.get("job_description", "")
@@ -1554,22 +2011,20 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
             nu = normalize_job_url(href)
             if not nu:
                 continue
-            if nu in found_urls:
+            if not add_if_new_url(nu, found_urls):
                 continue
-            found_urls.add(nu)
             urls_found_for_keyword += 1
 
             if dry_run:
-                dry_urls.append({"job_url": href, "query": query, "title_keyword": keyword})
+                append_dry_url({"job_url": href, "query": query, "title_keyword": keyword}, dry_urls)
                 continue
             
             urls_to_scrape.append(href)
 
     if not dry_run and urls_to_scrape:
         log(f"Scraping {len(urls_to_scrape)} URLs in parallel for keyword '{keyword}'...")
-        api_key = os.environ.get("GEMINI_API_KEY")
         with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_url = {executor.submit(scrape_single_url, url, api_key): url for url in urls_to_scrape}
+            future_to_url = {executor.submit(scrape_single_url, url): url for url in urls_to_scrape}
             for future in as_completed(future_to_url):
                 url = future_to_url[future]
                 try:
@@ -1819,18 +2274,17 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
-                if nu in found_urls:
+                if not add_if_new_url(nu, found_urls):
                     continue
-                found_urls.add(nu)
                 
                 if dry_run:
                     matched_count += 1
                     log(f"  [DRY RUN MATCH] RSS {feed_name}: '{raw_title}' - {job_url}")
-                    dry_urls.append({
+                    append_dry_url({
                         "job_url": job_url,
                         "query": f"RSS: {feed_name}",
                         "title_keyword": raw_title
-                    })
+                    }, dry_urls)
                     continue
                 
                 raw_desc = desc_elem.text if desc_elem else ""
@@ -1956,19 +2410,17 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 if not nu:
                     continue
                 
-                if nu in found_urls:
+                if not add_if_new_url(nu, found_urls):
                     continue
-                # Add to set (thread-safe in CPython due to GIL)
-                found_urls.add(nu)
                 
                 if dry_run:
                     local_matched += 1
                     log(f"  [DRY RUN MATCH] Greenhouse '{company}': '{title}' - {job_url}")
-                    dry_urls.append({
+                    append_dry_url({
                         "job_url": job_url,
                         "query": f"Greenhouse API: {company}",
                         "title_keyword": title
-                    })
+                    }, dry_urls)
                     continue
                 
                 content_html = job.get("content", "")
@@ -2041,18 +2493,17 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
-                if nu in found_urls:
+                if not add_if_new_url(nu, found_urls):
                     continue
-                found_urls.add(nu)
                 
                 if dry_run:
                     local_matched += 1
                     log(f"  [DRY RUN MATCH] Lever '{company}': '{title}' - {job_url}")
-                    dry_urls.append({
+                    append_dry_url({
                         "job_url": job_url,
                         "query": f"Lever API: {company}",
                         "title_keyword": title
-                    })
+                    }, dry_urls)
                     continue
                 
                 parts = []
@@ -2178,18 +2629,17 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
-                if nu in found_urls:
+                if not add_if_new_url(nu, found_urls):
                     continue
-                found_urls.add(nu)
                 
                 if dry_run:
                     local_matched += 1
                     log(f"  [DRY RUN MATCH] Ashby '{company}': '{title}' - {job_url}")
-                    dry_urls.append({
+                    append_dry_url({
                         "job_url": job_url,
                         "query": f"Ashby API: {company}",
                         "title_keyword": title
-                    })
+                    }, dry_urls)
                     continue
                 
                 jd_html = job.get("descriptionHtml", "")
@@ -2294,18 +2744,17 @@ def fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls):
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
-                if nu in found_urls:
+                if not add_if_new_url(nu, found_urls):
                     continue
-                found_urls.add(nu)
                 
                 if dry_run:
                     matched_count += 1
                     log(f"  [DRY RUN MATCH] Workable: '{title}' - {job_url}")
-                    dry_urls.append({
+                    append_dry_url({
                         "job_url": job_url,
                         "query": f"Workable Global Search: {title_query}",
                         "title_keyword": title
-                    })
+                    }, dry_urls)
                     continue
                 
                 desc_html = job.get("description") or ""
@@ -2388,18 +2837,17 @@ def fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls):
             nu = normalize_job_url(job_url)
             if not nu:
                 continue
-            if nu in found_urls:
+            if not add_if_new_url(nu, found_urls):
                 continue
-            found_urls.add(nu)
             
             if dry_run:
                 matched_count += 1
                 log(f"  [DRY RUN MATCH] The Muse: '{title}' - {job_url}")
-                dry_urls.append({
+                append_dry_url({
                     "job_url": job_url,
                     "query": "The Muse API",
                     "title_keyword": title
-                })
+                }, dry_urls)
                 continue
                 
             contents_html = job.get("contents", "")
@@ -2487,18 +2935,17 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
-                if nu in found_urls:
+                if not add_if_new_url(nu, found_urls):
                     continue
-                found_urls.add(nu)
                 
                 if dry_run:
                     local_matched += 1
                     log(f"  [DRY RUN MATCH] SmartRecruiters '{company}': '{title}' - {job_url}")
-                    dry_urls.append({
+                    append_dry_url({
                         "job_url": job_url,
                         "query": f"SmartRecruiters API: {company}",
                         "title_keyword": title
-                    })
+                    }, dry_urls)
                     continue
                     
                 posting_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
@@ -2698,37 +3145,37 @@ def main(dry_run=False):
     scraped_jobs = []
     dry_urls = []
 
-    # 1. Fetch from RSS Feeds
-    log("Starting direct RSS feed sourcing...")
-    rss_jobs = fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls)
-    scraped_jobs.extend(rss_jobs)
-    
-    # 2. Fetch from Company Board APIs
-    log("Starting direct Company Board API sourcing...")
+    # 1. Fetch Sourcing Channels in Parallel
     target_companies = config_data.get("target_companies", {})
-    api_jobs = fetch_company_board_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
-    scraped_jobs.extend(api_jobs)
+    
+    tasks = {
+        "RSS Feeds": lambda: fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls),
+        "Greenhouse/Lever APIs": lambda: fetch_company_board_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
+        "Ashby API": lambda: fetch_ashby_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
+        "Workable API": lambda: fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls),
+        "SmartRecruiters API": lambda: fetch_smartrecruiters_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
+        "The Muse API": lambda: fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls),
+        "LinkedIn Guest API": lambda: fetch_linkedin_guest_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls),
+        "Hacker News Sourcing": lambda: fetch_hn_hiring_jobs(target_titles, found_urls, dry_run, dry_urls),
+        "Jooble API": lambda: fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls)
+    }
 
-    # 2b. Fetch from Ashby Boards API
-    log("Starting direct Ashby Boards API sourcing...")
-    ashby_jobs = fetch_ashby_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
-    scraped_jobs.extend(ashby_jobs)
+    log(f"Launching {len(tasks)} job sourcing channels concurrently...")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
+        for future in as_completed(future_to_task):
+            name = future_to_task[future]
+            try:
+                jobs_list = future.result()
+                if jobs_list:
+                    scraped_jobs.extend(jobs_list)
+                    log(f"Finished concurrent channel '{name}': Sourced {len(jobs_list)} jobs.")
+                else:
+                    log(f"Finished concurrent channel '{name}': Sourced 0 jobs.")
+            except Exception as e:
+                log(f"Error executing concurrent channel '{name}': {e}")
 
-    # 2c. Fetch from Workable Global Search API
-    log("Starting direct Workable Global Search API sourcing...")
-    workable_jobs = fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls)
-    scraped_jobs.extend(workable_jobs)
-
-    # 2d. Fetch from SmartRecruiters Boards API
-    log("Starting direct SmartRecruiters Boards API sourcing...")
-    smart_jobs = fetch_smartrecruiters_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls)
-    scraped_jobs.extend(smart_jobs)
-
-    # 2e. Fetch from The Muse Global Jobs API
-    log("Starting direct The Muse Global API sourcing...")
-    muse_jobs = fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls)
-    scraped_jobs.extend(muse_jobs)
-
+    # 2. Yahoo Search Sourcing
     log("Starting Yahoo search for US job postings (remote / hybrid / onsite)...")
     if dry_run:
         log("DRY RUN: collecting URLs only (no per-job page scrape).")
@@ -2738,13 +3185,16 @@ def main(dry_run=False):
     
     synonyms_map = expand_target_titles_with_gemini(target_titles, api_key)
 
-    for title in target_titles:
+    log(f"Running Yahoo searches for {len(target_titles)} target titles in a throttled thread pool...")
+    
+    def process_title_search(title):
+        title_jobs = []
         if SEARCH_STATE["aborted"]:
-            log("Search discovery stage has been aborted. Skipping remaining target titles.")
-            break
-        log(f"Processing target title: '{title}'")
+            return title_jobs
+        
+        log(f"Processing target title search: '{title}'")
         new_jobs, urls_found = search_and_scrape_for_keyword(title, search_cfg, found_urls, dry_run, dry_urls)
-        scraped_jobs.extend(new_jobs)
+        title_jobs.extend(new_jobs)
 
         current_yield = len(new_jobs) if not dry_run else urls_found
 
@@ -2757,11 +3207,18 @@ def main(dry_run=False):
                         break
                     log(f"Executing expanded search for synonym: '{synonym}' (original: '{title}')")
                     syn_jobs, syn_urls_found = search_and_scrape_for_keyword(synonym, search_cfg, found_urls, dry_run, dry_urls)
-                    scraped_jobs.extend(syn_jobs)
-            else:
-                log(f"Yield of {current_yield} for '{title}' is below threshold, but no synonyms are available.")
-        else:
-            log(f"Yield of {current_yield} for '{title}' met or exceeded threshold of {yield_threshold}. No expansion needed.")
+                    title_jobs.extend(syn_jobs)
+        return title_jobs
+
+    with ThreadPoolExecutor(max_workers=2) as search_executor:
+        search_futures = [search_executor.submit(process_title_search, title) for title in target_titles]
+        for fut in as_completed(search_futures):
+            try:
+                res_jobs = fut.result()
+                if res_jobs:
+                    scraped_jobs.extend(res_jobs)
+            except Exception as e:
+                log(f"Error processing Yahoo title search: {e}")
 
     # 3. Dynamic Slug Discovery (auto-detect new company boards from crawler logs)
     discover_new_slugs(found_urls, target_companies)
