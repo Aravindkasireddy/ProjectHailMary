@@ -1579,8 +1579,86 @@ def filter_and_score_urls(urls, clean_company, company_tokens):
             
     return candidate_urls
 
+def resolve_career_link_with_llm(job_title, company_name):
+    # Try Gemini first with key rotation support
+    while True:
+        active_key = get_active_gemini_key()
+        if not active_key:
+            break
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=active_key)
+            model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                generation_config={"response_mime_type": "application/json"}
+            )
+            prompt = f"""
+You are an expert recruitment researcher. Your task is to find the official careers page, job board (e.g. Greenhouse, Lever, Workday, Ashby, or Workable), or direct job application URL for the following job:
+Company: {company_name}
+Job Title: {job_title}
+
+Search your knowledge and the web to find the most accurate direct URL.
+Conform exactly to this JSON schema:
+{{
+  "careers_url": "string"
+}}
+"""
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                text = "\n".join(lines).strip()
+            data = json.loads(text)
+            url = data.get("careers_url")
+            if url and url.startswith("http"):
+                log(f"Resolved company career link via Gemini fallback: {url}")
+                return url
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(term in err_msg for term in ["429", "400", "403", "quota", "limit", "exhausted", "invalid", "blocked", "denied", "resourceexhausted"]):
+                print(f"Gemini key rate-limited/exhausted/invalid during resolution: {active_key[:8]}... Rotating...", flush=True)
+                if rotate_gemini_key(active_key):
+                    continue
+            break
+
+    # Try OpenAI fallback
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            prompt = f"""
+You are an expert recruitment researcher. Your task is to find the official careers page, job board (e.g. Greenhouse, Lever, Workday, Ashby, or Workable), or direct job application URL for the following job:
+Company: {company_name}
+Job Title: {job_title}
+
+Search your knowledge and the web to find the most accurate direct URL.
+Conform exactly to this JSON schema:
+{{
+  "careers_url": "string"
+}}
+"""
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            data = json.loads(response.choices[0].message.content.strip())
+            url = data.get("careers_url")
+            if url and url.startswith("http"):
+                log(f"Resolved company career link via OpenAI fallback: {url}")
+                return url
+        except Exception as e:
+            print(f"OpenAI career link resolution failed: {e}")
+    return None
+
 def resolve_career_link(job_title, company_name, jd_text, html=None):
     try:
+        # Step 1: Scan description & HTML for direct ATS links
         extracted = extract_ats_links(jd_text, html)
         if extracted:
             clean_company = clean_company_name(company_name)
@@ -1590,6 +1668,7 @@ def resolve_career_link(job_title, company_name, jd_text, html=None):
                         return link
             return extracted[0]
             
+        # Step 2: Fallback to targeted search
         clean_company = clean_company_name(company_name)
         company_tokens = get_company_tokens(company_name)
         
@@ -1606,6 +1685,12 @@ def resolve_career_link(job_title, company_name, jd_text, html=None):
         if candidate_urls:
             candidate_urls.sort(key=lambda x: x[0], reverse=True)
             return candidate_urls[0][1]
+            
+        # Step 3: Fallback to LLM-based resolution if search yields no valid company links
+        llm_url = resolve_career_link_with_llm(job_title, company_name)
+        if llm_url:
+            return llm_url
+            
     except Exception as e:
         print(f"Error resolving career link for {company_name} - {job_title}: {e}")
     return None
