@@ -1416,6 +1416,200 @@ def scrape_smartrecruiters(url):
         print(f"Failed to scrape SmartRecruiters URL {url}: {e}")
         return None
 
+ATS_DOMAINS = [
+    'greenhouse.io',
+    'lever.co',
+    'ashbyhq.com',
+    'myworkdayjobs.com',
+    'workdayjobs.com',
+    'smartrecruiters.com',
+    'workable.com',
+    'breezy.hr',
+    'rippling.com',
+    'rippling-ats.com',
+    'recruitee.com',
+    'pinpointhq.com',
+    'jazzhr.com',
+    'jazz.co',
+    'jobvite.com',
+    'icims.com',
+    'teamtailor.com',
+    'applytojob.com',
+    'recruitingbypaycor.com',
+    'ultipro.com',
+    'brassring.com',
+    'taleo.net'
+]
+
+def clean_company_name(name):
+    if not name:
+        return ""
+    name = name.lower()
+    # remove common suffixes
+    name = re.sub(r'\b(inc|llc|corp|co|corporation|incorporated|limited|ltd|gmbh|fzco)\b', '', name)
+    name = re.sub(r'[^a-z0-9]', '', name)
+    return name.strip()
+
+def get_company_tokens(name):
+    if not name:
+        return []
+    name = name.lower()
+    # Replace non-alphanumeric with spaces
+    name = re.sub(r'[^a-z0-9\s]', ' ', name)
+    words = name.split()
+    ignore_words = {
+        'inc', 'llc', 'corp', 'co', 'corporation', 'incorporated', 'limited', 'ltd', 'gmbh', 'fzco',
+        'technologies', 'technology', 'systems', 'solutions', 'services', 'group', 'partners', 
+        'associates', 'consulting', 'software', 'lab', 'labs', 'ai', 'and', 'the', 'company', 'of', 'us', 'usa', 'global'
+    }
+    tokens = [w for w in words if w not in ignore_words and len(w) > 1]
+    if not tokens:
+        tokens = [w for w in words if w not in {'inc', 'llc', 'corp', 'co', 'ltd', 'limited'}]
+    return tokens
+
+def extract_ats_links(text, html=None):
+    found_links = []
+    if html:
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                found_links.append(a['href'])
+        except Exception:
+            pass
+            
+    url_pattern = r'(https?://[^\s"\'()<>#]+)'
+    found_links.extend(re.findall(url_pattern, text))
+    
+    valid_links = []
+    for link in found_links:
+        try:
+            parsed = urlparse(link)
+            domain = parsed.netloc.lower()
+            if not domain:
+                continue
+            
+            if any(bad in domain for bad in [
+                'linkedin.com', 'licdn.com', 'licdn.net', 'google.com', 'gstatic.com',
+                'yahoo.com', 'bing.com', 'duckduckgo.com', 'twitter.com', 'facebook.com',
+                'instagram.com', 'youtube.com', 'wikipedia.org', 'reddit.com', 'medium.com',
+                'stackoverflow.com'
+            ]):
+                continue
+                
+            if any(ats in domain for ats in ATS_DOMAINS):
+                valid_links.append(link)
+                continue
+                
+            path_parts = [p for p in parsed.path.split('/') if p]
+            if any(part in path_parts for part in ['careers', 'jobs', 'job', 'careers-portal', 'career', 'apply']):
+                valid_links.append(link)
+        except Exception:
+            pass
+            
+    seen = set()
+    unique_links = []
+    for l in valid_links:
+        if l not in seen:
+            seen.add(l)
+            unique_links.append(l)
+    return unique_links
+
+def search_for_job_url(query):
+    has_google = bool(os.environ.get("GOOGLE_SEARCH_API_KEY") and os.environ.get("GOOGLE_SEARCH_CX"))
+    has_bing = bool(os.environ.get("BING_SEARCH_API_KEY"))
+    has_serper = bool(os.environ.get("SERPER_API_KEY"))
+    has_serpapi = bool(os.environ.get("SERPAPI_API_KEY"))
+    
+    urls = None
+    if has_google:
+        urls = search_google_custom(query)
+    elif has_bing:
+        urls = search_bing_api(query)
+    elif has_serper:
+        urls = search_serper(query)
+    elif has_serpapi:
+        urls = search_serpapi(query)
+        
+    if not urls:
+        urls = search_yahoo(query)
+    if not urls:
+        urls = search_duckduckgo(query)
+        
+    return urls or []
+
+def filter_and_score_urls(urls, clean_company, company_tokens):
+    candidate_urls = []
+    for url in urls:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        
+        if any(bad in domain for bad in [
+            'linkedin.com', 'indeed.com', 'simplyhired.com', 'ziprecruiter.com', 'glassdoor.com',
+            'google.com', 'yahoo.com', 'facebook.com', 'twitter.com', 'youtube.com', 'wikipedia.org',
+            'reddit.com', 'medium.com', 'stackoverflow.com', 'upwork.com', 'fiverr.com', 'freelancer.com',
+            'talent.com', 'jooble.org', 'monster.com', 'careerbuilder.com', 'salary.com', 'ziprecruiter.com'
+        ]):
+            continue
+            
+        is_ats = any(ats in domain for ats in ATS_DOMAINS)
+        
+        has_company_name = False
+        if clean_company and clean_company in url.lower():
+            has_company_name = True
+        elif company_tokens:
+            matched_tokens = [t for t in company_tokens if t in url.lower()]
+            if len(matched_tokens) == len(company_tokens):
+                has_company_name = True
+            elif len(company_tokens) > 1 and len(matched_tokens) >= len(company_tokens) - 1:
+                has_company_name = True
+                
+        path_parts = [p for p in parsed.path.split('/') if p]
+        has_career_keyword = any(part in path_parts for part in ['careers', 'jobs', 'job', 'careers-portal', 'career', 'apply'])
+        
+        score = 0
+        if has_company_name and is_ats:
+            score = 10
+        elif has_company_name and has_career_keyword:
+            score = 8
+        elif has_company_name:
+            score = 5
+            
+        if score > 0:
+            candidate_urls.append((score, url))
+            
+    return candidate_urls
+
+def resolve_career_link(job_title, company_name, jd_text, html=None):
+    try:
+        extracted = extract_ats_links(jd_text, html)
+        if extracted:
+            clean_company = clean_company_name(company_name)
+            if clean_company:
+                for link in extracted:
+                    if clean_company in link.lower():
+                        return link
+            return extracted[0]
+            
+        clean_company = clean_company_name(company_name)
+        company_tokens = get_company_tokens(company_name)
+        
+        query = f'"{company_name}" "{job_title}" (site:greenhouse.io OR site:lever.co OR site:ashbyhq.com OR site:myworkdayjobs.com OR site:workdayjobs.com OR site:smartrecruiters.com OR site:workable.com OR site:careers OR site:jobs)'
+        search_urls = search_for_job_url(query)
+        
+        candidate_urls = filter_and_score_urls(search_urls, clean_company, company_tokens)
+        
+        if not candidate_urls:
+            query_broad = f'"{company_name}" "{job_title}" career OR jobs'
+            search_urls_broad = search_for_job_url(query_broad)
+            candidate_urls = filter_and_score_urls(search_urls_broad, clean_company, company_tokens)
+            
+        if candidate_urls:
+            candidate_urls.sort(key=lambda x: x[0], reverse=True)
+            return candidate_urls[0][1]
+    except Exception as e:
+        print(f"Error resolving career link for {company_name} - {job_title}: {e}")
+    return None
+
 def scrape_linkedin(url):
     try:
         html = fetch_with_playwright(url)
@@ -1438,10 +1632,14 @@ def scrape_linkedin(url):
         id_match = re.search(r'(\d+)', req_id)
         if id_match:
             req_id = id_match.group(1)
+            
+        resolved_url = resolve_career_link(title, company, jd_text, html)
+        final_url = resolved_url if resolved_url else url
+        
         return {
             "job_title": title,
             "company_name": company,
-            "job_url": url,
+            "job_url": final_url,
             "requirement_id": req_id,
             "job_description": jd_text.strip(),
             "location_work_type": f"{location} (Remote/Hybrid)"
