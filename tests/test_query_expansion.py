@@ -3,13 +3,15 @@ from unittest.mock import patch, MagicMock
 from find_and_scrape_jobs import expand_target_titles_with_gemini, search_and_scrape_for_keyword
 
 def test_expand_titles_fallback_no_api_key():
-    titles = ["DevOps Engineer", "Site Reliability Engineer"]
-    expanded = expand_target_titles_with_gemini(titles, api_key=None)
-    
-    assert "DevOps Engineer" in expanded
-    assert "Site Reliability Engineer" in expanded
-    assert "SRE" in expanded["Site Reliability Engineer"]
-    assert "DevOps" in expanded["DevOps Engineer"]
+    with patch("find_and_scrape_jobs.get_active_gemini_key", return_value=None):
+        titles = ["DevOps Engineer", "Site Reliability Engineer"]
+        expanded = expand_target_titles_with_gemini(titles)
+        
+        assert "DevOps Engineer" in expanded
+        assert "Site Reliability Engineer" in expanded
+        assert "SRE" in expanded["Site Reliability Engineer"]
+        assert "DevOps" in expanded["DevOps Engineer"]
+
 
 def test_expand_titles_fallback_on_exception():
     with patch("google.generativeai.GenerativeModel") as mock_model:

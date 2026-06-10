@@ -13,8 +13,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Browsers in base image match Playwright ~1.49; reinstall webkit if pip upgraded playwright
-RUN python -m playwright install webkit
+# Browsers in base image match Playwright ~1.60; reinstall chromium and webkit if pip upgraded playwright
+RUN python -m playwright install chromium webkit
+
 
 COPY . .
 

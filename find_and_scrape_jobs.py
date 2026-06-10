@@ -686,15 +686,40 @@ def fetch_with_playwright(url):
             # Randomized pre-navigation delay (1-3s)
             time.sleep(random.uniform(1.0, 3.0))
             with sync_playwright() as p:
-                launch_kwargs = {"headless": True}
                 proxy_str = get_random_proxy()
                 proxy_obj = get_playwright_proxy(proxy_str)
+                
+                # Chromium arguments for advanced evasion and container stability
+                launch_args = [
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-infobars",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-web-security"
+                ]
+                launch_kwargs = {
+                    "headless": True,
+                    "args": launch_args
+                }
                 if proxy_obj:
                     launch_kwargs["proxy"] = proxy_obj
                     log(f"Routing Playwright attempt {attempt} through proxy: {proxy_str}")
                 
-                browser = p.webkit.launch(**launch_kwargs)
-                
+                # Try Chromium first, fallback to WebKit
+                browser = None
+                browser_type = "chromium"
+                try:
+                    browser = p.chromium.launch(**launch_kwargs)
+                except Exception as chromium_err:
+                    log(f"Playwright Chromium launch failed, falling back to WebKit: {chromium_err}")
+                    # Launch webkit as fallback
+                    launch_kwargs_fallback = {"headless": True}
+                    if proxy_obj:
+                        launch_kwargs_fallback["proxy"] = proxy_obj
+                    browser = p.webkit.launch(**launch_kwargs_fallback)
+                    browser_type = "webkit"
+
                 # Rotate viewport sizes
                 viewports = [
                     {"width": 1920, "height": 1080},
@@ -719,13 +744,51 @@ def fetch_with_playwright(url):
                 
                 page = context.new_page()
                 
-                # Apply stealth mode if library is available
-                if stealth_sync:
+                # Apply stealth mode if library is available (stealth_sync is designed for chromium)
+                if stealth_sync and browser_type == "chromium":
                     stealth_sync(page)
                 
-                page.goto(url, wait_until="commit", timeout=20000)
-                # Randomized post-navigation delay (2.5-4.5s)
-                time.sleep(random.uniform(2.5, 4.5))
+                # Navigate with a generous timeout
+                page.goto(url, wait_until="commit", timeout=30000)
+                
+                # 1. Cloudflare / Bot Verification Wait Loop
+                for cf_attempt in range(5):
+                    title = page.title().lower()
+                    content = page.content().lower()
+                    if any(term in title for term in ["cloudflare", "just a moment", "attention required"]) or "checking your browser" in content:
+                        log(f"Playwright detected Cloudflare or checking page for {url}. Waiting 2s (attempt {cf_attempt + 1}/5)...")
+                        time.sleep(2.0)
+                    else:
+                        break
+                
+                # 2. Simulate Human Interaction (Scroll)
+                try:
+                    # Scroll down to trigger lazy loading of assets and text
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.35)")
+                    time.sleep(random.uniform(0.5, 1.2))
+                    page.evaluate("window.scrollTo(0, 0)")
+                except Exception:
+                    pass
+                
+                # 3. Dynamic Selector/Network Wait
+                try:
+                    # Common selectors for job descriptions (Greenhouse, Lever, Ashby, Workday, etc.)
+                    selectors = [
+                        '[data-automation-id="jobPostingDescription"]',
+                        '[data-qa="job-description"]',
+                        '.job-description',
+                        '#job-description',
+                        '.job-body',
+                        '.jobDescription',
+                        'article',
+                        'main'
+                    ]
+                    # Wait for any of these selectors to be visible
+                    page.wait_for_selector(", ".join(selectors), timeout=6000)
+                except Exception:
+                    # Fallback sleep to let SPA routers finish loading
+                    time.sleep(random.uniform(2.5, 4.0))
+                
                 html = page.content()
                 browser.close()
                 return html
@@ -733,8 +796,10 @@ def fetch_with_playwright(url):
             last_err = e
             log(f"Playwright attempt {attempt} failed for {url}: {e}")
             time.sleep(min(2 ** attempt, 8))
-    print(f"Playwright WebKit error for {url}: {last_err}", flush=True)
+            
+    print(f"Playwright error for {url}: {last_err}", flush=True)
     return None
+
 
 
 
