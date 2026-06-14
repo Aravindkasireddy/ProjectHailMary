@@ -2,12 +2,13 @@ import os
 import sys
 import json
 import re
+import base64
 import urllib.parse
 import subprocess
 import threading
 import time
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
 import requests
@@ -154,6 +155,45 @@ SYNCED_PATH = os.path.join(WORKSPACE_DIR, "synced_jobs.json")
 scraper_states = {}
 stale_check_states = {}
 
+# Company-targeted scraper status (keyed by authenticated email)
+_COMPANY_SCRAPER_PROGRESS = "COMPANY_SCRAPER_PROGRESS:"
+_company_scraper_states = {}
+_company_scraper_states_lock = threading.Lock()
+
+
+def _default_company_scraper_state():
+    return {
+        "status": "idle",
+        "phase": "Idle",
+        "phase_key": "idle",
+        "started_at": None,
+        "finished_at": None,
+        "duration_seconds": None,
+        "summary": None,
+        "error": None,
+        "input": None,
+    }
+
+
+def _company_scraper_phase_label(phase_key: str) -> str:
+    return {
+        "idle": "Idle",
+        "discovering": "Discovering careers page...",
+        "scraping": "Scraping jobs...",
+        "filtering": "Filtering IT jobs...",
+        "saving": "Saving to database...",
+        "completed": "Completed",
+        "failed": "Failed",
+    }.get(phase_key or "", "Scraping jobs...")
+
+
+def get_company_scraper_state(email):
+    email_key = (email or "").strip() or "admin@hailmary.ai"
+    with _company_scraper_states_lock:
+        if email_key not in _company_scraper_states:
+            _company_scraper_states[email_key] = _default_company_scraper_state()
+        return dict(_company_scraper_states[email_key])
+
 def get_scraper_state(email):
     email_key = email or "admin@hailmary.ai"
     if email_key not in scraper_states:
@@ -177,6 +217,238 @@ def get_stale_check_state(email):
             "stale_found": 0,
         }
     return stale_check_states[email_key]
+
+_ZERO_UUID_STR = "00000000-0000-0000-0000-000000000000"
+
+
+def _valid_scrape_tracker_user_id(uid) -> bool:
+    return bool(uid and str(uid).strip() and str(uid).strip() != _ZERO_UUID_STR)
+
+
+def _fetch_user_scrape_runs(uid, limit=20):
+    try:
+        from supabase_client import get_supabase_client
+
+        if not _valid_scrape_tracker_user_id(uid):
+            return []
+        r = (
+            get_supabase_client()
+            .table("scrape_runs")
+            .select("*")
+            .eq("user_id", uid)
+            .order("started_at", desc=True)
+            .limit(int(limit))
+            .execute()
+        )
+        return r.data or []
+    except Exception:
+        return []
+
+
+def _fetch_user_scrape_run(uid, run_id):
+    try:
+        uuid.UUID(str(run_id))
+        from supabase_client import get_supabase_client
+
+        if not _valid_scrape_tracker_user_id(uid):
+            return None
+        r = (
+            get_supabase_client()
+            .table("scrape_runs")
+            .select("*")
+            .eq("user_id", uid)
+            .eq("id", str(run_id))
+            .maybe_single()
+            .execute()
+        )
+        return r.data
+    except Exception:
+        return None
+
+
+def _fetch_user_active_scrape_runs(uid):
+    try:
+        from supabase_client import get_supabase_client
+
+        if not _valid_scrape_tracker_user_id(uid):
+            return []
+        r = (
+            get_supabase_client()
+            .table("scrape_runs")
+            .select("*")
+            .eq("user_id", uid)
+            .in_("status", ["queued", "running"])
+            .order("started_at", desc=True)
+            .execute()
+        )
+        return r.data or []
+    except Exception:
+        return []
+
+
+_watched_scrape_inflight = set()
+_watched_scrape_inflight_lock = threading.Lock()
+
+
+def _watched_hint_from_url(url: str) -> str:
+    try:
+        parts = (urllib.parse.urlparse(url or "").netloc or "").lower().split(".")
+        if parts:
+            return parts[0].replace("-", " ").title()
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_watched_company_input(raw: str):
+    """Resolve display name, careers URL, and ATS for a watched-company row (no scraping)."""
+    from company_scraper.detector import detect_ats, detect_input_type
+    from company_scraper.discovery import find_careers_url
+
+    s = (raw or "").strip()
+    if not s:
+        return None, "Empty input"
+    errors = []
+    kind = detect_input_type(s)
+    careers_url = ""
+    company_display = ""
+    if kind == "company_name":
+        company_display = s
+        careers_url = find_careers_url(s, errors) or ""
+        if not careers_url:
+            return None, "Could not find a careers page for that company"
+    elif kind == "careers_url":
+        careers_url = s.rstrip("/")
+        company_display = _watched_hint_from_url(careers_url) or s
+    else:
+        careers_url = s
+        company_display = _watched_hint_from_url(s) or s
+
+    ats = detect_ats(careers_url)
+    return (
+        {
+            "input_value": s,
+            "company_name": company_display or s,
+            "careers_url": careers_url,
+            "ats_platform": ats,
+        },
+        None,
+    )
+
+
+def _watched_parse_last_scraped_ts(ts):
+    if not ts:
+        return None
+    try:
+        s = str(ts).replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _parse_company_stdout_json_summary(blob: str):
+    for line in reversed((blob or "").strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and "company" in obj:
+                    return obj
+            except Exception:
+                continue
+    return None
+
+
+def _watched_company_scrape_thread(row: dict):
+    """Run company_scraper/main.py for a watched row; update last_jobs_found; clear inflight."""
+    row_id = str(row.get("id") or "")
+    try:
+        uid = str(row.get("user_id") or "")
+        email = str(row.get("user_email") or "")
+        inp = str(row.get("input_value") or "").strip()
+        if not uid or not email or not inp:
+            return
+        b64 = base64.b64encode(json.dumps({"input": inp}).encode("utf-8")).decode("ascii")
+        env = os.environ.copy()
+        env["MAAS_USER_ID"] = uid
+        env["MAAS_USER_EMAIL"] = email
+        script = os.path.join(WORKSPACE_DIR, "company_scraper", "main.py")
+        p = subprocess.run(
+            [sys.executable, script, b64],
+            cwd=WORKSPACE_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=7200,
+        )
+        blob = (p.stdout or "") + "\n" + (p.stderr or "")
+        summary = _parse_company_stdout_json_summary(blob)
+        if summary is not None and "it_jobs_found" in summary:
+            try:
+                from supabase_client import get_supabase_client
+
+                n = int(summary.get("it_jobs_found") or 0)
+                get_supabase_client().table("watched_companies").update({"last_jobs_found": n}).eq(
+                    "id", row_id
+                ).execute()
+            except Exception as ex:
+                print(f"watched_companies: last_jobs_found update failed {row_id}: {ex}")
+    except Exception as e:
+        print(f"watched_companies scrape thread error {row_id}: {e}")
+    finally:
+        with _watched_scrape_inflight_lock:
+            _watched_scrape_inflight.discard(row_id)
+
+
+def watched_companies_scheduler_loop():
+    """Hourly: scrape due active watched companies (service role)."""
+    while True:
+        time.sleep(3600)
+        try:
+            from supabase_client import get_supabase_client
+
+            supabase = get_supabase_client()
+            res = supabase.table("watched_companies").select("*").eq("is_active", True).execute()
+            rows = res.data or []
+            now = datetime.now(timezone.utc)
+            for company in rows:
+                row_id = str(company.get("id") or "")
+                if not row_id:
+                    continue
+                freq = (company.get("scrape_frequency") or "daily").lower()
+                if freq not in ("daily", "weekly"):
+                    freq = "daily"
+                last = company.get("last_scraped_at")
+                last_dt = _watched_parse_last_scraped_ts(last)
+                if last_dt is None:
+                    due = True
+                else:
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    delta = (now - last_dt).total_seconds()
+                    due = delta >= (86400 if freq == "daily" else 604800)
+                if not due:
+                    continue
+                with _watched_scrape_inflight_lock:
+                    if row_id in _watched_scrape_inflight:
+                        continue
+                    _watched_scrape_inflight.add(row_id)
+                try:
+                    now_iso = now.isoformat()
+                    supabase.table("watched_companies").update({"last_scraped_at": now_iso}).eq(
+                        "id", row_id
+                    ).execute()
+                except Exception as ex:
+                    with _watched_scrape_inflight_lock:
+                        _watched_scrape_inflight.discard(row_id)
+                    print(f"watched_companies scheduler: bump last_scraped_at failed {row_id}: {ex}")
+                    continue
+                threading.Thread(
+                    target=_watched_company_scrape_thread, args=(dict(company),), daemon=True
+                ).start()
+        except Exception as e:
+            print(f"Watched companies scheduler error: {e}")
+
 
 def check_url_stale(url):
     headers = {
@@ -1429,13 +1701,27 @@ def _append_pipeline_log(message):
 
 
 # Scraper worker thread
-def scraper_worker(email=None, past_24h_only=False, user_id=None):
+def scraper_worker(email=None, past_24h_only=False, user_id=None, scrape_run_id=None):
     if user_id:
         try:
             from supabase_client import download_user_configs
             download_user_configs(user_id, email)
         except Exception as e:
             print(f"Failed to download configurations from Supabase for user {user_id}: {e}")
+
+    tracker = None
+    if scrape_run_id and _valid_scrape_tracker_user_id(user_id):
+        try:
+            from scrape_tracker import ScrapeTracker
+
+            tracker = ScrapeTracker(
+                user_id,
+                email or "",
+                "pipeline",
+                existing_run_id=scrape_run_id,
+            )
+        except Exception:
+            tracker = None
 
     state = get_scraper_state(email)
     state["status"] = "running"
@@ -1473,6 +1759,8 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None):
 
     def push_supabase_jobs(reason):
         """Publish merged local artifacts to Supabase after each stage (canonical UI store)."""
+        if user_id and tracker:
+            tracker.update_stage("saving")
         if not user_id:
             return
         try:
@@ -1484,6 +1772,8 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None):
             _append_pipeline_log(f"WARN Supabase jobs sync ({reason}): {e}")
 
     try:
+        if tracker:
+            tracker.update_stage("scraping")
         cmd = [sys.executable, "find_and_scrape_jobs.py"]
         if past_24h_only:
             cmd.append("--past-24h")
@@ -1493,11 +1783,15 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None):
             err = (p1.stderr or p1.stdout or "").strip() or "Unknown error"
             state["message"] = f"Sourcing script failed: {err[:500]}"
             state["last_error"] = err[:4000]
+            if tracker:
+                tracker.fail(state["message"])
             return
 
         push_supabase_jobs("after scrape")
 
         state["message"] = "Running validation and filtering..."
+        if tracker:
+            tracker.update_stage("filtering")
         filter_script = os.path.join(WORKSPACE_DIR, "scripts", "scrape_and_filter_candidates.py")
         p2 = run_step([sys.executable, filter_script], "scrape_and_filter_candidates")
         if p2.returncode != 0:
@@ -1506,11 +1800,15 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None):
             err = (p2.stderr or p2.stdout or "").strip() or "Unknown error"
             state["message"] = f"Filter script failed: {err[:500]}"
             state["last_error"] = err[:4000]
+            if tracker:
+                tracker.fail(state["message"])
             return
 
         push_supabase_jobs("after filter")
 
         state["message"] = "Applying policy classification..."
+        if tracker:
+            tracker.update_stage("classifying")
         classify_script = os.path.join(WORKSPACE_DIR, "scripts", "classify_and_save.py")
         p3 = run_step([sys.executable, classify_script], "classify_and_save")
         if p3.returncode != 0:
@@ -1519,6 +1817,8 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None):
             err = (p3.stderr or p3.stdout or "").strip() or "Unknown error"
             state["message"] = f"Classifier failed: {err[:500]}"
             state["last_error"] = err[:4000]
+            if tracker:
+                tracker.fail(state["message"])
             return
 
         push_supabase_jobs("after classify")
@@ -1593,10 +1893,169 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None):
         state["status"] = "completed"
         state["message"] = f"Job sourcing complete! {len(new_jobs)} new jobs found."
         state["last_run"] = datetime.utcnow().isoformat()
+        if tracker:
+            summary = {**metrics, "new_jobs_count": len(new_jobs), "message": state["message"]}
+            tracker.complete(summary)
     except Exception as e:
         state["status"] = "failed"
         state["message"] = f"Scraper execution error: {str(e)}"
         state["last_error"] = str(e)[:4000]
+        if tracker:
+            tracker.fail(state["last_error"] or state["message"])
+
+
+def company_scraper_worker(
+    b64_payload,
+    email,
+    user_id,
+    email_key,
+    scrape_run_id=None,
+    company_input=None,
+):
+    """Run company_scraper/main.py in a background thread (logs to logs/company_scraper.log)."""
+    log_path = os.path.join(WORKSPACE_DIR, "logs", "company_scraper.log")
+    started = datetime.utcnow()
+
+    db_tracker = None
+    if scrape_run_id and _valid_scrape_tracker_user_id(user_id):
+        try:
+            from scrape_tracker import ScrapeTracker
+
+            db_tracker = ScrapeTracker(
+                user_id,
+                email or "",
+                "company_targeted",
+                input_value=company_input,
+                existing_run_id=scrape_run_id,
+            )
+        except Exception:
+            db_tracker = None
+
+    def _finish_state(status: str, phase_key: str, summary=None, error=None):
+        finished = datetime.utcnow()
+        dur = (finished - started).total_seconds()
+        with _company_scraper_states_lock:
+            st = _company_scraper_states.setdefault(email_key, _default_company_scraper_state())
+            st["status"] = status
+            st["phase_key"] = phase_key
+            st["phase"] = _company_scraper_phase_label(phase_key)
+            st["finished_at"] = finished.isoformat() + "Z"
+            st["duration_seconds"] = round(dur, 1)
+            if summary is not None:
+                st["summary"] = summary
+            if error is not None:
+                st["error"] = error
+
+    try:
+        os.makedirs(os.path.join(WORKSPACE_DIR, "logs"), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write(
+                f"\n[{datetime.utcnow().isoformat()}] company_scrape START email={email!r} user_id={user_id!r} run_id={scrape_run_id!r}\n"
+            )
+        env = os.environ.copy()
+        env["MAAS_USER_EMAIL"] = email or ""
+        env["MAAS_USER_ID"] = user_id or ""
+        script = os.path.join(WORKSPACE_DIR, "company_scraper", "main.py")
+        cmd = [sys.executable, script, b64_payload]
+        if scrape_run_id:
+            cmd.extend(["--run-id", scrape_run_id])
+        p = subprocess.Popen(
+            cmd,
+            cwd=WORKSPACE_DIR,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        stderr_buf = []
+
+        def _drain_stderr():
+            try:
+                for line in iter(p.stderr.readline, ""):
+                    stderr_buf.append(line)
+                    line_st = line.rstrip()
+                    if line_st.startswith(_COMPANY_SCRAPER_PROGRESS):
+                        try:
+                            prog = json.loads(line_st[len(_COMPANY_SCRAPER_PROGRESS) :])
+                            pk = prog.get("phase")
+                            if isinstance(pk, str):
+                                with _company_scraper_states_lock:
+                                    st = _company_scraper_states.get(email_key)
+                                    if st and st.get("status") == "running":
+                                        st["phase_key"] = pk
+                                        st["phase"] = _company_scraper_phase_label(pk)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        t_err = threading.Thread(target=_drain_stderr, daemon=True)
+        t_err.start()
+        stdout_chunks = []
+        try:
+            for line in iter(p.stdout.readline, ""):
+                stdout_chunks.append(line)
+        finally:
+            rc = p.wait()
+        t_err.join(timeout=5)
+        full_out = "".join(stdout_chunks)
+        full_err = "".join(stderr_buf)
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write(full_out + "\n")
+            lf.write(full_err + "\n")
+            lf.write(f"[{datetime.utcnow().isoformat()}] company_scrape END rc={rc}\n")
+
+        summary = None
+        for line in reversed(full_out.strip().splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict) and "company" in obj:
+                        summary = obj
+                        break
+                except Exception:
+                    continue
+
+        if rc != 0:
+            err_msg = f"Process exited with code {rc}"
+            _finish_state(
+                "failed",
+                "failed",
+                summary=summary,
+                error=err_msg,
+            )
+            if db_tracker:
+                db_tracker.fail(err_msg)
+        elif summary and int(summary.get("saved_to_db", 0) or 0) == 0 and (
+            (summary.get("errors") and len(summary["errors"]) > 0)
+            or int(summary.get("it_jobs_found", 0) or 0) > 0
+        ):
+            err_msg = "; ".join(summary.get("errors") or []) or "Could not save jobs to the database"
+            _finish_state(
+                "failed",
+                "failed",
+                summary=summary,
+                error=err_msg,
+            )
+            if db_tracker:
+                db_tracker.fail(err_msg)
+        else:
+            _finish_state("completed", "completed", summary=summary, error=None)
+            if db_tracker:
+                db_tracker.complete(summary or {})
+    except Exception as e:
+        try:
+            with open(log_path, "a", encoding="utf-8") as lf:
+                lf.write(f"[{datetime.utcnow().isoformat()}] company_scrape ERROR {e!r}\n")
+        except Exception:
+            pass
+        err_s = str(e)[:2000]
+        _finish_state("failed", "failed", summary=None, error=err_s)
+        if db_tracker:
+            db_tracker.fail(err_s)
+
 
 # Background Scheduler Loop
 def scheduler_loop():
@@ -1744,7 +2203,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE, PATCH")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Private-Network", "true")
 
@@ -2012,6 +2471,81 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(get_scraper_state(email)).encode('utf-8'))
             return
 
+        elif parsed_url.path == "/api/scrape/company/status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            email = self.get_auth_email()
+            self.wfile.write(json.dumps(get_company_scraper_state(email)).encode("utf-8"))
+            return
+
+        elif parsed_url.path == "/api/scrape/active":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            uid = self.get_auth_user_id()
+            self.wfile.write(
+                json.dumps({"runs": _fetch_user_active_scrape_runs(uid)}).encode("utf-8")
+            )
+            return
+
+        elif parsed_url.path.startswith("/api/scrape/status/"):
+            rest = parsed_url.path[len("/api/scrape/status/") :].strip("/")
+            uid = self.get_auth_user_id()
+            row = _fetch_user_scrape_run(uid, rest) if rest else None
+            code = 200 if row else 404
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            if row:
+                self.wfile.write(json.dumps({"run": row}).encode("utf-8"))
+            else:
+                self.wfile.write(
+                    json.dumps({"success": False, "message": "Run not found or invalid id"}).encode(
+                        "utf-8"
+                    )
+                )
+            return
+
+        elif parsed_url.path == "/api/scrape/status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            uid = self.get_auth_user_id()
+            self.wfile.write(json.dumps({"runs": _fetch_user_scrape_runs(uid, 20)}).encode("utf-8"))
+            return
+
+        elif parsed_url.path == "/api/watched-companies":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            uid = self.get_auth_user_id()
+            try:
+                from supabase_client import get_supabase_client
+
+                if not _valid_scrape_tracker_user_id(uid):
+                    self.wfile.write(json.dumps({"companies": []}).encode("utf-8"))
+                    return
+                r = (
+                    get_supabase_client()
+                    .table("watched_companies")
+                    .select("*")
+                    .eq("user_id", uid)
+                    .eq("is_active", True)
+                    .order("created_at", desc=True)
+                    .execute()
+                )
+                self.wfile.write(json.dumps({"companies": r.data or []}).encode("utf-8"))
+            except Exception as ex:
+                print(f"GET /api/watched-companies error: {ex}")
+                self.wfile.write(json.dumps({"companies": [], "error": str(ex)}).encode("utf-8"))
+            return
+
         # API: Get stale check status
         elif parsed_url.path == "/api/stale-status":
             self.send_response(200)
@@ -2173,7 +2707,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = {}
 
         # Protect API: login/register open; reset-target-titles + classifier-feedback need any auth; rest admin-only
-        _user_authed_post_paths = ("/api/config/reset-target-titles", "/api/classifier-feedback")
+        _user_authed_post_paths = (
+            "/api/config/reset-target-titles",
+            "/api/classifier-feedback",
+            "/api/watched-companies",
+        )
         if parsed_url.path.startswith("/api/"):
             if parsed_url.path in ["/api/login", "/api/register"]:
                 pass
@@ -2658,10 +3196,160 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 res = {"success": False, "message": "Scraper is already running."}
             else:
                 past_24h_only = payload.get("past_24h_only", False)
-                threading.Thread(target=lambda: scraper_worker(email, past_24h_only, user_id=user_id)).start()
-                res = {"success": True, "message": "Scraper started in background."}
+                scrape_run_id = None
+                if _valid_scrape_tracker_user_id(user_id):
+                    try:
+                        from scrape_tracker import ScrapeTracker
+
+                        tr = ScrapeTracker(user_id, email or "", "pipeline")
+                        scrape_run_id = tr.start() or None
+                    except Exception:
+                        scrape_run_id = None
+                threading.Thread(
+                    target=lambda rid=scrape_run_id: scraper_worker(
+                        email, past_24h_only, user_id=user_id, scrape_run_id=rid
+                    )
+                ).start()
+                res = {
+                    "success": True,
+                    "message": "Scraper started in background.",
+                    "run_id": scrape_run_id,
+                }
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
+            return
+
+        # API: Company-targeted scrape (Greenhouse / Lever / Workday / iCIMS / generic)
+        elif parsed_url.path == "/api/scrape/company":
+            email = self.get_auth_email()
+            user_id = self.get_auth_user_id()
+            email_key = (email or "").strip() or "admin@hailmary.ai"
+            inp = (payload.get("input") or "").strip()
+            if not inp:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"success": False, "message": "Missing JSON field: input"}).encode("utf-8")
+                )
+                return
+            scrape_run_id = None
+            if _valid_scrape_tracker_user_id(user_id):
+                try:
+                    from scrape_tracker import ScrapeTracker
+
+                    tr = ScrapeTracker(user_id, email or "", "company_targeted", input_value=inp)
+                    scrape_run_id = tr.start() or None
+                except Exception:
+                    scrape_run_id = None
+            with _company_scraper_states_lock:
+                st = _company_scraper_states.get(email_key)
+                if st and st.get("status") == "running":
+                    self.send_response(409)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(
+                        json.dumps(
+                            {"success": False, "message": "Company scrape is already running."}
+                        ).encode("utf-8")
+                    )
+                    return
+                base = _default_company_scraper_state()
+                base.update(
+                    {
+                        "status": "running",
+                        "phase": _company_scraper_phase_label("scraping"),
+                        "phase_key": "scraping",
+                        "started_at": datetime.utcnow().isoformat() + "Z",
+                        "input": inp,
+                    }
+                )
+                _company_scraper_states[email_key] = base
+
+            self.send_response(202)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+
+            b64 = base64.b64encode(json.dumps({"input": inp}).encode("utf-8")).decode("ascii")
+            threading.Thread(
+                target=company_scraper_worker,
+                args=(b64, email, user_id, email_key, scrape_run_id, inp),
+            ).start()
+            res = {
+                "success": True,
+                "accepted": True,
+                "message": "Company scrape started in background. See logs/company_scraper.log for progress.",
+                "run_id": scrape_run_id,
+            }
+            self.wfile.write(json.dumps(res).encode("utf-8"))
+            return
+
+        elif parsed_url.path == "/api/watched-companies":
+            uid = self.get_auth_user_id()
+            email = self.get_auth_email()
+            inp = (payload.get("input") or "").strip()
+            if not inp:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"success": False, "message": "Missing JSON field: input"}).encode("utf-8")
+                )
+                return
+            if not _valid_scrape_tracker_user_id(uid):
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"success": False, "message": "Supabase user id required."}).encode("utf-8")
+                )
+                return
+            resolved, err = resolve_watched_company_input(inp)
+            if not resolved:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": err or "Resolve failed"}).encode("utf-8"))
+                return
+            try:
+                from supabase_client import get_supabase_client
+
+                row = {
+                    "user_id": uid,
+                    "user_email": email or None,
+                    **resolved,
+                    "is_active": True,
+                    "scrape_frequency": "daily",
+                }
+                ins = get_supabase_client().table("watched_companies").insert(row).execute()
+                data = (ins.data or [None])[0] or {}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "id": data.get("id"),
+                            "company_name": data.get("company_name"),
+                            "careers_url": data.get("careers_url"),
+                            "ats_platform": data.get("ats_platform"),
+                        }
+                    ).encode("utf-8")
+                )
+            except Exception as ex:
+                print(f"POST /api/watched-companies error: {ex}")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": str(ex)}).encode("utf-8"))
             return
 
         # API: Trigger stale job check
@@ -3040,6 +3728,125 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"Not Found")
 
+    def do_DELETE(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        if parsed_url.path.startswith("/api/"):
+            if parsed_url.path == "/api/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+                return
+            if not self.check_authenticated():
+                return
+        if not parsed_url.path.startswith("/api/watched-companies/"):
+            self.send_response(404)
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            return
+        uid = self.get_auth_user_id()
+        rest = parsed_url.path[len("/api/watched-companies/") :].strip("/")
+        try:
+            uuid.UUID(rest)
+        except Exception:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": False, "message": "Invalid id"}).encode("utf-8"))
+            return
+        try:
+            from supabase_client import get_supabase_client
+
+            get_supabase_client().table("watched_companies").update({"is_active": False}).eq(
+                "id", rest
+            ).eq("user_id", uid).execute()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+        except Exception as ex:
+            print(f"DELETE /api/watched-companies error: {ex}")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": False, "message": str(ex)}).encode("utf-8"))
+
+    def do_PATCH(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        content_length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(content_length).decode("utf-8")
+        try:
+            payload = json.loads(raw) if raw else {}
+        except Exception:
+            payload = {}
+        if parsed_url.path.startswith("/api/"):
+            if parsed_url.path == "/api/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+                return
+            if not self.check_authenticated():
+                return
+        if not parsed_url.path.startswith("/api/watched-companies/"):
+            self.send_response(404)
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            return
+        uid = self.get_auth_user_id()
+        rest = parsed_url.path[len("/api/watched-companies/") :].strip("/")
+        try:
+            uuid.UUID(rest)
+        except Exception:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": False, "message": "Invalid id"}).encode("utf-8"))
+            return
+        updates = {}
+        if "scrape_frequency" in payload:
+            f = str(payload.get("scrape_frequency") or "").lower()
+            if f in ("daily", "weekly"):
+                updates["scrape_frequency"] = f
+        if "is_active" in payload:
+            updates["is_active"] = bool(payload.get("is_active"))
+        if not updates:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(
+                json.dumps({"success": False, "message": "No valid fields to update"}).encode("utf-8")
+            )
+            return
+        try:
+            from supabase_client import get_supabase_client
+
+            get_supabase_client().table("watched_companies").update(updates).eq("id", rest).eq(
+                "user_id", uid
+            ).execute()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+        except Exception as ex:
+            print(f"PATCH /api/watched-companies error: {ex}")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": False, "message": str(ex)}).encode("utf-8"))
+
+
 def main():
     try:
         ensure_notion_mirror_schema(WORKSPACE_DIR)
@@ -3049,6 +3856,9 @@ def main():
     # Start background scheduler thread
     sched_thread = threading.Thread(target=scheduler_loop, daemon=True)
     sched_thread.start()
+
+    watched_thread = threading.Thread(target=watched_companies_scheduler_loop, daemon=True)
+    watched_thread.start()
     
     server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)
     print(f"MAAS Job Sourcing Agent Dashboard running at: http://localhost:{PORT}")

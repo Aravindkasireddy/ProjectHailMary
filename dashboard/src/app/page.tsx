@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useEffect, useRef } from 'react';
 import {
   Briefcase,
@@ -1823,7 +1824,8 @@ export default function Dashboard() {
             </form>
 
             <div className="text-xs text-slate-500 text-center border-t border-slate-800/60 pt-4 w-full">
-              Tailscale compatibility mode enabled. Secure endpoint authorization.
+              Sign in with Supabase. The dashboard talks to your MAAS API using{' '}
+              <code className="text-slate-400">NEXT_PUBLIC_API_URL</code> and a bearer token.
             </div>
           </div>
         </div>
@@ -1992,6 +1994,14 @@ export default function Dashboard() {
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${scraperStatus.status === 'running' ? 'animate-spin' : ''}`} />
               {past24hOnly ? 'Source 24h Jobs' : 'Run Sourcing Agent'}
             </button>
+          )}
+          {authRole === 'admin' && (
+            <Link
+              href="/company-scraper"
+              className="inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95"
+            >
+              Company Scraper
+            </Link>
           )}
         </div>
       </header>

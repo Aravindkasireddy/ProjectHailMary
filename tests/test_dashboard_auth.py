@@ -95,3 +95,48 @@ def test_endpoint_admin_access(test_server):
     # POST endpoint (modifying action) should succeed
     r = requests.post(f"{test_server}/api/scrape", json={}, headers=headers)
     assert r.status_code == 200
+
+
+def test_company_scraper_status_auth(test_server):
+    r = requests.get(f"{test_server}/api/scrape/company/status")
+    assert r.status_code == 401
+
+    r = requests.post(f"{test_server}/api/login", json={"password": "testuser"})
+    token = r.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(f"{test_server}/api/scrape/company/status", headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("status") == "idle"
+    assert data.get("phase") == "Idle"
+
+
+def test_company_scraper_post_requires_admin(test_server):
+    r = requests.post(f"{test_server}/api/login", json={"password": "testuser"})
+    token = r.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.post(
+        f"{test_server}/api/scrape/company",
+        json={"input": "ExampleCo"},
+        headers=headers,
+    )
+    assert r.status_code == 403
+
+
+def test_scrape_runs_status_endpoints_auth(test_server):
+    r = requests.get(f"{test_server}/api/scrape/status")
+    assert r.status_code == 401
+    r = requests.get(f"{test_server}/api/scrape/active")
+    assert r.status_code == 401
+    r = requests.get(f"{test_server}/api/scrape/status/00000000-0000-0000-0000-000000000001")
+    assert r.status_code == 401
+
+    r = requests.post(f"{test_server}/api/login", json={"password": "testuser"})
+    token = r.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(f"{test_server}/api/scrape/status", headers=headers)
+    assert r.status_code == 200
+    assert "runs" in r.json()
+    r = requests.get(f"{test_server}/api/scrape/active", headers=headers)
+    assert r.status_code == 200
+    assert "runs" in r.json()

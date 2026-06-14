@@ -14,21 +14,30 @@
   "target_companies": {
     "greenhouse": [
       "accenturefederalservices",
-      "rise8"
+      "kininsurance",
+      "rise8",
+      "youcom"
     ],
     "lever": [
+      "allegiantair",
       "analyticpartners",
       "artera-2",
       "biointellisense",
+      "brillio-2",
       "dnb",
       "hermeus",
       "hive",
+      "includedhealth",
       "jobgether",
+      "jumpcloud",
       "minted",
       "moonpay",
+      "offchainlabs",
       "pointclickcare",
       "saviynt",
+      "thinkahead",
       "trility",
+      "uvcyber",
       "verygoodsecurity",
       "whoop"
     ],
@@ -36,6 +45,7 @@
       "alchemy",
       "authzed",
       "g2i",
+      "govsignals",
       "hackerone",
       "helion",
       "mach",
@@ -45,10 +55,13 @@
       "openai",
       "perplexity",
       "qualified-health-pbc",
+      "rallyuxr",
       "real",
       "rivianvw.tech",
       "saronic",
+      "simspace-corporation",
       "treeswift",
+      "vanilla",
       "virtahealth",
       "vultr",
       "workos"

@@ -91,3 +91,70 @@ CREATE POLICY "Users can manage their own config"
   TO authenticated
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
+
+-- 3. Scrape run history (see scripts/scrape_runs.sql for standalone migration)
+CREATE TABLE IF NOT EXISTS public.scrape_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_email TEXT,
+  run_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stage TEXT,
+  input_value TEXT,
+  company_name TEXT,
+  ats_platform TEXT,
+  total_scraped INTEGER,
+  it_jobs_found INTEGER,
+  saved_to_db INTEGER,
+  error_message TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+  finished_at TIMESTAMPTZ,
+  duration_seconds INTEGER,
+  summary JSONB DEFAULT '{}'::JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_user_started
+  ON public.scrape_runs (user_id, started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_status
+  ON public.scrape_runs (status);
+
+ALTER TABLE public.scrape_runs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own scrape runs" ON public.scrape_runs;
+
+CREATE POLICY "Users can view own scrape runs"
+  ON public.scrape_runs
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- 4. Watched companies (see scripts/watched_companies.sql)
+CREATE TABLE IF NOT EXISTS public.watched_companies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_email TEXT,
+  input_value TEXT NOT NULL,
+  company_name TEXT,
+  careers_url TEXT,
+  ats_platform TEXT,
+  is_active BOOLEAN DEFAULT true,
+  scrape_frequency TEXT DEFAULT 'daily',
+  last_scraped_at TIMESTAMPTZ,
+  last_jobs_found INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_watched_companies_user_active
+  ON public.watched_companies (user_id, is_active);
+
+ALTER TABLE public.watched_companies ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users manage own watched companies" ON public.watched_companies;
+
+CREATE POLICY "Users manage own watched companies"
+  ON public.watched_companies
+  FOR ALL
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);

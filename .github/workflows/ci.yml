@@ -41,6 +41,7 @@ jobs:
             jobsearch_paths.py \
             jobsearch_webhook.py \
             notion_sqlite_mirror.py \
+            scrape_tracker.py \
             dashboard_server.py \
             find_and_scrape_jobs.py \
             save_to_notion.py \
