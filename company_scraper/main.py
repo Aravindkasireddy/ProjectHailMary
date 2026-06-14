@@ -67,6 +67,7 @@ def _setup_logging() -> None:
     root.addHandler(sh)
 
 
+def _parse_main_cli():
     """Parse ``[payload] [--run-id UUID]`` or ``--run-id UUID [payload]`` from argv."""
     args = sys.argv[1:]
     run_id = None

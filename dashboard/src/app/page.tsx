@@ -1995,14 +1995,13 @@ export default function Dashboard() {
               {past24hOnly ? 'Source 24h Jobs' : 'Run Sourcing Agent'}
             </button>
           )}
-          {authRole === 'admin' && (
-            <Link
-              href="/company-scraper"
-              className="inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95"
-            >
-              Company Scraper
-            </Link>
-          )}
+          {/* All signed-in users: watched companies + (on page) admin-only on-demand scrape */}
+          <Link
+            href="/company-scraper"
+            className="inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95"
+          >
+            Company Scraper
+          </Link>
         </div>
       </header>
 
