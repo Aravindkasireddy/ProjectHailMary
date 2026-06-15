@@ -394,10 +394,20 @@ export default function Dashboard() {
         const token = session.access_token;
         const userEmail = session.user.email || 'user@hailmary.ai';
         const role = userEmail === 'admin@hailmary.ai' ? 'admin' : 'user';
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('maas_auth_token', token);
+          localStorage.setItem('maas_auth_email', userEmail);
+          localStorage.setItem('maas_auth_role', role);
+        }
         setAuthToken(token);
         setAuthEmail(userEmail);
         setAuthRole(role);
       } else {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('maas_auth_token');
+          localStorage.removeItem('maas_auth_email');
+          localStorage.removeItem('maas_auth_role');
+        }
         setAuthToken(null);
         setAuthEmail(null);
         setAuthRole(null);
