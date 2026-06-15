@@ -22,7 +22,7 @@ def _extract_job_links(page) -> List[str]:
     )
 
 
-def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 8) -> List[Dict[str, Any]]:
+def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 24) -> List[Dict[str, Any]]:
     time.sleep(2)
     seen: set[str] = set()
     rows: List[Dict[str, Any]] = []

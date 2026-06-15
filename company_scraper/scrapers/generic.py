@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+from company_scraper.constants import GENERIC_LISTING_LINK_CAP, MAX_GENERIC_JOBS
 from company_scraper.http_utils import get_session, request_with_retry
 
 _JOB_HREF = re.compile(
@@ -112,10 +113,13 @@ def fetch_single_job_page(job_url: str, company_hint: str = "") -> List[Dict[str
         return []
 
 
-def fetch_jobs(careers_url: str, company_hint: str = "", max_jobs: int = 40) -> List[Dict[str, Any]]:
+def fetch_jobs(careers_url: str, company_hint: str = "", max_jobs: Optional[int] = None) -> List[Dict[str, Any]]:
+    if max_jobs is None:
+        max_jobs = MAX_GENERIC_JOBS
     if not _robots_allowed(careers_url):
         return []
-    links = _collect_listing_links(careers_url, max_links=max(80, max_jobs * 4))
+    cap = min(GENERIC_LISTING_LINK_CAP, max(200, max_jobs * 4))
+    links = _collect_listing_links(careers_url, max_links=cap)
     rows: List[Dict[str, Any]] = []
     for u in links:
         if len(rows) >= max_jobs:

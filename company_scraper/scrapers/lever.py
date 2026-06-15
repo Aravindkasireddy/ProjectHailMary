@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from company_scraper.http_utils import get_session, request_with_retry
+
+
+def board_url_from_job_or_listing(url: str) -> str:
+    """``jobs.lever.co/<company>/<posting>`` → ``jobs.lever.co/<company>`` (full board)."""
+    p = urlparse((url or "").strip())
+    if "lever.co" not in (p.netloc or "").lower():
+        return (url or "").strip().rstrip("/")
+    parts = [x for x in (p.path or "").split("/") if x]
+    if len(parts) <= 1:
+        return f"{p.scheme}://{p.netloc}/{parts[0]}".rstrip("/") if parts else (url or "").strip().rstrip("/")
+    return f"{p.scheme}://{p.netloc}/{parts[0]}".rstrip("/")
 
 
 def _slug(url: str) -> Optional[str]:
@@ -18,6 +28,7 @@ def _slug(url: str) -> Optional[str]:
 
 
 def fetch_jobs(careers_or_job_url: str, company_hint: str = "") -> List[Dict[str, Any]]:
+    careers_or_job_url = board_url_from_job_or_listing(careers_or_job_url)
     slug = _slug(careers_or_job_url)
     if not slug:
         return []
@@ -56,8 +67,4 @@ def fetch_jobs(careers_or_job_url: str, company_hint: str = "") -> List[Dict[str
                 "department": str(team) if team else "",
             }
         )
-    m = re.search(r"/([a-f0-9-]{20,})", careers_or_job_url, re.I)
-    if m:
-        pid = m.group(1)
-        out = [x for x in out if pid in x["job_url"]]
     return out

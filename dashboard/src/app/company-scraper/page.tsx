@@ -626,7 +626,10 @@ export default function CompanyScraperPage() {
             <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
               Company Job Scraper
             </h1>
-            <p className="text-xs text-slate-400">On-demand ATS scrape → Supabase jobs</p>
+            <p className="text-xs text-slate-400">
+              Paste a company name, careers site, or a single job URL — we pull open roles, keep IT-related titles,
+              and save to your Supabase jobs table.
+            </p>
           </div>
         </div>
 
@@ -654,7 +657,7 @@ export default function CompanyScraperPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={isCompanyScrapeRunning}
-            placeholder="Enter company name or careers URL..."
+            placeholder="Company name, careers URL, or job posting URL..."
             className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-600/50 focus:border-violet-500 transition-all disabled:opacity-50"
           />
           {authRole === 'admin' ? (

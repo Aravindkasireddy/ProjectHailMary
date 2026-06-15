@@ -291,13 +291,9 @@ _watched_scrape_inflight_lock = threading.Lock()
 
 
 def _watched_hint_from_url(url: str) -> str:
-    try:
-        parts = (urllib.parse.urlparse(url or "").netloc or "").lower().split(".")
-        if parts:
-            return parts[0].replace("-", " ").title()
-    except Exception:
-        pass
-    return ""
+    from company_scraper.detector import brand_label_from_careers_url
+
+    return brand_label_from_careers_url(url or "") or ""
 
 
 def resolve_watched_company_input(raw: str):

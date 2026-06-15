@@ -19,7 +19,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Any
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -91,17 +91,14 @@ def _parse_main_cli():
     return run_id, raw.strip()
 
 
-def _company_hint_from_url(url: str) -> str:
-    try:
-        parts = (urlparse(url).netloc or "").lower().split(".")
-        if parts:
-            return parts[0].replace("-", " ").title()
-    except Exception:
-        pass
-    return ""
-
-
-def _scrape_listing(careers_url: str, company_hint: str, ats: str):
+def _scrape_listing(
+    careers_url: str,
+    company_hint: str,
+    ats: str,
+    *,
+    max_generic_jobs: int = 40,
+    max_workday_pages: int = 24,
+):
     from company_scraper.scrapers import greenhouse, generic, icims, lever, workday
 
     if ats == "greenhouse":
@@ -109,10 +106,71 @@ def _scrape_listing(careers_url: str, company_hint: str, ats: str):
     if ats == "lever":
         return lever.fetch_jobs(careers_url, company_hint)
     if ats == "workday":
-        return workday.fetch_jobs(careers_url, company_hint)
+        return workday.fetch_jobs(careers_url, company_hint, max_pages=max_workday_pages)
     if ats == "icims":
         return icims.fetch_jobs(careers_url, company_hint)
-    return generic.fetch_jobs(careers_url, company_hint)
+    return generic.fetch_jobs(careers_url, company_hint, max_jobs=max_generic_jobs)
+
+
+def _careers_listing_url_plan(primary: str) -> list[str]:
+    from company_scraper.detector import listing_url_candidates_from_careers_url
+
+    p = (primary or "").strip().rstrip("/")
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in [p] + listing_url_candidates_from_careers_url(p):
+        u = u.strip().rstrip("/")
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _best_listing_batch(
+    urls: list[str],
+    company_hint: str,
+    log: logging.Logger,
+    *,
+    max_generic_jobs: int,
+    max_workday_pages: int,
+) -> tuple[list, str, str]:
+    """Try several listing URLs; return the batch with the most rows (dedupe by job_url)."""
+    from company_scraper.constants import MAX_LISTING_URL_ATTEMPTS
+    from company_scraper.detector import detect_ats
+
+    best: list = []
+    best_url = ""
+    best_ats = "generic"
+    seen_try: set[str] = set()
+    for url in urls[:MAX_LISTING_URL_ATTEMPTS]:
+        url = (url or "").strip().rstrip("/")
+        if not url or url in seen_try:
+            continue
+        seen_try.add(url)
+        ats_c = detect_ats(url)
+        try:
+            batch = _scrape_listing(
+                url,
+                company_hint,
+                ats_c,
+                max_generic_jobs=max_generic_jobs,
+                max_workday_pages=max_workday_pages,
+            )
+        except Exception as e:
+            log.info("listing scrape failed %s (%s): %s", url, ats_c, e)
+            batch = []
+        by_url: dict[str, Any] = {}
+        for row in batch:
+            ju = (row.get("job_url") or "").strip()
+            if ju:
+                by_url[ju] = row
+        deduped = list(by_url.values())
+        if len(deduped) > len(best):
+            best = deduped
+            best_url = url
+            best_ats = ats_c
+            log.info("best listing so far: %s jobs from %s (%s)", len(best), url, ats_c)
+    return best, best_url, best_ats
 
 
 def run(input_str: str, scrape_run_id=None):
@@ -150,7 +208,13 @@ def run(input_str: str, scrape_run_id=None):
         print(json.dumps(summary))
         return summary
 
-    from company_scraper.detector import detect_ats, detect_input_type
+    from company_scraper.constants import MAX_GENERIC_JOBS, MAX_WORKDAY_PAGES
+    from company_scraper.detector import (
+        brand_label_from_careers_url,
+        detect_ats,
+        detect_input_type,
+        listing_url_candidates_from_job_url,
+    )
     from company_scraper.discovery import find_careers_url
     from company_scraper.filters import is_it_job
     from company_scraper.publisher import upsert_jobs
@@ -177,11 +241,11 @@ def run(input_str: str, scrape_run_id=None):
             return summary
     elif kind == "careers_url":
         careers_url = raw.rstrip("/")
-        company_hint = _company_hint_from_url(careers_url)
+        company_hint = brand_label_from_careers_url(careers_url)
         summary["company"] = company_hint
     else:
         careers_url = raw
-        company_hint = _company_hint_from_url(raw)
+        company_hint = brand_label_from_careers_url(raw)
 
     ats = detect_ats(careers_url)
     summary["careers_url"] = careers_url
@@ -190,28 +254,50 @@ def run(input_str: str, scrape_run_id=None):
     _emit_progress("scraping", tracker)
 
     jobs: list = []
+    max_g = MAX_GENERIC_JOBS
+    max_wd = MAX_WORKDAY_PAGES
     try:
         if kind == "job_url":
+            summary["company"] = company_hint or brand_label_from_careers_url(raw) or summary["company"]
+            hint = company_hint or brand_label_from_careers_url(raw)
             ats_job = detect_ats(raw)
             summary["ats_platform"] = ats_job
             if ats_job == "greenhouse":
-                jobs = greenhouse.fetch_jobs(raw, company_hint or _company_hint_from_url(raw))
+                jobs = greenhouse.fetch_jobs(raw, hint)
             elif ats_job == "lever":
-                jobs = lever.fetch_jobs(raw, company_hint or _company_hint_from_url(raw))
+                jobs = lever.fetch_jobs(raw, hint)
             else:
-                hint = company_hint or _company_hint_from_url(raw)
-                jobs = generic.fetch_single_job_page(raw, hint)
+                plan = listing_url_candidates_from_job_url(raw)
+                jobs, win_u, win_ats = _best_listing_batch(
+                    plan, hint, log, max_generic_jobs=max_g, max_workday_pages=max_wd
+                )
+                if jobs:
+                    summary["careers_url"] = win_u or raw
+                    summary["ats_platform"] = win_ats
+                else:
+                    jobs = generic.fetch_single_job_page(raw, hint)
+                    summary["careers_url"] = raw
+                    summary["ats_platform"] = detect_ats(raw)
         else:
-            jobs = _scrape_listing(careers_url, company_hint, ats)
-            if not jobs and ats != "generic":
-                log.warning("listing empty for %s; trying generic fallback", ats)
-                jobs = generic.fetch_jobs(careers_url, company_hint)
+            plan = _careers_listing_url_plan(careers_url)
+            jobs, win_u, win_ats = _best_listing_batch(
+                plan, company_hint, log, max_generic_jobs=max_g, max_workday_pages=max_wd
+            )
+            if win_u:
+                summary["careers_url"] = win_u
+            if jobs:
+                summary["ats_platform"] = win_ats
+            if not jobs:
+                log.warning("multi-listing scrape empty; generic fallback on %s", careers_url)
+                jobs = generic.fetch_jobs(careers_url, company_hint, max_jobs=max_g)
                 summary["ats_platform"] = "generic"
     except Exception as e:
         errors.append(str(e))
         log.exception("scrape failed")
         try:
-            jobs = generic.fetch_jobs(careers_url, company_hint) if careers_url else []
+            jobs = (
+                generic.fetch_jobs(careers_url, company_hint, max_jobs=max_g) if careers_url else []
+            )
             summary["ats_platform"] = "generic"
         except Exception as e2:
             errors.append(str(e2))

@@ -43,17 +43,23 @@ def _slug_from_company(name: str) -> str:
 
 def _candidate_urls(company_name: str) -> List[str]:
     slug = _slug_from_company(company_name)
-    base = company_name.strip().lower().replace(" ", "")
+    compact = company_name.strip().lower().replace(" ", "")
+    parts = [p for p in re.split(r"[^a-zA-Z0-9]+", company_name.strip().lower()) if p]
+    first = parts[0] if parts else ""
     roots = [
         f"https://{slug}.greenhouse.io",
         f"https://boards.greenhouse.io/{slug}",
         f"https://jobs.lever.co/{slug}",
         f"https://{slug}.myworkdayjobs.com",
-        f"https://careers.{base}.com",
-        f"https://www.{base}.com/careers",
-        f"https://{base}.com/careers",
+        f"https://careers.{slug}.com",
+        f"https://jobs.{slug}.com",
+        f"https://careers.{compact}.com",
+        f"https://jobs.{compact}.com",
+        f"https://careers.{first}.com" if first and first not in (slug, compact) else "",
+        f"https://www.{compact}.com/careers",
+        f"https://{compact}.com/careers",
     ]
-    return roots
+    return [u for u in roots if u]
 
 
 def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> Optional[str]:

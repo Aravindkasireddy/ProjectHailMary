@@ -9,6 +9,22 @@ from urllib.parse import urlparse
 from company_scraper.http_utils import get_session, request_with_retry
 
 
+def board_url_from_job_or_listing(url: str) -> str:
+    """
+    If ``url`` points at a single Greenhouse posting (/jobs/<id>/...), strip to the board root
+    so the public API returns every open role on that board.
+    """
+    u = (url or "").strip().rstrip("/")
+    if "greenhouse.io" not in u.lower():
+        return u
+    parsed = urlparse(u)
+    path = parsed.path or ""
+    new_path = re.sub(r"/jobs/\d+(?:/[^/?#]*)?$", "", path, flags=re.I)
+    if new_path == path:
+        return u
+    return f"{parsed.scheme}://{parsed.netloc}{new_path}".rstrip("/") or f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _slug_from_url(url: str) -> Optional[str]:
     p = urlparse(url)
     host = (p.netloc or "").lower()
@@ -23,6 +39,7 @@ def _slug_from_url(url: str) -> Optional[str]:
 
 
 def fetch_jobs(careers_or_job_url: str, company_hint: str = "") -> List[Dict[str, Any]]:
+    careers_or_job_url = board_url_from_job_or_listing(careers_or_job_url)
     slug = _slug_from_url(careers_or_job_url)
     if not slug:
         return []
@@ -58,10 +75,4 @@ def fetch_jobs(careers_or_job_url: str, company_hint: str = "") -> List[Dict[str
                 "requirement_id": str(j.get("internal_job_id") or j.get("id") or ""),
             }
         )
-    parsed_u = urlparse(careers_or_job_url)
-    if re.search(r"/jobs/\d+", (parsed_u.path or ""), re.I):
-        jid = re.search(r"/jobs/(\d+)", parsed_u.path, re.I)
-        if jid:
-            want = jid.group(1)
-            out = [x for x in out if want in x["job_url"]]
     return out

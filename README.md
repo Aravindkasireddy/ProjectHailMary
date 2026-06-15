@@ -13,7 +13,7 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 | `find_and_scrape_jobs.py` | Yahoo `site:` discovery + ATS scrape → `scraped_jobs.json` |
 | `scripts/scrape_and_filter_candidates.py` | Re-scrape / validate + red-flag prefilter → `active_candidate_jobs.json`, `failed_candidate_jobs.json` |
 | `scripts/classify_and_save.py` | Gemini (optional) + rules → `approved_jobs.json` |
-| `company_scraper/` | On-demand **company-targeted** scrape (`POST /api/scrape/company`, poll `GET /api/scrape/company/status`) → **direct upsert** to Supabase `jobs` (no pipeline JSON files) |
+| `company_scraper/` | On-demand **company-targeted** scrape: paste **company name**, **careers URL**, or **one job URL** → discovers listing pages (ATS + fallbacks), collects up to hundreds of roles, filters **IT-related** titles, upserts to Supabase `jobs` via `POST /api/scrape/company` (poll `GET /api/scrape/company/status`) |
 | `dashboard_server.py` | API on **port 8080**, scheduler, Notion + webhook helpers; scrape history **`GET /api/scrape/status`**, **`GET /api/scrape/status/<id>`**, **`GET /api/scrape/active`** |
 | `dashboard/` | Next.js UI (default **port 3000**); **Company Scraper** UI at `/company-scraper` |
 | `Job_classifier_prompt.txt` | Large classifier instructions (policy blocks can be rebuilt from `policy_config.json`) |
