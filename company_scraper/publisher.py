@@ -6,12 +6,15 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+from company_scraper.url_normalize import canonical_job_url
+
+
 def _row(
     job: Dict[str, Any],
     user_id: str,
     ats_platform: str,
 ) -> Dict[str, Any]:
-    url = job.get("job_url") or ""
+    url = canonical_job_url(job.get("job_url") or "")
     payload = dict(job.get("apply_decision_payload") or {})
     payload.setdefault("source", "company_scraper")
     payload["ats_platform"] = ats_platform
@@ -68,6 +71,13 @@ def upsert_jobs(
 
     supabase = get_supabase_client()
     rows = [_row(j, user_id, ats_platform) for j in jobs if j.get("job_url")]
+    # Dedupe within batch (same canonical URL twice in one run)
+    by_canon: dict[str, dict] = {}
+    for r in rows:
+        c = r.get("job_url") or ""
+        if c:
+            by_canon[c] = r
+    rows = list(by_canon.values())
     if not rows:
         return 0
 

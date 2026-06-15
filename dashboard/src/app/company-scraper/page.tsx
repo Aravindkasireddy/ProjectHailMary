@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Briefcase, ChevronLeft, ExternalLink, Lock, LogOut, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
+import { canonicalJobUrl, dedupeJobsByCanonicalUrl } from '../../lib/jobUrl';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
@@ -15,7 +16,25 @@ interface CompanyScrapeSummary {
   it_jobs_found?: number;
   saved_to_db?: number;
   errors?: string[];
+  transcript?: string[];
+  listing_attempts?: { url: string; ats: string; jobs_found: number; error?: string | null; picked?: boolean }[];
+  listing_winner_url?: string;
+  it_prefs_effective?: Record<string, unknown>;
 }
+
+interface CompanyScraperItPrefs {
+  min_it_score: number;
+  strict_engineering_only: boolean;
+  include_data_roles: boolean;
+  include_analyst_roles: boolean;
+}
+
+const DEFAULT_IT_PREFS: CompanyScraperItPrefs = {
+  min_it_score: 0.28,
+  strict_engineering_only: false,
+  include_data_roles: true,
+  include_analyst_roles: true,
+};
 
 interface CompanyScrapeStatus {
   status: string;
@@ -111,6 +130,9 @@ export default function CompanyScraperPage() {
   const [watchAddedBanner, setWatchAddedBanner] = useState<string | null>(null);
   const [watchedCompanies, setWatchedCompanies] = useState<WatchedCompany[]>([]);
   const [watchedListLoading, setWatchedListLoading] = useState(false);
+  const [itPrefs, setItPrefs] = useState<CompanyScraperItPrefs>(DEFAULT_IT_PREFS);
+  const [itPrefsMessage, setItPrefsMessage] = useState<string | null>(null);
+  const [itPrefsLoading, setItPrefsLoading] = useState(false);
 
   const handling401Ref = useRef(false);
   const handleLogoutRef = useRef<() => Promise<void>>(async () => {});
@@ -181,6 +203,27 @@ export default function CompanyScraperPage() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!authToken) return;
+    (async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data, error } = await supabase
+          .from('user_configs')
+          .select('company_scraper_it')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (error || !data?.company_scraper_it || typeof data.company_scraper_it !== 'object') return;
+        setItPrefs({ ...DEFAULT_IT_PREFS, ...(data.company_scraper_it as Partial<CompanyScraperItPrefs>) });
+      } catch {
+        /* column may not exist until migration */
+      }
+    })();
+  }, [authToken]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -280,7 +323,7 @@ export default function CompanyScraperPage() {
         setTableJobs([]);
         return;
       }
-      setTableJobs((data as CompanyJobRow[]) || []);
+      setTableJobs(dedupeJobsByCanonicalUrl((data as CompanyJobRow[]) || []));
     } finally {
       setTableLoading(false);
     }
@@ -344,7 +387,15 @@ export default function CompanyScraperPage() {
       const res = await fetch(`${API_BASE}/api/scrape/company`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: trimmedInput }),
+        body: JSON.stringify({
+          input: trimmedInput,
+          it_prefs: {
+            min_it_score: Number(itPrefs.min_it_score),
+            strict_engineering_only: itPrefs.strict_engineering_only,
+            include_data_roles: itPrefs.include_data_roles,
+            include_analyst_roles: itPrefs.include_analyst_roles,
+          },
+        }),
       });
       const raw = await res.text();
       let data: { success?: boolean; accepted?: boolean; message?: string } = {};
@@ -395,6 +446,46 @@ export default function CompanyScraperPage() {
       setScrapeError(hint);
     } finally {
       setScrapeLoading(false);
+    }
+  };
+
+  const saveItPrefs = async () => {
+    setItPrefsMessage(null);
+    setItPrefsLoading(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setItPrefsMessage('Sign in to save IT filter preferences.');
+        return;
+      }
+      const { error } = await supabase
+        .from('user_configs')
+        .update({
+          company_scraper_it: {
+            min_it_score: Number(itPrefs.min_it_score),
+            strict_engineering_only: itPrefs.strict_engineering_only,
+            include_data_roles: itPrefs.include_data_roles,
+            include_analyst_roles: itPrefs.include_analyst_roles,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id);
+      if (error) {
+        setItPrefsMessage(
+          error.message.includes('column') || error.code === '42703'
+            ? 'Database missing company_scraper_it column. Run scripts/add_company_scraper_it_column.sql in Supabase.'
+            : error.message
+        );
+        return;
+      }
+      setItPrefsMessage('Saved. Next scrape will use these IT rules.');
+      window.setTimeout(() => setItPrefsMessage(null), 5000);
+    } catch (e) {
+      setItPrefsMessage(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setItPrefsLoading(false);
     }
   };
 
@@ -688,6 +779,70 @@ export default function CompanyScraperPage() {
         </section>
 
         <section className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-2xl shadow-xl space-y-4">
+          <h2 className="text-sm font-bold text-white tracking-tight">IT filter (company scraper)</h2>
+          <p className="text-xs text-slate-400">
+            Tiered scoring (strong tech titles vs softer &quot;analyst&quot; signals). Stricter = fewer false positives.
+            Saved to your Supabase <code className="text-slate-300">user_configs.company_scraper_it</code>.
+          </p>
+          <div className="grid sm:grid-cols-2 gap-4 text-xs">
+            <label className="block space-y-1">
+              <span className="text-slate-400">Min IT score (0–1)</span>
+              <input
+                type="number"
+                step={0.05}
+                min={0}
+                max={1}
+                value={itPrefs.min_it_score}
+                onChange={(e) =>
+                  setItPrefs((p) => ({ ...p, min_it_score: Math.min(1, Math.max(0, Number(e.target.value) || 0)) }))
+                }
+                className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-slate-100"
+              />
+            </label>
+            <div className="flex flex-col gap-2 justify-end">
+              <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={itPrefs.strict_engineering_only}
+                  onChange={(e) => setItPrefs((p) => ({ ...p, strict_engineering_only: e.target.checked }))}
+                  className="rounded border-slate-600"
+                />
+                Engineering-only (strong tech keywords)
+              </label>
+              <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={itPrefs.include_data_roles}
+                  onChange={(e) => setItPrefs((p) => ({ ...p, include_data_roles: e.target.checked }))}
+                  className="rounded border-slate-600"
+                />
+                Include data scientist / analyst titles
+              </label>
+              <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={itPrefs.include_analyst_roles}
+                  onChange={(e) => setItPrefs((p) => ({ ...p, include_analyst_roles: e.target.checked }))}
+                  className="rounded border-slate-600"
+                />
+                Include generic &quot;analyst&quot; (without engineer)
+              </label>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void saveItPrefs()}
+              disabled={itPrefsLoading}
+              className="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 disabled:opacity-50"
+            >
+              {itPrefsLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Save IT preferences'}
+            </button>
+            {itPrefsMessage && <span className="text-xs text-slate-400">{itPrefsMessage}</span>}
+          </div>
+        </section>
+
+        <section className="bg-slate-900/40 backdrop-blur-md border border-slate-800/80 p-6 rounded-2xl shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <h2 className="text-sm font-bold text-white tracking-tight">Watched Companies</h2>
             {watchedListLoading && <RefreshCw className="w-4 h-4 text-violet-400 animate-spin" />}
@@ -875,6 +1030,34 @@ export default function CompanyScraperPage() {
                   {companyStatus.duration_seconds != null ? `${companyStatus.duration_seconds}s` : '—'}
                 </span>
               </p>
+              {summary.listing_winner_url ? (
+                <p>
+                  <span className="text-slate-500">Listing used:</span>{' '}
+                  <span className="font-mono text-violet-300 break-all">{summary.listing_winner_url}</span>
+                </p>
+              ) : null}
+              {summary.listing_attempts && summary.listing_attempts.length > 0 && (
+                <div className="pt-2 border-t border-slate-800">
+                  <p className="text-slate-500 mb-1">Listing attempts</p>
+                  <div className="max-h-40 overflow-y-auto space-y-1 font-mono text-[10px] text-slate-400">
+                    {summary.listing_attempts.map((a, i) => (
+                      <div key={`${a.url}-${i}`} className="truncate" title={a.url}>
+                        {a.picked ? '★ ' : '  '}
+                        {a.ats} · {a.jobs_found} jobs
+                        {a.error ? ` · ${a.error}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {summary.transcript && summary.transcript.length > 0 && (
+                <div className="pt-2 border-t border-slate-800">
+                  <p className="text-slate-500 mb-1">Run transcript</p>
+                  <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap font-mono text-[10px] text-slate-400 bg-slate-950/80 rounded-lg p-2 border border-slate-800">
+                    {summary.transcript.join('\n')}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -908,7 +1091,7 @@ export default function CompanyScraperPage() {
                   </tr>
                 ) : (
                   tableJobs.map((row) => (
-                    <tr key={row.id || row.job_url} className="hover:bg-slate-800/10 transition-colors">
+                    <tr key={row.id || canonicalJobUrl(row.job_url)} className="hover:bg-slate-800/10 transition-colors">
                       <td className="py-3 px-4 font-medium text-slate-200 max-w-[200px] truncate" title={row.job_title}>
                         {row.job_title}
                       </td>

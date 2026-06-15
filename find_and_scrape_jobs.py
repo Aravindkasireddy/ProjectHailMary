@@ -2105,14 +2105,20 @@ def fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
 
 
 def normalize_job_url(url):
-    if not url:
-        return ""
+    """Same canonical form as company scraper / Supabase upserts (https, no query/hash)."""
     try:
-        p = urlparse(url)
-        path = p.path.rstrip("/")
-        return f"{p.scheme}://{p.netloc.lower()}{path}".lower()
+        from company_scraper.url_normalize import canonical_job_url
+
+        return canonical_job_url(url or "")
     except Exception:
-        return (url or "").lower().strip()
+        if not url:
+            return ""
+        try:
+            p = urlparse(url)
+            path = p.path.rstrip("/")
+            return f"{p.scheme}://{p.netloc.lower()}{path}".lower()
+        except Exception:
+            return (url or "").lower().strip()
 
 
 def build_yahoo_queries(title, search_cfg):

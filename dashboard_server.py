@@ -355,6 +355,39 @@ def _parse_company_stdout_json_summary(blob: str):
     return None
 
 
+def _resolved_company_scraper_it_prefs(user_id, payload_prefs):
+    """Merge DB ``company_scraper_it`` with optional per-request overrides from JSON body."""
+    from company_scraper.filters import merge_it_prefs
+
+    db_prefs: dict = {}
+    if _valid_scrape_tracker_user_id(user_id):
+        try:
+            from supabase_client import get_supabase_client
+
+            r = (
+                get_supabase_client()
+                .table("user_configs")
+                .select("company_scraper_it")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            rows = r.data or []
+            if rows:
+                raw = rows[0].get("company_scraper_it")
+                if isinstance(raw, dict):
+                    db_prefs = raw
+        except Exception:
+            pass
+    merged = merge_it_prefs(db_prefs)
+    if isinstance(payload_prefs, dict):
+        for k, v in payload_prefs.items():
+            if k in merged:
+                merged[k] = v
+        merged = merge_it_prefs(merged)
+    return merged
+
+
 def _watched_company_scrape_thread(row: dict):
     """Run company_scraper/main.py for a watched row; update last_jobs_found; clear inflight."""
     row_id = str(row.get("id") or "")
@@ -3245,8 +3278,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 try:
                     from scrape_tracker import ScrapeTracker
 
-                    tr = ScrapeTracker(user_id, email or "", "company_targeted", input_value=inp)
-                    scrape_run_id = tr.start() or None
+                    comp_scrape_run = ScrapeTracker(user_id, email or "", "company_targeted", input_value=inp)
+                    scrape_run_id = comp_scrape_run.start() or None
                 except Exception:
                     scrape_run_id = None
             with _company_scraper_states_lock:
@@ -3279,7 +3312,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
 
-            b64 = base64.b64encode(json.dumps({"input": inp}).encode("utf-8")).decode("ascii")
+            b64 = base64.b64encode(
+                json.dumps(
+                    {
+                        "input": inp,
+                        "it_prefs": _resolved_company_scraper_it_prefs(
+                            user_id, payload.get("it_prefs") if isinstance(payload.get("it_prefs"), dict) else {}
+                        ),
+                    }
+                ).encode("utf-8")
+            ).decode("ascii")
             threading.Thread(
                 target=company_scraper_worker,
                 args=(b64, email, user_id, email_key, scrape_run_id, inp),
