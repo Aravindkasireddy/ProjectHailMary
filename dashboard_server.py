@@ -2239,7 +2239,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def get_auth_email(self):
         payload = self.get_auth_payload()
         if payload:
-            return payload.get("email")
+            email = payload.get("email")
+            if not email:
+                meta = payload.get("user_metadata")
+                if isinstance(meta, dict):
+                    email = meta.get("email")
+            if email:
+                return email
         return "admin@hailmary.ai"
 
     def get_auth_user_id(self):
@@ -2254,6 +2260,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             role = payload.get("role")
             if role == "authenticated":
                 email = payload.get("email")
+                if not email:
+                    meta = payload.get("user_metadata")
+                    if isinstance(meta, dict):
+                        email = meta.get("email")
                 # Map admin user specifically or anyone authenticated to user role
                 if email == "admin@hailmary.ai":
                     return "admin"

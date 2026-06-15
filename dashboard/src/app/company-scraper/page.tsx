@@ -38,6 +38,9 @@ interface WatchedCompany {
   scrape_frequency: string | null;
   last_scraped_at: string | null;
   last_jobs_found: number | null;
+  is_active?: boolean;
+}
+
 interface CompanyJobRow {
   id?: string;
   job_title: string;
@@ -333,22 +336,53 @@ export default function CompanyScraperPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: trimmedInput }),
       });
-      const data = await res.json().catch(() => ({}));
+      const raw = await res.text();
+      let data: { success?: boolean; accepted?: boolean; message?: string } = {};
+      try {
+        data = raw ? (JSON.parse(raw) as typeof data) : {};
+      } catch {
+        setScrapeError(
+          `Bad response (${res.status}) from API. First line: ${raw.split('\n')[0]?.slice(0, 120) || '(empty)'} — check ${API_BASE} and dashboard_server logs.`
+        );
+        return;
+      }
       if (res.status === 403) {
-        setScrapeError((data as { message?: string }).message || 'Admin access required.');
+        setScrapeError(data.message || 'Admin access required.');
         return;
       }
       if (res.status === 409) {
-        setScrapeError((data as { message?: string }).message || 'A scrape is already running.');
+        setScrapeError(data.message || 'A scrape is already running.');
         return;
       }
-      if (!res.ok || !(data as { success?: boolean }).success) {
-        setScrapeError((data as { message?: string }).message || 'Failed to start company scrape.');
+      const started =
+        res.ok && (data.success === true || data.accepted === true);
+      if (started) {
+        await refreshStatus();
         return;
       }
-      await refreshStatus();
-    } catch {
-      setScrapeError('Failed to start company scrape.');
+      setScrapeError(
+        data.message ||
+          `Could not start scrape (HTTP ${res.status}). API: ${API_BASE}. Is dashboard_server running and reachable?`
+      );
+    } catch (e) {
+      const api = API_BASE;
+      const isLocalApi = /localhost|127\.0\.0\.1/i.test(api);
+      const pageIsLocal =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      let hint: string;
+      if (e instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(String(e))) {
+        if (isLocalApi && !pageIsLocal) {
+          hint = `This page is not on localhost, but the app is configured to call ${api}. Browsers block that. Set NEXT_PUBLIC_API_URL to your real API base URL (same host as the dashboard or a dedicated API host), rebuild, and redeploy.`;
+        } else if (isLocalApi && pageIsLocal) {
+          hint = `Nothing is responding at ${api}. From the repo root run: JOBSEARCH_DASHBOARD_PORT=8080 python3 dashboard_server.py (or match the port in NEXT_PUBLIC_API_URL), then retry.`;
+        } else {
+          hint = `Cannot reach ${api}: ${e instanceof Error ? e.message : 'Failed to fetch'}. Confirm the API is up and NEXT_PUBLIC_API_URL is correct.`;
+        }
+      } else {
+        hint = e instanceof Error ? e.message : 'Request failed';
+      }
+      setScrapeError(hint);
     } finally {
       setScrapeLoading(false);
     }

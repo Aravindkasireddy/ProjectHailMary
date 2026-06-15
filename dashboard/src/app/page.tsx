@@ -1841,21 +1841,29 @@ export default function Dashboard() {
       <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-600/10 rounded-full filter blur-[80px] pointer-events-none" />
 
       {/* Top Navbar */}
-      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-xl shadow-lg shadow-violet-500/20">
+      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="p-2 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-xl shadow-lg shadow-violet-500/20 shrink-0">
             <Briefcase className="w-6 h-6 text-white" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
               MAAS Sourcing Agent
             </h1>
             <p className="text-xs text-slate-400">Master Classifier Policy Dashboard</p>
+            <Link
+              href="/company-scraper"
+              className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-300 hover:text-white bg-violet-950/50 hover:bg-violet-800/50 border border-violet-600/50 hover:border-violet-500 px-3 py-1.5 rounded-lg transition-colors shadow-sm shadow-violet-900/20"
+            >
+              <Globe className="w-3.5 h-3.5 shrink-0" />
+              <span>Company job scraper · watched employers</span>
+              <ChevronRight className="w-3.5 h-3.5 shrink-0 opacity-80" />
+            </Link>
           </div>
         </div>
 
-        {/* Integration Status Badges */}
-        <div className="flex items-center space-x-4">
+        {/* Integration status + actions (wrap so Company Scraper is not clipped on narrow viewports) */}
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 min-w-0 max-w-[min(100%,72rem)]">
 
           {/* Role Status Pill */}
           <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 shadow-inner">
@@ -1995,13 +2003,6 @@ export default function Dashboard() {
               {past24hOnly ? 'Source 24h Jobs' : 'Run Sourcing Agent'}
             </button>
           )}
-          {/* All signed-in users: watched companies + (on page) admin-only on-demand scrape */}
-          <Link
-            href="/company-scraper"
-            className="inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95"
-          >
-            Company Scraper
-          </Link>
         </div>
       </header>
 
@@ -2020,6 +2021,21 @@ export default function Dashboard() {
 
       {/* Main Layout Grid */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6 flex flex-col">
+
+        <div className="rounded-2xl border border-violet-800/40 bg-gradient-to-r from-violet-950/40 to-slate-900/40 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-slate-200">
+            <span className="font-semibold text-violet-200">Company scraper</span>
+            <span className="text-slate-500"> — </span>
+            <span className="text-slate-400">Watch employer career pages on a schedule, or run a one-off ATS scrape (admin).</span>
+          </p>
+          <Link
+            href="/company-scraper"
+            className="inline-flex shrink-0 items-center justify-center gap-1.5 self-start sm:self-auto px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white border border-violet-500/30 transition-colors"
+          >
+            Open company scraper
+            <ChevronRight className="w-4 h-4" />
+          </Link>
+        </div>
 
         {scraperStatus.status === 'failed' && scraperStatus.last_error && (
           <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl text-rose-200 text-xs font-mono overflow-y-auto max-h-40">
