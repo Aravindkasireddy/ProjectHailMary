@@ -15,7 +15,7 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 | `scripts/classify_and_save.py` | Gemini (optional) + rules → `approved_jobs.json` |
 | `company_scraper/` | On-demand **company-targeted** scrape: paste **company name**, **careers URL**, or **one job URL** → discovers listing pages (ATS + fallbacks), collects up to hundreds of roles, filters **IT-related** titles, upserts to Supabase `jobs` via `POST /api/scrape/company` (poll `GET /api/scrape/company/status`) |
 | `dashboard_server.py` | API on **port 8080**, scheduler, Notion + webhook helpers; scrape history **`GET /api/scrape/status`**, **`GET /api/scrape/status/<id>`**, **`GET /api/scrape/active`** |
-| `dashboard/` | Next.js UI (default **port 3000**); **Company Scraper** UI at `/company-scraper` |
+| `dashboard/` | Next.js UI (default **port 3000**); **Company Scraper** UI at `/company-scraper`. The main job board reads **`public.jobs` from Supabase** (local `*.json` files are pipeline staging until you upload/sync). Optional **official careers / ATS URLs only** filter: Settings → enable **Official careers / ATS links only** (stored in **`user_configs.search_official_career_job_urls_only`**); run **`scripts/add_search_official_career_job_urls_only.sql`** once if the column is missing. Logic is shared by `employer_job_url.py` and `dashboard/src/lib/employerJobUrl.ts`. |
 | `Job_classifier_prompt.txt` | Large classifier instructions (policy blocks can be rebuilt from `policy_config.json`) |
 | `config.json` | Target titles, scheduler, **search** tuning, optional `webhook_url` |
 | `policy_config.json` | Salary / experience / visa / clearance knobs for prompt rebuild |

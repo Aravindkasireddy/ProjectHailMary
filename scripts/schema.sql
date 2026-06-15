@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
   search_merge_previous_scrape BOOLEAN DEFAULT true,
   search_send_digest_only BOOLEAN DEFAULT true,
   search_max_digest_items INTEGER DEFAULT 10,
+  search_official_career_job_urls_only BOOLEAN DEFAULT false,
   policy_max_experience_years INTEGER DEFAULT 8,
   policy_min_salary_annual NUMERIC DEFAULT 80000,
   policy_min_salary_hourly NUMERIC DEFAULT 50,

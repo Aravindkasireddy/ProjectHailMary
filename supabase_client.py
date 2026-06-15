@@ -368,6 +368,35 @@ def upload_user_jobs(user_id: str, email: str):
             conn.close()
             
         records_to_upload = list(jobs_to_upload.values())
+
+        official_only = False
+        try:
+            cfg_res = (
+                supabase.table("user_configs")
+                .select("search_official_career_job_urls_only")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            cfg_rows = cfg_res.data or []
+            if cfg_rows:
+                official_only = bool(cfg_rows[0].get("search_official_career_job_urls_only"))
+        except Exception:
+            pass
+
+        if official_only:
+            from employer_job_url import is_official_company_careers_job_url
+
+            before_ct = len(records_to_upload)
+            records_to_upload = [
+                r for r in records_to_upload if is_official_company_careers_job_url(r.get("job_url") or "")
+            ]
+            dropped = before_ct - len(records_to_upload)
+            if dropped:
+                print(
+                    f"search_official_career_job_urls_only: excluded {dropped} non-official URLs from upload for {email}."
+                )
+
         if not records_to_upload:
             print(f"No local jobs found for user {email} to upload.")
             return True

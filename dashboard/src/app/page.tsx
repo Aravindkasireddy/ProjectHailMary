@@ -40,6 +40,8 @@ import LogConsole from '../../components/LogConsole';
 import SettingsPanel from '../../components/SettingsPanel';
 import PolicyPanel from '../../components/PolicyPanel';
 import { supabase } from '../supabaseClient';
+import { dedupeJobsByCanonicalUrl } from '../lib/jobUrl';
+import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
@@ -150,10 +152,16 @@ interface Config {
     send_digest_only?: boolean;
     max_digest_items?: number;
     jooble_api_key?: string;
+    official_career_job_urls_only?: boolean;
   };
 }
 
 /** Avoid replacing `jobs` every poll tick when nothing material changed (reduces list flicker). */
+function filterJobsOfficialCareersOnly(jobs: Job[], enabled: boolean): Job[] {
+  if (!enabled) return jobs;
+  return jobs.filter((j) => isOfficialCompanyCareersJobUrl(j.job_url || ''));
+}
+
 function jobListPollUnchanged(prev: Job[], next: Job[]): boolean {
   if (prev.length !== next.length) return false;
   for (let i = 0; i < prev.length; i++) {
@@ -258,6 +266,12 @@ export default function Dashboard() {
   const [staleCheckStatus, setStaleCheckStatus] = useState({ status: 'idle', progress: 0, total: 0, completed: 0, stale_found: 0 });
   const [showActiveOnly, setShowActiveOnly] = useState(true);
   const [past24hOnly, setPast24hOnly] = useState(false);
+  const [officialCareerUrlsOnly, setOfficialCareerUrlsOnly] = useState(false);
+  const officialCareerUrlsOnlyRef = useRef(false);
+
+  useEffect(() => {
+    officialCareerUrlsOnlyRef.current = officialCareerUrlsOnly;
+  }, [officialCareerUrlsOnly]);
 
   const handleLogoutRef = useRef<() => Promise<void>>(async () => {});
   const handling401Ref = useRef(false);
@@ -838,32 +852,24 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      // 1. Fetch Jobs from Supabase
-      const { data: jobsData, error: jobsError } = await supabase
-        .from('jobs')
-        .select('*')
-        .order('scraped_at', { ascending: false });
+      const [{ data: jobsData, error: jobsError }, { data: configData, error: configError }] = await Promise.all([
+        supabase.from('jobs').select('*').order('scraped_at', { ascending: false }),
+        supabase.from('user_configs').select('*').maybeSingle(),
+      ]);
 
-      if (jobsError) {
-        console.error('Error fetching jobs:', jobsError);
-      } else if (jobsData) {
-        setJobs(jobsData);
-      }
-
-      // 2. Fetch Config from Supabase
-      const { data: configData, error: configError } = await supabase
-        .from('user_configs')
-        .select('*')
-        .maybeSingle();
+      let officialOnly = false;
 
       if (configError) {
         console.error('Error fetching config:', configError);
       } else if (configData) {
         const dbJoobleKey = configData.jooble_api_key || '';
-        const fallbackJoobleKey = (configData.target_companies && typeof configData.target_companies === 'object')
-          ? (configData.target_companies as any).jooble_api_key || ''
-          : '';
-        const joobleKey = dbJoobleKey || fallbackJoobleKey;
+        const fallbackJoobleKey =
+          configData.target_companies && typeof configData.target_companies === 'object'
+            ? (configData.target_companies as Record<string, unknown>).jooble_api_key || ''
+            : '';
+        const joobleKey = (dbJoobleKey || fallbackJoobleKey) as string;
+
+        officialOnly = Boolean(configData.search_official_career_job_urls_only);
 
         const mappedConfig: Config = {
           target_titles: configData.target_titles || [],
@@ -880,6 +886,7 @@ export default function Dashboard() {
             send_digest_only: configData.search_send_digest_only ?? true,
             max_digest_items: configData.search_max_digest_items ?? 10,
             jooble_api_key: joobleKey,
+            official_career_job_urls_only: officialOnly,
           },
         };
         setConfig(mappedConfig);
@@ -889,9 +896,10 @@ export default function Dashboard() {
         setSchedulerMinute(configData.scheduler_run_at_minute ?? 0);
         setSchedulerEnabled(configData.scheduler_enabled ?? true);
         setSendDigestOnly(configData.search_send_digest_only ?? true);
+        setOfficialCareerUrlsOnly(officialOnly);
         setJoobleApiKeyInput(joobleKey);
       } else {
-        // Create an empty config for new users
+        setOfficialCareerUrlsOnly(false);
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData?.session?.user) {
           const defaultTitles = [
@@ -902,20 +910,24 @@ export default function Dashboard() {
             'DevSecOps',
             'Site Reliability Engineer (SRE)',
             'Continuous Integration (CI/CD)',
-            'Data Platform Engineer'
+            'Data Platform Engineer',
           ];
           await supabase.from('user_configs').insert({
             user_id: sessionData.session.user.id,
-            target_titles: defaultTitles
+            target_titles: defaultTitles,
           });
         }
       }
 
-      // Check Notion status
+      if (jobsError) {
+        console.error('Error fetching jobs:', jobsError);
+      } else if (jobsData) {
+        const deduped = dedupeJobsByCanonicalUrl(jobsData as Job[]);
+        setJobs(filterJobsOfficialCareersOnly(deduped, officialOnly));
+      }
+
       checkNotionStatus();
-      // Check scraper status
       checkScraperStatus();
-      // Check stale status
       checkStaleStatus();
     } catch {
       showStatus('Failed to communicate with Supabase database.', 'error');
@@ -934,8 +946,12 @@ export default function Dashboard() {
 
       if (error) throw error;
       if (data) {
-        setNewJobs(data);
-        setNewJobsCount(data.length);
+        const d = filterJobsOfficialCareersOnly(
+          dedupeJobsByCanonicalUrl(data as Job[]),
+          officialCareerUrlsOnlyRef.current
+        );
+        setNewJobs(d);
+        setNewJobsCount(d.length);
       }
     } catch (e) {
       console.error('Failed to fetch new jobs', e);
@@ -1016,14 +1032,16 @@ export default function Dashboard() {
           .then((res) => res.ok && res.json())
           .then((data: Job[] | undefined) => {
             if (!data) return;
+            const deduped = dedupeJobsByCanonicalUrl(data);
+            const incoming = filterJobsOfficialCareersOnly(deduped, officialCareerUrlsOnlyRef.current);
             const prev = jobsForPollRef.current;
-            if (jobListPollUnchanged(prev, data)) return;
+            if (jobListPollUnchanged(prev, incoming)) return;
             if (prev.length > 0) {
               const oldIds = new Set(prev.map((j) => j.job_url));
-              const newlyAdded = data.filter((j) => !oldIds.has(j.job_url)).length;
+              const newlyAdded = incoming.filter((j) => !oldIds.has(j.job_url)).length;
               setNewJobsCount(newlyAdded);
             }
-            setJobs(data);
+            setJobs(incoming);
           })
           .catch(() => {
             // Silence
@@ -1161,7 +1179,9 @@ export default function Dashboard() {
           .order('scraped_at', { ascending: false })
           .then(({ data }) => {
             if (!data) return;
-            setJobs((prev) => (jobListPollUnchanged(prev, data as Job[]) ? prev : (data as Job[])));
+            const deduped = dedupeJobsByCanonicalUrl(data as Job[]);
+            const incoming = filterJobsOfficialCareersOnly(deduped, officialCareerUrlsOnlyRef.current);
+            setJobs((prev) => (jobListPollUnchanged(prev, incoming) ? prev : incoming));
           });
       }, 2000);
     }
@@ -1180,14 +1200,23 @@ export default function Dashboard() {
         (payload) => {
           if (payload.eventType === 'INSERT') {
             const newJob = payload.new as Job;
-            setJobs(prev => {
-              if (prev.some(j => j.job_url === newJob.job_url)) return prev;
+            if (officialCareerUrlsOnlyRef.current && !isOfficialCompanyCareersJobUrl(newJob.job_url || '')) {
+              return;
+            }
+            setJobs((prev) => {
+              if (prev.some((j) => j.job_url === newJob.job_url)) return prev;
               return [newJob, ...prev];
             });
-            setNewJobsCount(c => c + 1);
+            setNewJobsCount((c) => c + 1);
           } else if (payload.eventType === 'UPDATE') {
             const updatedJob = payload.new as Job;
-            setJobs(prev => prev.map(j => j.job_url === updatedJob.job_url ? { ...j, ...updatedJob } : j));
+            setJobs((prev) => {
+              const merged = prev.map((j) => (j.job_url === updatedJob.job_url ? { ...j, ...updatedJob } : j));
+              if (officialCareerUrlsOnlyRef.current && !isOfficialCompanyCareersJobUrl(updatedJob.job_url || '')) {
+                return merged.filter((j) => j.job_url !== updatedJob.job_url);
+              }
+              return merged;
+            });
           } else if (payload.eventType === 'DELETE') {
             const deletedJob = payload.old as { job_url?: string };
             setJobs(prev => prev.filter(j => j.job_url !== deletedJob.job_url));
@@ -1258,8 +1287,9 @@ export default function Dashboard() {
       search: {
         ...(config.search || {}),
         send_digest_only: sendDigestOnly,
-        jooble_api_key: joobleApiKeyInput.trim()
-      }
+        jooble_api_key: joobleApiKeyInput.trim(),
+        official_career_job_urls_only: officialCareerUrlsOnly,
+      },
     };
 
     try {
@@ -1277,6 +1307,7 @@ export default function Dashboard() {
           scheduler_run_at_minute: updatedConfig.scheduler.run_at_minute,
           webhook_url: updatedConfig.webhook_url,
           search_send_digest_only: updatedConfig.search?.send_digest_only,
+          search_official_career_job_urls_only: updatedConfig.search?.official_career_job_urls_only,
           jooble_api_key: joobleApiKeyInput.trim(),
           updated_at: new Date().toISOString()
         });
@@ -1311,6 +1342,7 @@ export default function Dashboard() {
               scheduler_run_at_minute: updatedConfig.scheduler.run_at_minute,
               webhook_url: updatedConfig.webhook_url,
               search_send_digest_only: updatedConfig.search?.send_digest_only,
+              search_official_career_job_urls_only: updatedConfig.search?.official_career_job_urls_only,
               target_companies: companiesWithJooble,
               updated_at: new Date().toISOString()
             });
@@ -1323,6 +1355,7 @@ export default function Dashboard() {
 
       showStatus('Configuration settings saved successfully!', 'success');
       setConfig(updatedConfig);
+      void fetchData();
     } catch {
       showStatus('Failed to save settings to database.', 'error');
     }
@@ -2754,6 +2787,8 @@ export default function Dashboard() {
               testingWebhook={testingWebhook}
               sendDigestOnly={sendDigestOnly}
               setSendDigestOnly={setSendDigestOnly}
+              officialCareerUrlsOnly={officialCareerUrlsOnly}
+              setOfficialCareerUrlsOnly={setOfficialCareerUrlsOnly}
               titlesInput={titlesInput}
               setTitlesInput={setTitlesInput}
               schedulerEnabled={schedulerEnabled}

@@ -9,6 +9,8 @@ interface SettingsPanelProps {
   testingWebhook: boolean;
   sendDigestOnly: boolean;
   setSendDigestOnly: (val: boolean) => void;
+  officialCareerUrlsOnly: boolean;
+  setOfficialCareerUrlsOnly: (val: boolean) => void;
   titlesInput: string;
   setTitlesInput: (val: string) => void;
   schedulerEnabled: boolean;
@@ -31,6 +33,8 @@ export default function SettingsPanel({
   testingWebhook,
   sendDigestOnly,
   setSendDigestOnly,
+  officialCareerUrlsOnly,
+  setOfficialCareerUrlsOnly,
   titlesInput,
   setTitlesInput,
   schedulerEnabled,
@@ -91,6 +95,27 @@ export default function SettingsPanel({
             />
             <div className="relative w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-600 peer-checked:after:bg-white"></div>
             <span className="ms-2 text-xs font-semibold text-slate-300">Digest</span>
+          </label>
+        </div>
+
+        <div className="bg-slate-950/40 border border-slate-850 p-3 rounded-xl flex items-center justify-between gap-3">
+          <div className="space-y-0.5 min-w-0">
+            <span className="text-xs font-bold text-slate-300">Official careers / ATS links only</span>
+            <p className="text-[11px] text-slate-500">
+              Hides LinkedIn, Indeed, Glassdoor, and other board or social URLs in the job list. Shows roles whose
+              apply URL looks like the company careers site or a known ATS (Greenhouse, Lever, Workday, etc.). Save
+              settings to apply; when enabled, uploads to Supabase also skip non-official URLs.
+            </p>
+          </div>
+          <label className="inline-flex items-center cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              checked={officialCareerUrlsOnly}
+              onChange={(e) => setOfficialCareerUrlsOnly(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="relative w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-600 peer-checked:after:bg-white"></div>
+            <span className="ms-2 text-xs font-semibold text-slate-300">Filter</span>
           </label>
         </div>
 
