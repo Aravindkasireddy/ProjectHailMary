@@ -218,6 +218,13 @@ def get_stale_check_state(email):
         }
     return stale_check_states[email_key]
 
+
+def _invalidate_jobs_cache(email=None):
+    email_key = email or "admin@hailmary.ai"
+    _cached_jobs_data.pop(email_key, None)
+    _cached_jobs_mtimes.pop(email_key, None)
+
+
 _ZERO_UUID_STR = "00000000-0000-0000-0000-000000000000"
 
 
@@ -480,47 +487,84 @@ def watched_companies_scheduler_loop():
 
 
 def check_url_stale(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    }
+    """Return True if the posting is likely closed (used by batch stale checker)."""
     try:
-        r = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
-        if r.status_code == 404:
-            return True
-            
-        final_url = r.url.lower()
-        parsed_final = urllib.parse.urlparse(final_url)
-        path = parsed_final.path
-        
-        if "greenhouse.io" in parsed_final.netloc:
-            if "error=true" in final_url or "/jobs/" not in path:
-                return True
-        elif "lever.co" in parsed_final.netloc:
-            path_parts = [p for p in path.split('/') if p]
-            if len(path_parts) < 2:
-                return True
-            if "jobs at" in r.text.lower() or "current openings" in r.text.lower():
-                return True
-        elif "ashbyhq.com" in parsed_final.netloc:
-            path_parts = [p for p in path.split('/') if p]
-            if len(path_parts) <= 1:
-                return True
-                
-        text_lower = r.text.lower()
-        closed_keywords = [
-            "this job is no longer available",
-            "posting has closed",
-            "job is closed",
-            "no longer accepting applications",
-            "position has been filled",
-            "job posting was not found"
-        ]
-        if any(kw in text_lower for kw in closed_keywords):
-            return True
+        from job_link_health import check_job_posting_live
+
+        return bool(check_job_posting_live(url, timeout=5.0).get("stale"))
     except Exception:
-        pass
-    return False
+        return False
+
+
+def persist_job_stale_flag(email, job_url, stale):
+    """
+    Set ``stale`` on a job in local JSON stores (approved / active / failed).
+    Only writes files that contained the job URL. Returns (ok, message).
+    """
+    if not job_url:
+        return False, "Missing job_url"
+
+    approved_path = resolve_path(APPROVED_PATH, email)
+    failed_path = resolve_path(FAILED_PATH, email)
+    active_path = resolve_path(ACTIVE_PATH, email)
+
+    approved = []
+    if os.path.exists(approved_path):
+        try:
+            with open(approved_path, "r", encoding="utf-8") as f:
+                approved = json.load(f)
+        except Exception:
+            pass
+
+    failed = []
+    if os.path.exists(failed_path):
+        try:
+            with open(failed_path, "r", encoding="utf-8") as f:
+                failed = json.load(f)
+        except Exception:
+            pass
+
+    active = []
+    if os.path.exists(active_path):
+        try:
+            with open(active_path, "r", encoding="utf-8") as f:
+                active = json.load(f)
+        except Exception:
+            pass
+
+    touched_a = touched_f = touched_act = False
+    for j in approved:
+        if j.get("job_url") == job_url:
+            j["stale"] = bool(stale)
+            touched_a = True
+    for j in failed:
+        if j.get("job_url") == job_url:
+            j["stale"] = bool(stale)
+            touched_f = True
+    for j in active:
+        if j.get("job_url") == job_url:
+            j["stale"] = bool(stale)
+            touched_act = True
+
+    if not (touched_a or touched_f or touched_act):
+        _invalidate_jobs_cache(email)
+        return False, "Job URL not found in local JSON stores (approved/active/failed)."
+
+    try:
+        if touched_a:
+            with open(approved_path, "w", encoding="utf-8") as f:
+                json.dump(approved, f, indent=2)
+        if touched_f:
+            with open(failed_path, "w", encoding="utf-8") as f:
+                json.dump(failed, f, indent=2)
+        if touched_act:
+            with open(active_path, "w", encoding="utf-8") as f:
+                json.dump(active, f, indent=2)
+    except Exception as e:
+        return False, f"Failed to save stale flag: {e}"
+
+    _invalidate_jobs_cache(email)
+    return True, ""
 
 def stale_check_worker(email=None):
     state = get_stale_check_state(email)
@@ -2750,6 +2794,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/config/reset-target-titles",
             "/api/classifier-feedback",
             "/api/watched-companies",
+            "/api/job/check-live",
         )
         if parsed_url.path.startswith("/api/"):
             if parsed_url.path in ["/api/login", "/api/register"]:
@@ -3416,6 +3461,78 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 res = {"success": True, "message": "Stale job check started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
+            return
+
+        # API: Per-job posting liveness / stale probe (optionally persist to disk + Supabase)
+        elif parsed_url.path == "/api/job/check-live":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+
+            job_url = (payload.get("job_url") or "").strip()
+            if not job_url:
+                self.wfile.write(
+                    json.dumps({"success": False, "message": "Missing job_url"}).encode("utf-8")
+                )
+                return
+
+            email = self.get_auth_email()
+            uid = self.get_auth_user_id()
+            persist = bool(payload.get("persist", True))
+            job_id = payload.get("job_id") or payload.get("id")
+
+            try:
+                from job_link_health import check_job_posting_live
+
+                info = check_job_posting_live(job_url)
+            except Exception as e:
+                self.wfile.write(
+                    json.dumps({"success": False, "message": str(e)}).encode("utf-8")
+                )
+                return
+
+            stale = bool(info.get("stale"))
+            uncertain = bool(info.get("uncertain"))
+            body = {
+                "success": True,
+                "stale": stale,
+                "uncertain": uncertain,
+                "reason": info.get("reason"),
+                "http_status": info.get("http_status"),
+                "final_url": info.get("final_url"),
+                "persisted_disk": False,
+                "persisted_supabase": False,
+            }
+            notes = []
+
+            if persist:
+                ok_disk, msg_disk = persist_job_stale_flag(email, job_url, stale)
+                body["persisted_disk"] = ok_disk
+                if msg_disk:
+                    notes.append(msg_disk)
+
+                if _valid_scrape_tracker_user_id(uid):
+                    try:
+                        from supabase_client import get_supabase_client
+
+                        sb = get_supabase_client()
+                        req = sb.table("jobs").update({"stale": stale})
+                        jid = str(job_id).strip() if job_id else ""
+                        if jid:
+                            req = req.eq("id", jid)
+                        else:
+                            req = req.eq("job_url", job_url)
+                        req.eq("user_id", str(uid)).execute()
+                        body["persisted_supabase"] = True
+                    except Exception as ex:
+                        body["persisted_supabase"] = False
+                        notes.append(f"Supabase: {ex}")
+
+            if notes:
+                body["persist_notes"] = notes
+
+            self.wfile.write(json.dumps(body).encode("utf-8"))
             return
 
         # API: Archive / delete job

@@ -32,7 +32,8 @@ import {
   FileText,
   Lock,
   LogOut,
-  Globe
+  Globe,
+  Activity
 } from 'lucide-react';
 import ResumeGenerator from '../../components/ResumeGenerator';
 import CopyButton from '../../components/CopyButton';
@@ -94,6 +95,13 @@ interface Job {
   job_id?: string;
   description_hash?: string;
   id?: string;
+  /** Last on-demand HTTP probe from /api/job/check-live */
+  listing_health?: {
+    uncertain: boolean;
+    reason?: string;
+    checked_at: string;
+    http_status?: number | null;
+  };
 }
 
 interface SponsorMetadata {
@@ -332,6 +340,7 @@ export default function Dashboard() {
 
   // General Loading & Notification UI States
   const [syncingJobUrl, setSyncingJobUrl] = useState<string | null>(null);
+  const [checkingLiveJobUrl, setCheckingLiveJobUrl] = useState<string | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [resettingTitles, setResettingTitles] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -1163,6 +1172,86 @@ export default function Dashboard() {
       }
     } catch {
       showStatus('Failed to trigger stale check.', 'error');
+    }
+  };
+
+  /** Per-job HTTP probe: updates ``stale`` when ``persist`` is true (default) on server + Supabase. */
+  const checkJobPostingLive = async (job: Job) => {
+    if (!job.job_url) {
+      showStatus('This job has no URL to check.', 'error');
+      return;
+    }
+    if (!authToken) {
+      showStatus('Log in to check whether a posting is still live.', 'error');
+      return;
+    }
+    setCheckingLiveJobUrl(job.job_url);
+    try {
+      const res = await fetch(`${API_BASE}/api/job/check-live`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_url: job.job_url,
+          job_id: job.id || job.job_id,
+          persist: true,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok || data.success === false) {
+        showStatus((typeof data.message === 'string' && data.message) || 'Could not verify posting.', 'error');
+        return;
+      }
+      const checkedAt = new Date().toISOString();
+      const uncertain = Boolean(data.uncertain);
+      const stale = Boolean(data.stale);
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.job_url === job.job_url
+            ? {
+                ...j,
+                stale,
+                listing_health: {
+                  uncertain,
+                  reason: typeof data.reason === 'string' ? data.reason : undefined,
+                  checked_at: checkedAt,
+                  http_status: (data.http_status as number | null | undefined) ?? null,
+                },
+              }
+            : j
+        )
+      );
+      setSelectedJob((prev) =>
+        prev && prev.job_url === job.job_url
+          ? {
+              ...prev,
+              stale,
+              listing_health: {
+                uncertain,
+                reason: typeof data.reason === 'string' ? data.reason : undefined,
+                checked_at: checkedAt,
+                http_status: (data.http_status as number | null | undefined) ?? null,
+              },
+            }
+          : prev
+      );
+      if (uncertain) {
+        showStatus(
+          (typeof data.reason === 'string' && data.reason) ||
+            'Could not fully verify this listing (network timeout or gated page).',
+          'info'
+        );
+      } else if (stale) {
+        showStatus('Listing appears closed or removed.', 'success');
+      } else {
+        showStatus('Listing looks active (no closed signals detected).', 'success');
+      }
+      if (Array.isArray(data.persist_notes) && data.persist_notes.length > 0) {
+        console.info('check-live persist notes:', data.persist_notes);
+      }
+    } catch {
+      showStatus('Failed to reach server for live check.', 'error');
+    } finally {
+      setCheckingLiveJobUrl(null);
     }
   };
 
@@ -3032,10 +3121,26 @@ export default function Dashboard() {
                               {job.strongest_label}
                             </span>
 
-                            {/* Stale Badge */}
+                            {/* Stale / live probe badges */}
                             {job.stale && (
                               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-rose-950/80 text-rose-300 border border-rose-850 animate-pulse">
                                 Closed / Stale
+                              </span>
+                            )}
+                            {!job.stale && job.listing_health && !job.listing_health.uncertain && (
+                              <span
+                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-emerald-950/80 text-emerald-300 border border-emerald-800/60"
+                                title={job.listing_health.reason || 'Checked via posting URL'}
+                              >
+                                Likely active
+                              </span>
+                            )}
+                            {job.listing_health?.uncertain && (
+                              <span
+                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-amber-950/80 text-amber-200 border border-amber-800/50"
+                                title={job.listing_health.reason || 'Probe inconclusive'}
+                              >
+                                Unverified
                               </span>
                             )}
                           </div>
@@ -3398,16 +3503,33 @@ export default function Dashboard() {
                       {/* Card Actions Bottom */}
                       <div className="mt-5 pt-3.5 border-t border-slate-850 flex items-center justify-between">
 
-                        {/* URL click */}
-                        <a
-                          href={browserOpenJobUrl(job.job_url)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link"
-                        >
-                          View Site
-                          <ExternalLink className="w-3 h-3 ml-1 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform" />
-                        </a>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => void checkJobPostingLive(job)}
+                            disabled={checkingLiveJobUrl === job.job_url}
+                            className={`inline-flex items-center shrink-0 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors ${
+                              checkingLiveJobUrl === job.job_url
+                                ? 'bg-slate-800/80 text-slate-500 border-slate-700 cursor-wait'
+                                : 'bg-slate-800/60 hover:bg-slate-750 text-slate-200 border-slate-700 hover:border-slate-600'
+                            }`}
+                            title="Fetch the posting URL and detect if it looks closed, active, or inconclusive"
+                          >
+                            <Activity
+                              className={`w-3.5 h-3.5 mr-1 ${checkingLiveJobUrl === job.job_url ? 'animate-spin text-violet-400' : 'text-violet-400'}`}
+                            />
+                            {checkingLiveJobUrl === job.job_url ? 'Checking…' : 'Check live'}
+                          </button>
+                          <a
+                            href={browserOpenJobUrl(job.job_url)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link truncate"
+                          >
+                            View Site
+                            <ExternalLink className="w-3 h-3 ml-1 shrink-0 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform" />
+                          </a>
+                        </div>
 
                         <div className="flex items-center space-x-2">
                           {activeTab === 'approved' && authRole === 'admin' && (
@@ -3571,12 +3693,32 @@ export default function Dashboard() {
                   {authRole === 'admin' ? 'Inspect Candidate & Apply Manual Override' : 'Inspect Candidate'}
                 </h3>
               </div>
-              <button
-                onClick={() => closeModal()}
-                className="p-1 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 rounded-lg transition-colors text-xs font-bold px-2.5"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedJob?.job_url && (
+                  <button
+                    type="button"
+                    onClick={() => void checkJobPostingLive(selectedJob)}
+                    disabled={checkingLiveJobUrl === selectedJob.job_url}
+                    className={`inline-flex items-center px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                      checkingLiveJobUrl === selectedJob.job_url
+                        ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-wait'
+                        : 'bg-violet-950/50 hover:bg-violet-900/60 text-violet-200 border-violet-800/40'
+                    }`}
+                    title="Probe the posting URL for closed vs active signals"
+                  >
+                    <Activity
+                      className={`w-3.5 h-3.5 mr-1 ${checkingLiveJobUrl === selectedJob.job_url ? 'animate-spin' : ''}`}
+                    />
+                    {checkingLiveJobUrl === selectedJob.job_url ? 'Checking…' : 'Check live'}
+                  </button>
+                )}
+                <button
+                  onClick={() => closeModal()}
+                  className="p-1 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 rounded-lg transition-colors text-xs font-bold px-2.5"
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             {/* Modal Body */}
