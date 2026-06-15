@@ -14,7 +14,7 @@ from urllib3.util.retry import Retry
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, quote_plus, parse_qs
+from urllib.parse import urlparse, quote_plus, parse_qs, urljoin
 from playwright.sync_api import sync_playwright
 try:
     from playwright_stealth import stealth_sync
@@ -1695,15 +1695,45 @@ def resolve_career_link(job_title, company_name, jd_text, html=None):
         print(f"Error resolving career link for {company_name} - {job_title}: {e}")
     return None
 
-def scrape_linkedin(url):
+
+def linkedin_job_view_url(url: str) -> str:
+    """
+    LinkedIn /jobs/search?currentJobId=… is a search shell, not a stable job page.
+    Normalize to https://www.linkedin.com/jobs/view/{id}/ so Playwright sees the job detail
+    (better for extract_ats_links / resolve_career_link). Non-LinkedIn URLs unchanged.
+    """
+    u = (url or "").strip()
+    if not u or "linkedin.com" not in u.lower():
+        return u
     try:
-        html = fetch_with_playwright(url)
+        p = urlparse(u)
+        if "jobs/search" not in (p.path or "").lower():
+            return u
+        q = parse_qs(p.query)
+        jid = None
+        for key, vals in q.items():
+            if key.lower() == "currentjobid" and vals:
+                cand = str(vals[0]).strip()
+                if cand.isdigit():
+                    jid = cand
+                    break
+        if jid:
+            return f"https://www.linkedin.com/jobs/view/{jid}/"
+    except Exception:
+        pass
+    return u
+
+
+def scrape_linkedin(url):
+    fetch_url = linkedin_job_view_url(url)
+    try:
+        html = fetch_with_playwright(fetch_url)
         if not html:
             return None
         soup = BeautifulSoup(html, 'html.parser')
         title_elem = soup.find('h1', class_=re.compile('topcard__title|job-search-card__title|title')) or soup.find('h1')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
-        if "login" in url.lower() or not title or title == "Sign Up" or title == "Unknown Title":
+        if "login" in fetch_url.lower() or not title or title == "Sign Up" or title == "Unknown Title":
             return None
         company_elem = soup.find('a', class_=re.compile('topcard__org-name-link|company-name')) or soup.find('span', class_=re.compile('topcard__flavor'))
         company = company_elem.get_text().strip() if company_elem else "Unknown"
@@ -1711,15 +1741,19 @@ def scrape_linkedin(url):
         location = loc_elem.get_text().strip() if loc_elem else "Remote"
         jd_div = soup.find('div', class_=re.compile('description__text|show-more-less-html__markup|description'))
         jd_text = clean_text(str(jd_div)) if jd_div else clean_text(html)
-        parsed = urlparse(url)
+        parsed = urlparse(fetch_url)
         path_parts = [p for p in parsed.path.split('/') if p]
-        req_id = path_parts[-1] if path_parts else "Unknown"
-        id_match = re.search(r'(\d+)', req_id)
-        if id_match:
-            req_id = id_match.group(1)
+        jv = re.search(r"/jobs/view/(\d+)", (parsed.path or ""), re.I)
+        if jv:
+            req_id = jv.group(1)
+        else:
+            req_id = path_parts[-1] if path_parts else "Unknown"
+            id_match = re.search(r"(\d+)", str(req_id))
+            if id_match:
+                req_id = id_match.group(1)
             
         resolved_url = resolve_career_link(title, company, jd_text, html)
-        final_url = resolved_url if resolved_url else url
+        final_url = resolved_url if resolved_url else fetch_url
         
         return {
             "job_title": title,
@@ -1841,10 +1875,16 @@ def fetch_linkedin_guest_jobs(target_titles, search_cfg, found_urls, dry_run, dr
                 a_tag = card.find('a', href=True)
                 if not a_tag:
                     continue
-                job_url = a_tag['href']
-                if '?' in job_url:
-                    job_url = job_url.split('?')[0]
-                
+                href = (a_tag.get("href") or "").strip()
+                if not href:
+                    continue
+                if href.startswith("/"):
+                    job_url = urljoin("https://www.linkedin.com/", href)
+                else:
+                    job_url = href
+
+                job_url = linkedin_job_view_url(job_url)
+
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
@@ -2105,7 +2145,7 @@ def fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
 
 
 def normalize_job_url(url):
-    """Same canonical form as company scraper / Supabase upserts (https, no query/hash)."""
+    """Same canonical form as company scraper / Supabase (https, strip tracking params + hash only)."""
     try:
         from company_scraper.url_normalize import canonical_job_url
 

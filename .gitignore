@@ -40,11 +40,20 @@ dashboard/.pnpm-debug.log*
 
 # Large generated job datasets (rebuild with pipeline; keep config in git)
 /scraped_jobs.json
+/scraped_jobs_*.json
 /approved_jobs.json
+/approved_jobs_*.json
 /active_candidate_jobs.json
+/active_candidate_jobs_*.json
 /failed_candidate_jobs.json
+/failed_candidate_jobs_*.json
 /synced_jobs.json
+/synced_jobs_*.json
 /candidate_jobs.json
+/candidate_jobs_*.json
+# Per-user config snapshots (canonical config.json / policy_config.json stay tracked)
+/config_*.json
+/policy_config_*.json
 
 # OS / editor
 .DS_Store

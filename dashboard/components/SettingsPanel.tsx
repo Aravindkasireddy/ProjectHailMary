@@ -100,11 +100,12 @@ export default function SettingsPanel({
 
         <div className="bg-slate-950/40 border border-slate-850 p-3 rounded-xl flex items-center justify-between gap-3">
           <div className="space-y-0.5 min-w-0">
-            <span className="text-xs font-bold text-slate-300">Official careers / ATS links only</span>
+            <span className="text-xs font-bold text-slate-300">Company-hosted apply URLs only</span>
             <p className="text-[11px] text-slate-500">
-              Hides LinkedIn, Indeed, Glassdoor, and other board or social URLs in the job list. Shows roles whose
-              apply URL looks like the company careers site or a known ATS (Greenhouse, Lever, Workday, etc.). Save
-              settings to apply; when enabled, uploads to Supabase also skip non-official URLs.
+              Hides LinkedIn, Indeed, Glassdoor, Jooble, and other aggregators. Also hides shared ATS boards
+              (Greenhouse, Lever, Ashby, SmartRecruiters, etc.). Keeps employer career sites (e.g. careers.company.com),
+              corporate /jobs or /careers paths, and employer-tenant Workday (something.myworkdayjobs.com) or Oracle
+              recruiting links. Turn on and save; uploads to Supabase skip rows that do not match.
             </p>
           </div>
           <label className="inline-flex items-center cursor-pointer shrink-0">

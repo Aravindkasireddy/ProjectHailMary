@@ -4,7 +4,7 @@ One-off: remove duplicate rows in public.jobs that represent the same posting.
 
 Groups by (user_id, canonical_job_url) using the same rules as company_scraper/url_normalize.py.
 Keeps the row with the latest scraped_at (ties: smallest id wins). Deletes the rest, then sets
-the survivor's job_url to the canonical form.
+the survivor's job_url to the canonical form (https, tracking params stripped, functional query kept).
 
 Requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env (same as supabase_client).
 

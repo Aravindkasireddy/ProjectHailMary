@@ -66,7 +66,8 @@ def _collect_listing_links(careers_url: str, max_links: int) -> List[str]:
         if urlparse(h).netloc.lower() != base_host and base_host not in low:
             continue
         if _JOB_HREF.search(h):
-            out.append(h.split("#")[0].split("?")[0])
+            # Keep query string — many ATS links need ?… to resolve; strip hash only.
+            out.append(h.split("#")[0])
     return list(dict.fromkeys(out))
 
 

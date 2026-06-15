@@ -1,5 +1,8 @@
 /**
- * Employer / ATS-hosted job URLs only (exclude LinkedIn, Indeed, boards, social).
+ * Company-hosted (or employer-tenant) apply URLs only — no LinkedIn, boards, or shared ATS
+ * hosts (Greenhouse, Lever, Ashby, …). Workday *.myworkdayjobs.com / *.workdayjobs.com and
+ * Oracle recruiting cloud allowed.
+ *
  * Keep in sync with ``employer_job_url.py`` at repo root.
  */
 const BLOCKED_HOST_SUFFIXES = [
@@ -38,13 +41,11 @@ const BLOCKED_HOST_SUFFIXES = [
   'news.ycombinator.com',
 ] as const;
 
-const ATS_URL_HINTS = [
+const MULTI_TENANT_ATS_SUFFIXES = [
   'greenhouse.io',
   'lever.co',
-  'myworkdayjobs.com',
-  'workdayjobs.com',
   'ashbyhq.com',
-  'apply.workable.com',
+  'workable.com',
   'smartrecruiters.com',
   'icims.com',
   'bamboohr.com',
@@ -57,12 +58,10 @@ const ATS_URL_HINTS = [
   'taleo.net',
   'brassring.com',
   'eightfold.ai',
-  'successfactors.com',
-  'oraclecloud.com',
-  'fa.us2.oraclecloud.com',
   'jobvite.com',
   'hrmdirect.com',
   'paycomonline.net',
+  'successfactors.com',
 ] as const;
 
 function hostOf(url: string): string {
@@ -75,18 +74,33 @@ function hostOf(url: string): string {
   }
 }
 
+function blockedAggregator(h: string): boolean {
+  for (const suf of BLOCKED_HOST_SUFFIXES) {
+    if (h === suf || h.endsWith('.' + suf)) return true;
+  }
+  return false;
+}
+
+function multiTenantAtsHost(h: string): boolean {
+  for (const suf of MULTI_TENANT_ATS_SUFFIXES) {
+    if (h === suf || h.endsWith('.' + suf)) return true;
+  }
+  return false;
+}
+
 export function isOfficialCompanyCareersJobUrl(url: string): boolean {
   const u = (url || '').trim();
   if (!u) return false;
   const low = u.toLowerCase();
   const h = hostOf(u);
-  for (const suf of BLOCKED_HOST_SUFFIXES) {
-    if (h === suf || h.endsWith('.' + suf)) return false;
-  }
-  for (const hint of ATS_URL_HINTS) {
-    if (low.includes(hint)) return true;
-  }
+  if (!h) return false;
+  if (blockedAggregator(h)) return false;
+  if (multiTenantAtsHost(h)) return false;
+
+  if (h.endsWith('.myworkdayjobs.com') || h.endsWith('.workdayjobs.com')) return true;
+  if (low.includes('oraclecloud.com') || h.endsWith('.oraclecloud.com')) return true;
   if (h.startsWith('careers.') || h.startsWith('jobs.') || h.startsWith('apply.')) return true;
+
   try {
     const path = new URL(u.trim()).pathname.toLowerCase();
     if (

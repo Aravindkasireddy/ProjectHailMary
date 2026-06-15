@@ -1,8 +1,0 @@
-{
-  "max_experience_years": 8,
-  "min_salary_annual": 80000,
-  "min_salary_hourly": 50,
-  "enforce_visa_sponsorship": true,
-  "enforce_no_clearance": true,
-  "custom_red_flag_keywords": []
-}

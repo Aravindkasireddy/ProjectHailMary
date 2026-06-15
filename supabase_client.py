@@ -394,7 +394,7 @@ def upload_user_jobs(user_id: str, email: str):
             dropped = before_ct - len(records_to_upload)
             if dropped:
                 print(
-                    f"search_official_career_job_urls_only: excluded {dropped} non-official URLs from upload for {email}."
+                    f"search_official_career_job_urls_only: excluded {dropped} non-company-hosted apply URLs from upload for {email}."
                 )
 
         if not records_to_upload:

@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
+from company_scraper.url_normalize import canonical_job_url
 from playwright.sync_api import sync_playwright
 
 
@@ -15,7 +16,7 @@ def _extract_job_links(page) -> List[str]:
           const out = new Set();
           for (const a of document.querySelectorAll('a[href]')) {
             const h = a.href || '';
-            if (/\\/job\\//i.test(h) || /\\/w\\/\\w+\\/\\w+\\/job\\//i.test(h) || /\\/d\\/\\w+\\/\\w+\\/\\w+\\/\\d+/i.test(h)) out.add(h.split('#')[0].split('?')[0]);
+            if (/\\/job\\//i.test(h) || /\\/w\\/\\w+\\/\\w+\\/job\\//i.test(h) || /\\/d\\/\\w+\\/\\w+\\/\\w+\\/\\d+/i.test(h)) out.add(h.split('#')[0]);
           }
           return Array.from(out);
         }"""
@@ -46,14 +47,15 @@ def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 24) ->
             for _ in range(max_pages):
                 time.sleep(2)
                 for h in _extract_job_links(page):
-                    if h in seen:
+                    c = canonical_job_url(h)
+                    if not c or c in seen:
                         continue
-                    seen.add(h)
+                    seen.add(c)
                     title = ""
                     try:
                         title = page.evaluate(
                             """(u) => {
-                              const a = Array.from(document.querySelectorAll('a[href]')).find(x => (x.href||'').split('#')[0].split('?')[0] === u);
+                              const a = Array.from(document.querySelectorAll('a[href]')).find(x => (x.href||'').split('#')[0] === u);
                               return a ? (a.innerText || '').trim().slice(0, 400) : '';
                             }""",
                             h,

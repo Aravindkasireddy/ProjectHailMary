@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from company_scraper.http_utils import get_session, request_with_retry
+from company_scraper.url_normalize import canonical_job_url
 
 
 def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 25) -> List[Dict[str, Any]]:
@@ -37,14 +38,15 @@ def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 25) ->
                 continue
             if not any(x in low for x in ("job", "position", "requisition", "req", "jobdetail")):
                 continue
-            full = urljoin(careers_url, href).split("#")[0].split("?")[0]
-            if full in seen:
+            full_raw = urljoin(careers_url, href).split("#")[0]
+            canon = canonical_job_url(full_raw)
+            if not canon or canon in seen:
                 continue
-            seen.add(full)
+            seen.add(canon)
             title = (a.get_text() or "").strip() or "Job"
             rows.append(
                 {
-                    "job_url": full,
+                    "job_url": full_raw,
                     "job_title": title[:500],
                     "company_name": company_hint or urlparse(careers_url).netloc.split(".")[0].title(),
                     "job_description": "",

@@ -4,18 +4,28 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 
 **On Windows**, running via **[Docker](#docker-api--dashboard)** is the most reliable path (Playwright + bash pipeline + one command for API + UI).
 
+### Local data vs Supabase
+
+- **Supabase** holds the live job board (`public.jobs`) and user settings; you can use the dashboard **without** keeping job JSON on disk.
+- The **Python pipeline** (`find_and_scrape_jobs.py`, classify scripts, `dashboard_server.py` upload paths) still **writes JSON and logs under the repo root** by design (and `data/notion_job_reports.db` after Notion syncs). That is normal for this repo today.
+- To **wipe generated artifacts** on your Mac (job blobs, `data/`, `logs/`, `scratch/`, Next `.next` cache): run **`./scripts/clear_local_jobsearch_data.sh`** (or **`sh ./scripts/clear_local_jobsearch_data.sh`**) or **`./scripts/clear_local_jobsearch_data.sh --yes`** for no prompt. It does **not** delete `.env` or your own folders like `Opt_freindly/`.
+- To avoid writing into the repo for a session, you can set **`JOBSEARCH_ROOT`** to a throwaway directory (see `jobsearch_paths.py`); the app will use that path instead of the clone for workspace files.
+- The **browser** may still keep dashboard auth in **localStorage**; clear site data for your dev URL if you want that gone too.
+- **Company-hosted apply URLs:** In Settings, turn on **Company-hosted apply URLs only** so the list and uploads keep employer career pages and tenant Workday/Oracle links, and drop LinkedIn plus shared ATS boards (Greenhouse, Lever, Ashby, …).
+
 ## Layout
 
 | Path | Purpose |
 |------|---------|
 | `scrape_tracker.py` | Fire-and-forget Supabase writes to **`public.scrape_runs`** (pipeline + company scrapes) |
 | `scripts/scrape_runs.sql` | DDL + RLS for **`scrape_runs`** (also merged into `scripts/schema.sql`) |
+| `scripts/clear_local_jobsearch_data.sh` | **Wipe** local pipeline outputs (`*.json` job blobs, `data/`, `logs/`, `scratch/`, `dashboard/.next`). See [Local data vs Supabase](#local-data-vs-supabase). |
 | `find_and_scrape_jobs.py` | Yahoo `site:` discovery + ATS scrape → `scraped_jobs.json` |
 | `scripts/scrape_and_filter_candidates.py` | Re-scrape / validate + red-flag prefilter → `active_candidate_jobs.json`, `failed_candidate_jobs.json` |
 | `scripts/classify_and_save.py` | Gemini (optional) + rules → `approved_jobs.json` |
 | `company_scraper/` | On-demand **company-targeted** scrape: paste **company name**, **careers URL**, or **one job URL** → discovers listing pages (ATS + fallbacks), collects up to hundreds of roles, filters **IT-related** titles, upserts to Supabase `jobs` via `POST /api/scrape/company` (poll `GET /api/scrape/company/status`) |
 | `dashboard_server.py` | API on **port 8080**, scheduler, Notion + webhook helpers; scrape history **`GET /api/scrape/status`**, **`GET /api/scrape/status/<id>`**, **`GET /api/scrape/active`** |
-| `dashboard/` | Next.js UI (default **port 3000**); **Company Scraper** UI at `/company-scraper`. The main job board reads **`public.jobs` from Supabase** (local `*.json` files are pipeline staging until you upload/sync). Optional **official careers / ATS URLs only** filter: Settings → enable **Official careers / ATS links only** (stored in **`user_configs.search_official_career_job_urls_only`**); run **`scripts/add_search_official_career_job_urls_only.sql`** once if the column is missing. Logic is shared by `employer_job_url.py` and `dashboard/src/lib/employerJobUrl.ts`. |
+| `dashboard/` | Next.js UI (default **port 3000**); **Company Scraper** UI at `/company-scraper`. The main job board reads **`public.jobs` from Supabase** (local `*.json` files are pipeline staging until you upload/sync). Optional **company-hosted apply URLs only** filter: Settings → **Company-hosted apply URLs only** (stored in **`user_configs.search_official_career_job_urls_only`**); run **`scripts/add_search_official_career_job_urls_only.sql`** once if the column is missing. Logic is shared by `employer_job_url.py` and `dashboard/src/lib/employerJobUrl.ts`. |
 | `Job_classifier_prompt.txt` | Large classifier instructions (policy blocks can be rebuilt from `policy_config.json`) |
 | `config.json` | Target titles, scheduler, **search** tuning, optional `webhook_url` |
 | `policy_config.json` | Salary / experience / visa / clearance knobs for prompt rebuild |

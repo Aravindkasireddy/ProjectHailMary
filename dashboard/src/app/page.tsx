@@ -40,7 +40,7 @@ import LogConsole from '../../components/LogConsole';
 import SettingsPanel from '../../components/SettingsPanel';
 import PolicyPanel from '../../components/PolicyPanel';
 import { supabase } from '../supabaseClient';
-import { dedupeJobsByCanonicalUrl } from '../lib/jobUrl';
+import { dedupeJobsByCanonicalUrl, browserOpenJobUrl } from '../lib/jobUrl';
 import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
@@ -2097,7 +2097,7 @@ export default function Dashboard() {
                 <ul className="space-y-2 max-h-80 overflow-y-auto">
                   {newJobs.map((job) => (
                     <li key={job.requirement_id} className="border-b border-violet-500/30 pb-2">
-                      <a href={job.job_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-violet-300">
+                      <a href={browserOpenJobUrl(job.job_url)} target="_blank" rel="noopener noreferrer" className="underline hover:text-violet-300">
                         {job.job_title} @ {job.company_name}
                       </a>
                     </li>
@@ -3400,7 +3400,7 @@ export default function Dashboard() {
 
                         {/* URL click */}
                         <a
-                          href={job.job_url}
+                          href={browserOpenJobUrl(job.job_url)}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link"
