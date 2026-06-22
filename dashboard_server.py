@@ -31,19 +31,6 @@ if WORKSPACE_DIR not in sys.path:
 from pipeline_metrics import append_pipeline_metric  # noqa: E402
 import jobsearch_constants as jc  # noqa: E402
 
-# Authentication passwords
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
-USER_PASSWORD = os.environ.get("USER_PASSWORD", "user123")
-if ADMIN_PASSWORD == "admin123" and USER_PASSWORD == "user123":
-    print("WARNING: Using default fallback credentials ('admin123' and 'user123'). Please set ADMIN_PASSWORD and USER_PASSWORD in your .env file.")
-
-# In-memory session store: token -> dict mapping {"role": role, "email": email}
-active_sessions = {}
-
-# Password hashing + DB user helpers moved to auth_helpers.py
-from auth_helpers import hash_password, verify_password, verify_user_credentials, register_user  # noqa: E402,F401
-from user_auth_db import ensure_users_schema  # noqa: E402,F401
-
 # Filename scoping helper
 def resolve_path(base_path, email=None):
     if not email:
@@ -1205,14 +1192,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return payload
             except Exception as e:
                 print(f"Supabase JWT decode exception: {e}")
-            
-            session = active_sessions.get(token)
-            if isinstance(session, dict):
-                return {
-                    "sub": session.get("user_id", "00000000-0000-0000-0000-000000000000"),
-                    "email": session.get("email"),
-                    "role": session.get("role")
-                }
         return None
 
     def get_auth_email(self):
@@ -1683,100 +1662,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/job/check-live",
         )
         if parsed_url.path.startswith("/api/"):
-            if parsed_url.path in ["/api/login", "/api/register"]:
-                pass
-            elif parsed_url.path in _user_authed_post_paths:
+            if parsed_url.path in _user_authed_post_paths:
                 if not self.check_authenticated():
                     return
             else:
                 if not self.check_admin():
                     return
-
-        # API: Login
-        if parsed_url.path == "/api/login":
-            email = payload.get("email")
-            password = payload.get("password")
-            
-            # Backward compatibility check
-            if not email:
-                if password == ADMIN_PASSWORD:
-                    email = "admin@hailmary.ai"
-                elif password == USER_PASSWORD:
-                    email = "user@hailmary.ai"
-                else:
-                    email = "user@hailmary.ai"
-            
-            if not email or not password:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": False, "message": "Missing email or password"}).encode('utf-8'))
-                return
-                
-            user_session = verify_user_credentials(email, password)
-            if user_session:
-                token = str(uuid.uuid4())
-                active_sessions[token] = user_session
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "success": True,
-                    "token": token,
-                    "role": user_session["role"],
-                    "email": user_session["email"]
-                }).encode('utf-8'))
-            else:
-                self.send_response(401)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "success": False,
-                    "message": "Invalid email or password"
-                }).encode('utf-8'))
-            return
-
-        # API: Register
-        elif parsed_url.path == "/api/register":
-            email = payload.get("email")
-            password = payload.get("password")
-            if not email or not password:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": False, "message": "Email and password are required"}).encode('utf-8'))
-                return
-                
-            if "@" not in email or "." not in email:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": False, "message": "Invalid email address format"}).encode('utf-8'))
-                return
-                
-            role = "user"
-            if "admin" in email.lower():
-                role = "admin"
-                
-            success, msg = register_user(email, password, role)
-            if success:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": True, "message": msg}).encode('utf-8'))
-            else:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": False, "message": msg}).encode('utf-8'))
-            return
 
         # API: Reset target job titles to repo defaults (local scoped config + optional Supabase)
         elif parsed_url.path == "/api/config/reset-target-titles":
@@ -2575,10 +2466,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    try:
-        ensure_users_schema(WORKSPACE_DIR)
-    except Exception as e:
-        print(f"Users DB init warning: {e}")
 
     # Start background scheduler thread
     sched_thread = threading.Thread(target=scheduler_loop, daemon=True)

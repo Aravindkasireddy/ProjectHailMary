@@ -19,82 +19,33 @@ def get_free_port():
 def clean_test_server(tmp_path):
     # Configure env for test to use clean temp workspace root
     os.environ["JOBSEARCH_ROOT"] = str(tmp_path)
-    os.environ["ADMIN_PASSWORD"] = "testadmin"
-    os.environ["USER_PASSWORD"] = "testuser"
-    
-    # Force reload of server and users-db modules to clean up module-level paths/db schemas
+
+    # Force reload of the server module to clean up module-level paths
     if "dashboard_server" in sys.modules:
         importlib.reload(sys.modules["dashboard_server"])
     else:
         import dashboard_server
 
-    if "user_auth_db" in sys.modules:
-        importlib.reload(sys.modules["user_auth_db"])
-
     import dashboard_server
-    
+
     port = get_free_port()
     server = ThreadingHTTPServer(('127.0.0.1', port), dashboard_server.DashboardHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    
+
     # Give it a second to start
     time.sleep(0.5)
-    
+
     yield f"http://127.0.0.1:{port}"
-    
+
     server.shutdown()
     server.server_close()
 
-def test_multi_tenant_registration_and_login(clean_test_server):
-    # Register User A (Admin)
-    r = requests.post(f"{clean_test_server}/api/register", json={
-        "email": "admina@example.com",
-        "password": "passwordA"
-    })
-    assert r.status_code == 200
-    assert r.json()["success"] is True
-
-    # Register User B (Admin)
-    r = requests.post(f"{clean_test_server}/api/register", json={
-        "email": "adminb@example.com",
-        "password": "passwordB"
-    })
-    assert r.status_code == 200
-    assert r.json()["success"] is True
-
-    # Try duplicate registration
-    r = requests.post(f"{clean_test_server}/api/register", json={
-        "email": "admina@example.com",
-        "password": "newpassword"
-    })
-    assert r.status_code == 400
-    assert r.json()["success"] is False
-
-    # Login User A
-    r = requests.post(f"{clean_test_server}/api/login", json={
-        "email": "admina@example.com",
-        "password": "passwordA"
-    })
-    assert r.status_code == 200
-    data_a = r.json()
-    assert data_a["success"] is True
-    assert data_a["email"] == "admina@example.com"
-    token_a = data_a["token"]
-
-    # Login User B
-    r = requests.post(f"{clean_test_server}/api/login", json={
-        "email": "adminb@example.com",
-        "password": "passwordB"
-    })
-    assert r.status_code == 200
-    data_b = r.json()
-    assert data_b["success"] is True
-    assert data_b["email"] == "adminb@example.com"
-    token_b = data_b["token"]
+def test_multi_tenant_config_isolation(clean_test_server, mock_auth):
+    headers_a = mock_auth.headers("admina@example.com", role="admin")
+    headers_b = mock_auth.headers("adminb@example.com", role="admin")
 
     # Save Config for User A
-    headers_a = {"Authorization": f"Bearer {token_a}"}
     config_payload_a = {
         "target_titles": ["DevOps Specialist"],
         "scheduler": {"enabled": True, "run_at_hour": 9, "run_at_minute": 30},
@@ -105,7 +56,6 @@ def test_multi_tenant_registration_and_login(clean_test_server):
     assert r.json()["success"] is True
 
     # Save Config for User B
-    headers_b = {"Authorization": f"Bearer {token_b}"}
     config_payload_b = {
         "target_titles": ["SRE Manager"],
         "scheduler": {"enabled": False, "run_at_hour": 18, "run_at_minute": 0},
@@ -129,17 +79,9 @@ def test_multi_tenant_registration_and_login(clean_test_server):
     assert cfg_b["target_titles"] == ["SRE Manager"]
     assert cfg_b["webhook_url"] == "https://hooks.slack.com/services/userB"
 
-def test_multi_tenant_job_isolation(clean_test_server):
-    # Register and login two test users (admins to allow write operations)
-    r = requests.post(f"{clean_test_server}/api/register", json={"email": "admin_alice@hailmary.ai", "password": "alicepassword"})
-    r = requests.post(f"{clean_test_server}/api/login", json={"email": "admin_alice@hailmary.ai", "password": "alicepassword"})
-    token_alice = r.json()["token"]
-    headers_alice = {"Authorization": f"Bearer {token_alice}"}
-
-    r = requests.post(f"{clean_test_server}/api/register", json={"email": "admin_bob@hailmary.ai", "password": "bobpassword"})
-    r = requests.post(f"{clean_test_server}/api/login", json={"email": "admin_bob@hailmary.ai", "password": "bobpassword"})
-    token_bob = r.json()["token"]
-    headers_bob = {"Authorization": f"Bearer {token_bob}"}
+def test_multi_tenant_job_isolation(clean_test_server, mock_auth):
+    headers_alice = mock_auth.headers("admin_alice@hailmary.ai", role="admin")
+    headers_bob = mock_auth.headers("admin_bob@hailmary.ai", role="admin")
 
     # Override/Create a job decision for Alice
     job_payload_alice = {
@@ -198,19 +140,13 @@ def test_multi_tenant_job_isolation(clean_test_server):
     assert len(jobs_bob) == 1
     assert jobs_bob[0]["job_title"] == "Bob Lead SRE"
 
-def test_non_admin_user_privilege_restriction(clean_test_server):
-    # Register standard read-only user
-    r = requests.post(f"{clean_test_server}/api/register", json={"email": "standard_user@example.com", "password": "userpass"})
-    assert r.status_code == 200
-    
-    r = requests.post(f"{clean_test_server}/api/login", json={"email": "standard_user@example.com", "password": "userpass"})
-    token = r.json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
+def test_non_admin_user_privilege_restriction(clean_test_server, mock_auth):
+    headers = mock_auth.headers("standard_user@example.com", role="user")
+
     # GET endpoint (read action) should succeed
     r = requests.get(f"{clean_test_server}/api/config", headers=headers)
     assert r.status_code == 200
-    
+
     # POST endpoint (mutating action) should be forbidden (403)
     r = requests.post(f"{clean_test_server}/api/config", json={"target_titles": ["Test"]}, headers=headers)
     assert r.status_code == 403

@@ -29,7 +29,10 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 | `Job_classifier_prompt.txt` | Large classifier instructions (policy blocks can be rebuilt from `policy_config.json`) |
 | `config.json` | Target titles, scheduler, **search** tuning, optional `webhook_url` |
 | `policy_config.json` | Salary / experience / visa / clearance knobs for prompt rebuild |
-| `user_auth_db.py` | Writes **`data/app_users.db`** — local SQLite store for dashboard login accounts (admin/user), independent of Supabase Auth |
+
+## Auth
+
+Login/signup is **Supabase Auth only** — the dashboard calls `supabase.auth.signInWithPassword`/`signUp` directly; the backend never issues its own session tokens. `dashboard_server.py` verifies the Supabase JWT Bearer token on every `/api/*` request (`get_auth_payload()` → `supabase_client.verify_supabase_jwt()`). There is no local password database.
 
 ## Storage
 

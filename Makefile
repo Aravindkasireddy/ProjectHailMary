@@ -36,7 +36,7 @@ test:
 
 compile:
 	$(PYTHON) -m compileall -q \
-		jobsearch_paths.py jobsearch_webhook.py user_auth_db.py \
+		jobsearch_paths.py jobsearch_webhook.py \
 		dashboard_server.py find_and_scrape_jobs.py scrape_jobs.py \
 		scripts/
 
