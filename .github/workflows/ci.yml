@@ -72,3 +72,25 @@ jobs:
       - name: Build
         working-directory: dashboard
         run: npm run build
+
+  deploy:
+    name: Deploy to prod (GCP VM)
+    needs: [python, dashboard]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ secrets.PROD_APP_DIR }}
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose up --build -d
+            sleep 5
+            curl -sf http://localhost:${JOBSEARCH_API_HOST_PORT:-8080}/api/health
