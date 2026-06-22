@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -117,6 +118,19 @@ def fetch_single_job_page(job_url: str, company_hint: str = "") -> List[Dict[str
 def fetch_jobs(careers_url: str, company_hint: str = "", max_jobs: Optional[int] = None) -> List[Dict[str, Any]]:
     if max_jobs is None:
         max_jobs = MAX_GENERIC_JOBS
+
+    from company_scraper.scrapers import apify_client
+
+    if apify_client.is_configured():
+        try:
+            rows = apify_client.fetch_jobs_via_apify(careers_url, company_hint, max_jobs=max_jobs)
+            if rows:
+                return rows[:max_jobs]
+        except Exception as e:
+            logging.getLogger("company_scraper").warning(
+                "apify generic scrape failed for %s, falling back to local: %s", careers_url, e
+            )
+
     if not _robots_allowed(careers_url):
         return []
     cap = min(GENERIC_LISTING_LINK_CAP, max(200, max_jobs * 4))

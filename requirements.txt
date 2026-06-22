@@ -9,3 +9,4 @@ httpx>=0.25.0
 supabase>=2.3.0
 PyJWT[crypto]>=2.8.0
 playwright-stealth>=1.0.6
+apify-client>=1.7.0

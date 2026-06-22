@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict, List
 from urllib.parse import urlparse
@@ -24,6 +25,18 @@ def _extract_job_links(page) -> List[str]:
 
 
 def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 24) -> List[Dict[str, Any]]:
+    from company_scraper.scrapers import apify_client
+
+    if apify_client.is_configured():
+        try:
+            rows = apify_client.fetch_workday_jobs_via_apify(careers_url, company_hint)
+            if rows:
+                return rows[:500]
+        except Exception as e:
+            logging.getLogger("company_scraper").warning(
+                "apify workday scrape failed for %s, falling back to local Playwright: %s", careers_url, e
+            )
+
     time.sleep(2)
     seen: set[str] = set()
     rows: List[Dict[str, Any]] = []

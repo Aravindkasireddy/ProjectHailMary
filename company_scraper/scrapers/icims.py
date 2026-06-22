@@ -11,6 +11,13 @@ from bs4 import BeautifulSoup
 from company_scraper.http_utils import get_session, request_with_retry
 from company_scraper.url_normalize import canonical_job_url
 
+# NOTE: fantastic-jobs/jobs-scraper (used for Workday/generic) does NOT support
+# iCIMS — confirmed live (it logs "Skipping unsupported URL" for icims.com
+# links) and its documented platform list (Workday, Greenhouse, Ashby, Lever,
+# BambooHR, JazzHR, Personio, Recruitee, Rippling, Rival, Teamtailor, JOIN.com)
+# excludes it. No dedicated iCIMS actor was found on Apify Store either, so
+# this stays local-only HTML scraping until one exists.
+
 
 def fetch_jobs(careers_url: str, company_hint: str = "", max_pages: int = 25) -> List[Dict[str, Any]]:
     sess = get_session()
