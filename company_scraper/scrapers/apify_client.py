@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 log = logging.getLogger("company_scraper.apify")
 
@@ -30,9 +32,52 @@ GENERIC_JOBS_ACTOR = "fantastic-jobs/jobs-scraper"
 # rate vs. 59-73% for other Workday actors on Apify Store as of 2026-06.
 WORKDAY_JOBS_ACTOR = "fantastic-jobs/workday-jobs-scraper"
 
+# Hostname patterns for the platforms GENERIC_JOBS_ACTOR actually supports
+# (Greenhouse/Lever/Workday already have their own direct-API or dedicated-actor
+# paths and never reach this check; this only matters for the "generic" bucket).
+# Confirmed live 2026-06-22: calling the actor against an unsupported host (e.g.
+# a Salesforce-style custom careers site) logs "Skipping unsupported URL" and
+# returns 0 items every time, burning a full run of the daily Apify quota for
+# nothing. Checking the host first lets generic.py skip straight to local
+# Playwright for those instead of paying for a call that can never succeed.
+_SUPPORTED_GENERIC_HOST_PATTERNS = (
+    re.compile(r"\.bamboohr\.com$", re.I),
+    re.compile(r"\.applytojob\.com$", re.I),  # JazzHR
+    re.compile(r"\.jazz\.co$", re.I),
+    re.compile(r"\.personio\.(com|de)$", re.I),
+    re.compile(r"\.recruitee\.com$", re.I),
+    re.compile(r"ats\.rippling\.com$", re.I),
+    re.compile(r"\.rivalapp\.com$", re.I),
+    re.compile(r"\.teamtailor\.com$", re.I),
+    re.compile(r"(^|\.)join\.com$", re.I),
+    re.compile(r"\.ashbyhq\.com$", re.I),
+    re.compile(r"\.myworkdayjobs\.com$", re.I),
+    re.compile(r"\.myworkdaysite\.com$", re.I),
+    re.compile(r"\.greenhouse\.io$", re.I),
+    re.compile(r"\.lever\.co$", re.I),
+)
+
 
 def is_configured() -> bool:
     return bool((os.environ.get("APIFY_API_TOKEN") or "").strip())
+
+
+def generic_actor_likely_supports(url: str) -> bool:
+    """Best-effort check of whether GENERIC_JOBS_ACTOR's supported-platform list
+    is likely to recognize this URL's host, to avoid burning Apify quota on a
+    call that's certain to return 0 items (e.g. Salesforce's custom careers site).
+
+    This is intentionally conservative in the *permissive* direction: an
+    unrecognized-but-actually-supported host just costs one wasted call (same
+    as today, no regression); a recognized host always gets the Apify attempt.
+    """
+    try:
+        host = (urlparse(url).netloc or "").lower()
+    except Exception:
+        return True
+    if not host:
+        return True
+    return any(p.search(host) for p in _SUPPORTED_GENERIC_HOST_PATTERNS)
 
 
 def _max_runs_per_day() -> int:

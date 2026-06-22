@@ -121,7 +121,7 @@ def fetch_jobs(careers_url: str, company_hint: str = "", max_jobs: Optional[int]
 
     from company_scraper.scrapers import apify_client
 
-    if apify_client.is_configured():
+    if apify_client.is_configured() and apify_client.generic_actor_likely_supports(careers_url):
         try:
             rows = apify_client.fetch_jobs_via_apify(careers_url, company_hint, max_jobs=max_jobs)
             if rows:

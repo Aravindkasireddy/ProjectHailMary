@@ -78,14 +78,50 @@ def test_generic_falls_back_to_local_when_apify_raises(monkeypatch):
     from company_scraper.scrapers import generic
 
     monkeypatch.setattr(apify_client, "is_configured", lambda: True)
+    monkeypatch.setattr(apify_client, "generic_actor_likely_supports", lambda url: True)
     monkeypatch.setattr(
         apify_client, "fetch_jobs_via_apify", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
     )
     # Force the local path to short-circuit cheaply instead of hitting the network.
     monkeypatch.setattr(generic, "_robots_allowed", lambda url: False)
 
-    rows = generic.fetch_jobs("https://example.com/careers", "Acme")
+    rows = generic.fetch_jobs("https://jobs.ashbyhq.com/acme", "Acme")
     assert rows == []  # Apify's exception must never propagate; local fallback ran instead
+
+
+def test_generic_actor_likely_supports_known_and_unknown_hosts():
+    supported = [
+        "https://jobs.ashbyhq.com/openai",
+        "https://boards.greenhouse.io/stripe",
+        "https://jobs.lever.co/netflix",
+        "https://company.myworkdayjobs.com/External",
+        "https://acme.bamboohr.com/jobs",
+    ]
+    unsupported = [
+        "https://www.salesforce.com/jobs",
+        "https://www.randomstartup.io/careers",
+    ]
+    for url in supported:
+        assert apify_client.generic_actor_likely_supports(url) is True, url
+    for url in unsupported:
+        assert apify_client.generic_actor_likely_supports(url) is False, url
+
+
+def test_generic_skips_apify_call_for_unsupported_host(monkeypatch):
+    from company_scraper.scrapers import generic
+
+    monkeypatch.setattr(apify_client, "is_configured", lambda: True)
+    called = {"apify": False}
+
+    def fake_fetch(*a, **k):
+        called["apify"] = True
+        return [{"job_url": "https://x", "job_title": "t"}]
+
+    monkeypatch.setattr(apify_client, "fetch_jobs_via_apify", fake_fetch)
+    monkeypatch.setattr(generic, "_robots_allowed", lambda url: False)
+
+    generic.fetch_jobs("https://www.salesforce.com/jobs", "Salesforce")
+    assert called["apify"] is False  # never attempted - host isn't on the actor's supported list
 
 
 def test_workday_falls_back_to_local_when_apify_raises(monkeypatch):
