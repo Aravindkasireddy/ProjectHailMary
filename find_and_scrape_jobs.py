@@ -122,6 +122,17 @@ current_key_index = 0
 FOUND_URLS_LOCK = threading.Lock()
 DRY_URLS_LOCK = threading.Lock()
 
+# Playwright's sync API is not safe to drive from multiple threads concurrently:
+# one thread's browser crash corrupts the shared driver state for every other
+# thread mid-call, surfacing as "'PlaywrightContextManager' object has no
+# attribute '_playwright'" across all of them (confirmed live 2026-06-22 - a
+# single crashed browser cascaded into every concurrent LinkedIn scrape thread
+# falling back to the much slower/less reliable LLM parser). Serializing all
+# sync_playwright() usage behind this lock trades concurrency for correctness;
+# the ThreadPoolExecutor callers still parallelize the non-Playwright parts of
+# each task (HTTP requests, parsing), just not the browser session itself.
+PLAYWRIGHT_LOCK = threading.Lock()
+
 def add_if_new_url(url, found_urls):
     with FOUND_URLS_LOCK:
         if url in found_urls:
@@ -685,7 +696,7 @@ def fetch_with_playwright(url):
         try:
             # Randomized pre-navigation delay (1-3s)
             time.sleep(random.uniform(1.0, 3.0))
-            with sync_playwright() as p:
+            with PLAYWRIGHT_LOCK, sync_playwright() as p:
                 proxy_str = get_random_proxy()
                 proxy_obj = get_playwright_proxy(proxy_str)
                 
