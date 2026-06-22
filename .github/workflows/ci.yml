@@ -63,9 +63,8 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
-      - name: Lint (informational)
+      - name: Lint
         working-directory: dashboard
-        continue-on-error: true
         run: npm run lint
 
       - name: Build
@@ -97,3 +96,17 @@ jobs:
             docker compose up --build -d
             sleep 5
             curl -sf http://localhost:${JOBSEARCH_API_HOST_PORT:-8080}/api/health
+
+  notify-on-failure:
+    name: Notify on CI/deploy failure
+    needs: [python, dashboard, deploy]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Discord alert
+        if: ${{ secrets.DISCORD_BOT_TOKEN != '' && secrets.DISCORD_CHANNEL_ID != '' }}
+        run: |
+          curl -sf -X POST "https://discord.com/api/v10/channels/${{ secrets.DISCORD_CHANNEL_ID }}/messages" \
+            -H "Authorization: Bot ${{ secrets.DISCORD_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\": \"⚠️ CI/CD failed on main (${{ github.sha }})\\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"

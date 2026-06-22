@@ -35,10 +35,11 @@ Cloud Infrastructure Engineer
 DevSecOps
 Site Reliability Engineer (SRE)
 Continuous Integration (CI/CD)
+System Engineer
 Data Platform Engineer
+Machine Learning Engineer (MLOps)
+AI Platform Engineer (AIOps)
 OutOfScope
-
-Default discovery/scrape `target_titles` use the same strings as above **except** `OutOfScope` (see `jobsearch_constants.DEFAULT_TARGET_TITLES`).
 
 ---
 
@@ -50,6 +51,42 @@ Choose a more specialized label when one domain clearly dominates the role respo
 
 Do not promote a role into a specialist label from tool mentions alone. Specialist labels require evidence of ownership, architecture, lifecycle responsibility, standards-setting, or primary delivery scope in that domain.
 
+---
+
+## ROLE SIGNAL EVIDENCE MODEL
+
+Use four signal layers for every active MAAS role. This is the current MAAS standard.
+
+1. Core responsibility signals decide classification. They describe work the consultant must have performed, such as owning CI/CD release workflows, defining SLOs, triaging production incidents, operating Kubernetes clusters, building Terraform modules, automating Linux patching, or running data pipeline reliability.
+
+2. Expanded workflow/tool signals strengthen a classification but cannot decide it alone. Tools such as Kubernetes, Terraform, Jenkins, Datadog, Spark, Airflow, Vault, or Azure DevOps are supporting evidence only when tied to ownership, troubleshooting, lifecycle, production, or automation responsibilities.
+
+3. Implicit responsibility phrases count when the JD describes work without naming the exact tool. Examples:
+- "reduce MTTR" → Site Reliability Engineer (SRE)
+- "improve deployment safety" → DevOps Engineer or Continuous Integration (CI/CD)
+- "self-service developer workflows" → Platform Engineering
+- "standardize provisioning" → Cloud Automation Engineer
+- "keep production environments stable" → DevOps Engineer, SRE, or Cloud Infrastructure Engineer depending on scope
+- "pipeline reliability and data quality" → Data Platform Engineer
+
+4. Negative signals prevent keyword forcing. If the same tools appear inside product software development, customer enablement, generic support, retired cloud security/network/database specialist work, BI/reporting-only work, or monitoring-only escalation, do not force an active MAAS role.
+
+Optional-only signals are non-blocking. Terms under nice-to-have, preferred, optional, bonus, plus, familiarity, or exposure sections may support rationale, but they must not trigger retired-role, niche-domain/product, software-development-dominant, generic-support, or role-alignment hard blocks unless the title or core required responsibilities make that risk central.
+
+Classification should answer: "What prior-company use cases would the consultant need to explain in interview?" Prefer the role whose expected use cases best match the JD responsibilities.
+
+Recent MAAS use-case anchors:
+- SRE: incident response, SLO/SLI/SLA, observability setup, alert-noise reduction, Kubernetes reliability, RCA/postmortems, on-call, production performance tuning.
+- DevOps: CI/CD pipelines, multi-environment deployment, Docker/Kubernetes deployment, release automation, rollback, secrets/certificates, deployment health monitoring.
+- Cloud Automation: reusable Terraform/IaC modules, multi-account/environment provisioning, drift detection, Ansible/config automation, cost/DR automation.
+- CI/CD: Jenkins/GitHub Actions/Azure DevOps ownership, build agents, artifacts, branch protection, rollback workflow, pipeline observability.
+- Platform Engineering: Kubernetes platform support, GitOps, internal developer platform, reusable deployment templates, RBAC/secrets/policy, platform observability.
+- Cloud Infrastructure: hybrid/cloud infrastructure, VM/server lifecycle, patching, backup/DR, infrastructure health monitoring, server/storage/network incident resolution.
+- DevSecOps: security gates in CI/CD, secrets management, IAM/RBAC, image/dependency scanning, policy checks, compliance evidence automation.
+- System Engineer: RHEL/Linux administration, Ansible/Bash/Python automation, systemctl/journalctl troubleshooting, patch management, AD/SSSD, storage/capacity, monitoring/logging.
+- Data Platform: Databricks/Spark/Airflow/dbt/Kafka pipelines, lakehouse/warehouse operations, data quality, orchestration, governance, pipeline monitoring.
+- MLOps/AIOps: model/AI workload platform support, GPU/AI infrastructure, model serving, vector/embedding pipelines, ML/AI observability, automated remediation.
+
 Examples:
 
 Database systems dominate → OutOfScope
@@ -59,7 +96,8 @@ Kubernetes platform ownership dominates → Platform Engineering
 Reliability / incident response dominates → Site Reliability Engineer (SRE)
 Security embedded in delivery pipelines dominates → DevSecOps only when CI/CD and delivery guardrails dominate; cloud security architecture roles are OutOfScope
 
-Retired MAAS target roles: Cloud Security Engineer, Cloud Network Engineer, Database Engineer, and Cloud Database Engineer. Do not classify jobs into these families. If one of these retired families is the primary role nature, return strongest_label OutOfScope, apply_decision DO_NOT_APPLY, and include red flag "Retired MAAS role family".
+Retired MAAS target roles: Cloud Security Engineer, Cloud Network Engineer, Database Engineer, Cloud Database Engineer, MongoDB DBA, MSSQL DBA, MySQL DBA, Oracle DBA, and PostgreSQL DBA. Do not classify jobs into these families. If one of these retired families is the primary role nature, return strongest_label OutOfScope, apply_decision DO_NOT_APPLY, and include red flag "Retired MAAS role family".
+Database Engineer and all DBA-specific role families are retired MAAS target roles; keep Data Platform Engineer active when the role is pipeline/lakehouse/ETL/platform-data engineering rather than database administration.
 
 ---
 
@@ -106,8 +144,8 @@ Also flag customer-facing work when 3+ of these appear and there is no strong sy
 
 If triggered:
 
-strongest_label = OutOfScope  
-apply_decision = DO_NOT_APPLY  
+strongest_label = OutOfScope
+apply_decision = DO_NOT_APPLY
 
 STOP — DO NOT CONTINUE TO SCORING
 
@@ -115,8 +153,8 @@ STOP — DO NOT CONTINUE TO SCORING
 
 ### IMPORTANT RULE
 
-Tools (Terraform, Kubernetes, AWS, CI/CD)  
-DO NOT override role nature  
+Tools (Terraform, Kubernetes, AWS, CI/CD)
+DO NOT override role nature
 
 Tools ≠ Engineering ownership
 
@@ -152,8 +190,8 @@ Do not classify from keyword stacking alone. For example:
 * Kubernetes mention alone does NOT mean Platform Engineering
 * Terraform mention alone does NOT mean Cloud Automation Engineer
 * Prometheus/Grafana mention alone does NOT mean Site Reliability Engineer (SRE)
-* IAM mention alone does NOT mean Cloud Security Engineer
-* SQL/database mention alone does NOT mean Database Engineer
+* IAM mention alone does NOT mean DevSecOps
+* SQL/database mention alone does NOT mean Data Platform Engineer
 
 Role-nature gate takes precedence over tool mentions.
 If the role is primarily customer-facing technical enablement, treat it as OutOfScope even when DevOps/cloud tools are listed.
@@ -171,7 +209,10 @@ The following roles belong to one MAAS DevOps-family ecosystem, but they are NOT
 * DevSecOps
 * Site Reliability Engineer (SRE)
 * Continuous Integration (CI/CD)
+* System Engineer
 * Data Platform Engineer
+* Machine Learning Engineer (MLOps)
+* AI Platform Engineer (AIOps)
 
 Use the specialized label when that domain is primary. Use DevOps Engineer when the role is broadly cross-functional and no specialist domain clearly dominates.
 
@@ -185,9 +226,12 @@ When scores are close, use this precedence:
 2 Platform Engineering
 3 DevSecOps
 4 Data Platform Engineer
+5 Machine Learning Engineer (MLOps)
+6 AI Platform Engineer (AIOps)
 7 Cloud Automation Engineer
 8 Site Reliability Engineer (SRE)
 13 Continuous Integration (CI/CD)
+14 System Engineer
 15 DevOps Engineer
 
 ---
@@ -222,36 +266,51 @@ Hard rule: if any item below is present, you MUST add the matching red flag and 
 - If any of these appear: add red_flag: "Work authorization restriction"
 
 ### Experience requirement violation
-- any requirement ≥8 years
-- ranges where upper bound ≥8
-- no experience mentioned
+- Do not add a red_flag when no experience requirement is mentioned.
+- For no-experience-mentioned jobs, judge the JD by MAAS role substance, responsibilities, tools, production ownership, and JD specificity.
+- Explicit experience requirements above the allowed cap are blockers.
+- When a JD gives a year range, always evaluate the range by the lower limit only.
+- Ranges are blockers only when the lower limit is above the allowed cap.
 - treat written numbers the same as digits: three, four, five, six, seven, eight, nine, ten
 - treat plus phrasing the same as numeric plus: 3+, 4+, 5+, 6+, 7+, three plus, five plus, seven plus
 Allowed experience ranges (non-SRE): 3 / 3+ / 4 / 4+ / 5 / 5+ / 6 / 6+
-ranges where maximum ≤6
-Allowed experience ranges (SRE): 5 / 5+ / 6 / 6+ / 7 / 7+
-ranges where maximum ≤7
+ranges where minimum ≤6
+Allowed experience ranges (SRE): 3 / 3+ / 4 / 4+ / 5 / 5+ / 6 / 6+ / 7 / 7+
+ranges where minimum ≤7
+- Practical SRE roles with 3+ or 4+ years are allowed when the JD is portable production reliability work such as incident response, observability, SLO/SLI/SLA support, on-call operations, Kubernetes reliability, production troubleshooting, alert tuning, runbooks, RCA/postmortems, or service health.
+- Do not block practical 3+ or 4+ SRE jobs solely because the SRE title previously implied 5+ years. Block only when the explicit minimum required years exceed 7, the role is Principal/Architect/Lead/Manager, or the responsibilities require senior/staff ownership beyond MAAS consultant positioning.
+- Do not treat consulting environment language, modest travel requirements, or preferred/exposure-only vendor mentions as hard blockers. Examples like "consulting environment", "travel required (10%)", or "Oracle EPM domain exposure preferred" may appear in rationale, but they should only block when the same niche/domain expertise is truly required in the core responsibilities.
 - If above the allowed cap: add red_flag: "Experience requirement violation"
 
 ### Seniority / title violation
 - Manager / Director / Principal / Architect / Lead
-- Senior and Staff are allowed only when total experience requirement is ≤7 years
-- If experience >7 years: treat it as R3
+- Mid, Senior, Sr., and Staff are allowed when no explicit years are stated.
+- Senior and Staff are allowed when the experience requirement is within the cap.
+- If experience is above the cap: treat it as R3.
 - If the title itself violates this rule: add red_flag: "Seniority / title violation"
 
 ### Out of scope
 - Pure QA
-- Pure development
+- Pure software/application/product development
 - EDI
-- Desktop support
-- Data science
-- If present: add red_flag: "Out of scope"
+- Desktop support / helpdesk / end-user support
+- Generic technical support / application support / ticket handling
+- Monitoring-only or escalation-only operations
+- Data science / analytics / BI / reporting-heavy roles
+- Optional BI visualization tools such as Tableau, Power BI, or Looker do NOT make a job out of scope by themselves when the core responsibilities are ETL, data pipelines, orchestration, data warehouse/lake, data quality, or portable data platform operations.
+- Customer-facing solution engineering, sales engineering, pre-sales, technical account management, customer success, demos, POCs, workshops, onboarding customers, or advising prospects
+- Domain/product-specialist roles requiring systems such as Salesforce, SAP, ServiceNow, Workday, Epic, Cerner, HL7/FHIR, Guidewire, Duck Creek, Calypso, Murex, or similar non-portable platforms
+- Retired MAAS role families: DBA/database admin, cloud database, cloud network, cloud security, Windows admin, generic support/admin
+- Software Engineer / Software Developer / Backend / Frontend / Full Stack / API / Mobile roles unless infrastructure/platform/SRE/CI-CD/cloud operations is clearly the primary ownership
+- If present and dominant: add red_flag: "Out of scope"
+- Do not mark OutOfScope when the job is 50%+ aligned to MAAS objectives through DevOps, SRE, platform, Kubernetes, CI/CD, cloud automation, cloud infrastructure, data platform, release engineering, or AI/ML infrastructure. Put those into MAAS review/posting flow instead.
 
-### Non-US Location
-- Treat jobs explicitly restricted to locations outside the United States as DO_NOT_APPLY.
-- Examples: "UK only", "EMEA only", "Remote within Canada", "Must be located in Europe", "LATAM only", "India based".
-- Do NOT trigger this if the job is globally/fully remote without a country restriction, or if it can be worked remotely from the US.
-- If present: add red_flag: "Non-US Location restriction"
+### Generic support/admin role
+- Jobs that are primarily helpdesk, desktop support, end-user support, ticket handling, application support, generic technical support, monitoring-only support, escalation-only operations, or basic system administration are too generic for MAAS submissions.
+- MAAS growth/training/placement lanes are DevOps, SRE, platform engineering, data platform, CI/CD, Kubernetes, cloud automation, and cloud infrastructure.
+- Do NOT submit profiles when the JD lacks concrete ownership in those lanes, such as automation, CI/CD/release engineering, infrastructure as code, Kubernetes/platform operations, production reliability, observability ownership, incident response, data platform operations, or cloud infrastructure operations.
+- Production support is eligible only when the JD shows real production systems ownership, incident/reliability work, tooling, automation, or operational engineering. Generic ticket support or alert escalation is not enough.
+- If triggered: add red_flag: "Generic support/admin role" and set apply_decision = DO_NOT_APPLY.
 
 ### Software development dominant role
 - Treat Software Engineer, Software Developer, Backend, Frontend, Full Stack, Application Developer, API Engineer, Mobile, Java/Python/Node/React/Angular/Web Developer roles as DO_NOT_APPLY when the primary work is application/product feature delivery, APIs, UI, business logic, microservices, SDKs, or general software development.
@@ -262,6 +321,7 @@ ranges where maximum ≤7
 ### Niche domain/product expertise requirement
 - If the job requires hands-on/direct/proven/prior experience or expertise with niche domain systems, vendor platforms, or industry-specific products instead of portable MAAS training tools, add red_flag: "Niche domain/product expertise requirement".
 - Examples include required experience with Metriport, Epic, Cerner, EHR/EMR, HL7, FHIR, healthcare interoperability, Salesforce, SAP, ServiceNow, Workday, Guidewire, Duck Creek, Calypso, or Murex.
+- Do NOT trigger this when the same niche terms appear only under nice-to-have, preferred, optional, bonus, plus, familiarity, or exposure sections.
 - Do NOT trigger this just because the company is in healthcare, finance, insurance, telecom, or another industry.
 - Do NOT trigger this for generic portable engineering tools such as AWS, Azure, GCP, Terraform, Kubernetes, Docker, Jenkins, GitHub Actions, GitLab CI, Prometheus, Grafana, Datadog, Splunk, Linux, Python, Bash, or CI/CD.
 - If triggered: set strongest_label to the closest engineering label only if useful for review, but set apply_decision = DO_NOT_APPLY.
@@ -273,10 +333,9 @@ ranges where maximum ≤7
 - Do NOT trigger this for normal portable requirements like AWS, Azure, Kubernetes, Terraform, Linux, CI/CD, monitoring, incident response, scripting, networking fundamentals, or cloud operations.
 - If the risk is only a nice-to-have or can be handled by resume tailoring with supported consultant evidence, do not add the red flag; include it in rationale instead.
 
-### Salary rule
-- Salaried full-time: minimum salary < $80k → DO_NOT_APPLY
-- Hourly: ≤ $50/hr → DO_NOT_APPLY
-- If salary is not listed, do not trigger
+### Compensation rule
+- Salary/rate should not create a red flag or DO_NOT_APPLY decision.
+- If compensation is listed, keep it in rationale only when useful for staff review.
 
 If red_flags is non-empty:
 MUST set apply_decision = DO_NOT_APPLY
@@ -302,214 +361,6 @@ pure scrum master / delivery coordination without hands-on engineering scope
 
 --------------------------------------------------
 ---
-## DATABASE ENGINEER RULE
-
-Database Engineer is retired. When database infrastructure dominates and the work is primarily database administration, reliability, performance, tuning, recovery, or platform support, classify as OutOfScope with red flag "Retired MAAS role family".
-
-Signals:
-
-database administration
-replication
-backup and recovery
-query optimization
-database clustering
-performance tuning
-capacity planning
-high availability
-database patching
-schema performance support
-
-Expanded Signals:
-
-query indexing strategies
-transaction tuning
-connection pooling
-database failover handling
-data consistency enforcement
-
-Implicit Signals:
-
-high-throughput systems
-OLTP systems
-data reliability ownership
-
-Negative Signals:
-
-only writing application queries
-ORM-only usage
-no database ownership
-
-Technologies:
-
-SQL Server
-PostgreSQL
-Oracle
-MySQL
-MongoDB
-Redis
-Cassandra
-
-Scoring:
-
-database_score += 3
-
-If performance tuning + HA present:
-
-database_score += 2
-
----
-
-## CLOUD DATABASE ENGINEER RULE
-
-Cloud Database Engineer is retired. When managed cloud database services dominate responsibilities, classify as OutOfScope with red flag "Retired MAAS role family".
-
-Signals:
-
-managed database services
-database migration to cloud
-multi-region database design
-cloud database reliability
-database platform automation
-
-Expanded Signals:
-
-cross-region replication
-serverless database systems
-cloud DB scaling strategies
-disaster recovery planning
-
-Implicit Signals:
-
-cloud-first data architecture
-distributed database systems
-
-Negative Signals:
-
-database usage without ownership
-only writing queries
-
-Technologies:
-
-AWS RDS
-Aurora
-Azure SQL
-Cloud SQL
-Cloud Spanner
-DynamoDB
-Cosmos DB
-
-Scoring:
-
-cloud_database_score += 4
-
-If two or more cloud-managed database services appear:
-
-cloud_database_score += 2
-
-If multi-region architecture present:
-
-cloud_database_score += 2
-
----
-
-## CLOUD NETWORK ENGINEER RULE
-
-Cloud Network Engineer is retired. When network architecture, connectivity design, and traffic engineering are the primary responsibilities of the role, classify as OutOfScope with red flag "Retired MAAS role family".
-
-The role must demonstrate ownership of network design and connectivity patterns, not just usage of networking components.
-
---------------------------------------------------
-SIGNALS
---------------------------------------------------
-
-Core Signals (Strong Indicators):
-- VPC / VNet architecture design
-- routing (route tables, propagation, traffic paths)
-- VPN (site-to-site, client VPN, IPSec)
-- network segmentation (public/private tiers, isolation zones)
-- load balancer architecture (ALB/NLB, Azure LB, Traffic Manager)
-- DNS architecture (public/private DNS, Route53, Azure DNS)
-- hybrid connectivity (on-prem ↔ cloud)
-- transit gateways / virtual WAN / hub-spoke models
-- firewalls (NGFW, cloud-native firewall design)
-- network security groups / ACL design
-
-Expanded Signals (Moderate Indicators):
-- subnet design across AZs or regions
-- traffic routing optimization (failover, weighted routing)
-- latency optimization (edge routing, proximity placement)
-- multi-region network architecture
-- private endpoints / service endpoints
-- network observability (flow logs, traffic analytics)
-- bandwidth / throughput optimization
-- DDoS protection architecture
-
-Implicit Signals (Ownership Indicators):
-- ownership of network topology
-- secure connectivity design across environments
-- defining network standards or patterns
-- leading network architecture decisions
-- collaboration on network security posture
-
---------------------------------------------------
-STRONG DIFFERENTIATORS
---------------------------------------------------
-
-- hub-spoke or mesh network architectures
-- hybrid or multi-cloud connectivity frameworks
-- transit routing layers (TGW, VWAN)
-- cross-region failover and DR networking
-- deep L3/L4 troubleshooting ownership
-
---------------------------------------------------
-NEGATIVE SIGNALS
---------------------------------------------------
-
-- basic networking knowledge only (CIDR, simple subnetting)
-- load balancer usage without architectural ownership
-- application-level routing only (API gateway, ingress)
-- DevOps roles with minor networking mention
-- Kubernetes networking without underlying network design
-- security roles without network architecture ownership
-
---------------------------------------------------
-DISAMBIGUATION
---------------------------------------------------
-
-- networking + infra provisioning → Cloud Infrastructure Engineer
-- networking + security enforcement dominant → OutOfScope when cloud security or cloud network architecture is primary
-- networking limited to service exposure → keep evaluating non-retired DevOps/platform labels
-- observability-focused with minor networking → Site Reliability Engineer (SRE)
-
---------------------------------------------------
-SCORING
---------------------------------------------------
-
-network_score += 3
-
-Boost Conditions:
-
-if hybrid_connectivity or multi_region_networking:
-    network_score += 2
-
-if transit_gateway or hub_spoke or virtual_wan:
-    network_score += 2
-
-if firewall_architecture or network_security_design:
-    network_score += 1
-
-if latency_optimization or traffic_engineering:
-    network_score += 1
-
---------------------------------------------------
-THRESHOLD
---------------------------------------------------
-
-- network_score >= 5 → classify as OutOfScope with red flag "Retired MAAS role family"
-- network_score 3–4 → evaluate competing roles
-- network_score < 3 → do not classify as network-specialist work
----
-
 ## CLOUD INFRASTRUCTURE ENGINEER RULE
 
 Choose Cloud Infrastructure Engineer when compute, systems, virtual machines, and infrastructure operations dominate the role.
@@ -682,7 +533,7 @@ CONFLICT RULE
 
 If Kubernetes is present but NOT owned:
 
-platform_score -= 3  
+platform_score -= 3
 devops_score += 1
 
 --------------------------------------------------
@@ -1129,103 +980,6 @@ THRESHOLD
 - sre_score 3–4 → evaluate competing roles
 - sre_score < 3 → do not classify as Site Reliability Engineer (SRE)
 ---
-
-## CLOUD SECURITY ENGINEER RULE
-
-Cloud Security Engineer is retired. When cloud security architecture, identity, and protection mechanisms dominate the role, classify as OutOfScope with red flag "Retired MAAS role family".
-
-The role must demonstrate ownership of security design, access control, and protection strategies, not just implementation of predefined security tools.
-
---------------------------------------------------
-SIGNALS
---------------------------------------------------
-
-Core Signals (Strong Indicators):
-- IAM architecture (RBAC, ABAC, least privilege design)
-- Zero Trust architecture
-- cloud security architecture (AWS/Azure/GCP)
-- identity federation (cross-account / cross-tenant access)
-- SAML / OIDC / OAuth2
-- security posture management (CSPM tools, compliance monitoring)
-- compliance controls (SOC2, HIPAA, PCI-DSS, ISO 27001)
-- secrets management (Vault, AWS Secrets Manager, Azure Key Vault)
-
-Expanded Signals (Moderate Indicators):
-- encryption strategies (at-rest, in-transit, key management)
-- access control models and governance
-- security policy enforcement (OPA, Sentinel, Azure Policy)
-- threat detection and response integration
-- cloud workload protection (CWPP)
-- vulnerability management and scanning
-- key rotation and certificate management
-- identity lifecycle management
-
-Implicit Signals (Ownership Indicators):
-- ownership of cloud security architecture
-- defining security standards and guardrails
-- enforcing least privilege access across environments
-- managing risk, compliance, and audit readiness
-- collaboration with platform and infra teams on secure design
-
---------------------------------------------------
-STRONG DIFFERENTIATORS
---------------------------------------------------
-
-- designing enterprise IAM and identity federation systems
-- implementing Zero Trust architectures end-to-end
-- building security guardrails using policy-as-code
-- managing multi-account / multi-tenant security models
-- integrating security into platform and infrastructure pipelines
-- leading compliance and audit initiatives
-
---------------------------------------------------
-NEGATIVE SIGNALS
---------------------------------------------------
-
-- security mentioned as secondary concern
-- basic IAM usage without architecture ownership
-- DevOps roles with minor security responsibilities
-- compliance-only roles without technical implementation
-- application security only (no cloud/infrastructure scope)
-
---------------------------------------------------
-DISAMBIGUATION
---------------------------------------------------
-
-- security + DevOps/automation dominant → DevSecOps
-- security + infrastructure/network dominant → OutOfScope when cloud security or cloud network architecture is primary
-- security + platform/Kubernetes dominant → Platform Engineering
-- security tooling only (no architecture ownership) → evaluate DevSecOps only if CI/CD delivery guardrails dominate
-
---------------------------------------------------
-SCORING
---------------------------------------------------
-
-security_score += 4
-
-Boost Conditions:
-
-if iam_architecture and identity_federation:
-    security_score += 2
-
-if zero_trust or policy_as_code:
-    security_score += 2
-
-if encryption or secrets_management:
-    security_score += 1
-
-if compliance_controls and security_posture:
-    security_score += 1
-
---------------------------------------------------
-THRESHOLD
---------------------------------------------------
-
-- security_score >= 5 → classify as OutOfScope with red flag "Retired MAAS role family"
-- security_score = 4 → strong signal, validate no dominant competing domain
-- security_score < 4 → do not classify as security-specialist work
----
-
 
 ## DEVSECOPS RULE
 
@@ -1733,16 +1487,12 @@ THRESHOLD
 
 Initialize domain scores:
 
-database_score = 0
-cloud_database_score = 0
-network_score = 0
 infra_score = 0
 platform_score = 0
 automation_score = 0
 devops_score = 0
 cicd_score = 0
 sre_score = 0
-security_score = 0
 devsecops_score = 0
 system_score = 0
 data_score = 0
@@ -1753,188 +1503,93 @@ aiops_score = 0
 
 ## SIGNAL SCORING
 
-DATABASE SIGNALS
+Use this section as a scoring shortcut only after the role-nature gate. Responsibility evidence beats raw keyword counts.
 
-SQL Server
-PostgreSQL
-Oracle
-MySQL
-MongoDB
-Redis
-Cassandra
+INFRASTRUCTURE WORK EVIDENCE
 
-database_score += 2
-
---------------------------------------------------
-
-CLOUD DATABASE SIGNALS
-
-RDS
-Aurora
-Azure SQL
-Cloud SQL
-Cloud Spanner
-DynamoDB
-Cosmos DB
-
-cloud_database_score += 3
-
---------------------------------------------------
-
-NETWORK SIGNALS
-
-VPC
-VNet
-routing
-VPN
-load balancers
-DNS
-transit gateway
-Virtual WAN
-firewall
-
-network_score += 2
-
---------------------------------------------------
-
-INFRASTRUCTURE SIGNALS
-
-Linux
-Windows Server
-VMware
-virtual machines
-EC2
-Compute Engine
-Azure VM
+- provision, patch, monitor, back up, restore, or decommission Linux/Windows/VM/cloud infrastructure
+- resolve server, storage, DNS, firewall, or cloud-service incidents
+- own hybrid cloud, VM lifecycle, capacity, DR, backup, and infrastructure health
 
 infra_score += 2
 
 --------------------------------------------------
 
-PLATFORM SIGNALS
+PLATFORM WORK EVIDENCE
 
-Kubernetes
-EKS
-AKS
-GKE
-Helm
-OpenShift
-Istio
-ArgoCD
-Flux
+- own Kubernetes/platform lifecycle, cluster upgrades, namespace/environment strategy, or platform reliability
+- build internal developer platform, self-service workflows, reusable Helm/deployment templates, GitOps sync/rollback
+- implement platform RBAC, secrets, policies, image scanning, logs/metrics/alerts
 
 platform_score += 3
 
 --------------------------------------------------
 
-AUTOMATION SIGNALS
+AUTOMATION WORK EVIDENCE
 
-Terraform
-Ansible
-Pulumi
-Infrastructure as Code
-CloudFormation
-ARM templates
+- build reusable Terraform/IaC modules, multi-environment provisioning, state/workspace strategy, plan/apply validation
+- automate cloud/server configuration using Ansible, scripts, ARM/Bicep/CloudFormation/CDK
+- detect drift, standardize provisioning, automate DR/cost/capacity workflows
 
 automation_score += 3
 
 --------------------------------------------------
 
-DEVOPS SIGNALS
+DEVOPS WORK EVIDENCE
 
-CI/CD
-GitHub Actions
-GitLab CI
-Azure DevOps
-Jenkins
-Docker
-cloud automation
+- own end-to-end CI/CD from build to deploy, multi-environment promotion, release automation, rollback, deployment monitoring
+- containerize and deploy services to Kubernetes/EKS/AKS or Docker platforms
+- manage secrets/certificates, production deployment failures, release notes, and operational runbooks
 
 devops_score += 2
 
 --------------------------------------------------
 
-CI/CD SIGNALS
+CI/CD WORK EVIDENCE
 
-build automation
-release engineering
-pipeline orchestration
-artifact repositories
-Azure Pipelines
-GitHub workflows
-GitLab pipelines
+- design Jenkins/GitHub Actions/GitLab/Azure DevOps pipelines, build agents, artifact promotion, package registries
+- troubleshoot dependency, permission, test, Docker, Makefile, artifact, and deployment failures
+- enforce branch protection, release strategy, rollback, audit trails, and pipeline observability
 
 cicd_score += 3
 
 --------------------------------------------------
 
-SRE SIGNALS
+SRE WORK EVIDENCE
 
-Prometheus
-Grafana
-ELK
-Datadog
-Splunk
-observability
-SLO
-SLI
+- own production incident response, on-call, impact analysis, rollback/fix, RCA, postmortems, and runbooks
+- define SLO/SLI/SLA dashboards, alert thresholds, error budgets, and reliability improvements
+- implement observability, reduce alert noise, troubleshoot Kubernetes/service latency, improve MTTR/MTBF
 
 sre_score += 3
 
 --------------------------------------------------
 
-SECURITY SIGNALS
+DEVSECOPS WORK EVIDENCE
 
-IAM
-OIDC
-SAML
-OAuth
-Zero Trust
-compliance
-Secrets Manager
-Key Vault
-
-security_score += 3
-
---------------------------------------------------
-
-DEVSECOPS SIGNALS
-
-SAST
-DAST
-container security
-pipeline security
-IaC scanning
-SCA
-SBOM
+- integrate security gates into build/deploy pipelines: SAST, DAST, image/dependency scanning, IaC policy checks
+- manage secrets, IAM/RBAC, certificates, policy-as-code, audit logs, and compliance evidence automation
+- patch vulnerable dependencies or exposed secrets through secure DevOps workflows
 
 devsecops_score += 3
 
 --------------------------------------------------
 
-SYSTEM SIGNALS
+SYSTEM WORK EVIDENCE
 
-Active Directory
-desktop infrastructure
-endpoint management
-Windows administration
-SCCM
-Intune
+- administer RHEL/Linux/Windows systems, systemctl/journalctl troubleshooting, YUM/DNF patching, service recovery
+- automate routine system administration using Ansible, Bash, Python, PowerShell
+- manage AD/SSSD, storage mounts/capacity, firewall/DNS basics, monitoring/logging, and runbooks
 
 system_score += 2
 
 --------------------------------------------------
 
-DATA SIGNALS
+DATA PLATFORM WORK EVIDENCE
 
-Spark
-Kafka
-Airflow
-data pipelines
-BigQuery
-Redshift
-Snowflake
-Data Factory
+- build and operate Spark/Databricks/Airflow/dbt/Kafka pipelines and lakehouse/warehouse workflows
+- implement medallion/lakehouse pipelines, data quality tests, orchestration, schema changes, lineage/governance
+- monitor data pipeline reliability, streaming ingestion, and production data platform health
 Glue
 Dataproc
 Kinesis
@@ -1987,6 +1642,7 @@ aiops_score += 3
 4. Assign strongest_label using one exact ROLE LABEL value.
 5. Populate other_labels with nearby supporting roles only when technically justified.
 6. Use OutOfScope only when the role is not meaningfully aligned to the MAAS engineering categories.
+7. If the JD aligns 50% or more to MAAS objectives through infrastructure, platform, CI/CD, Kubernetes, cloud automation, SRE, DevOps, data-platform, MLOps/AIOps infrastructure, or release engineering ownership, keep it in MAAS review/posting flow instead of forcing OutOfScope solely because the title is adjacent.
 
 ---
 
@@ -2106,8 +1762,14 @@ Scoring guide:
 
 Status:
 - `pass` when score is 70 or above and no hard red flags exist.
-- `review` when score is 60-69 and no hard red flags exist.
-- `fail` when score is below 60 or any hard red flag exists.
+- `review` when score is 50-69 and no hard red flags exist.
+- `fail` when score is below 50 or any hard red flag exists.
+
+Submission policy:
+- Jobs scoring 50-59 are allowed to post into MAAS for staff review, but they are not consultant-submission or draft-generation eligible.
+- Do not allow consultant profile submissions for jobs below 60% JD MAAS objective alignment.
+- Scores 60-69 are submission-review-only; scores 70+ are the normal pass lane.
+- Software engineer / software development jobs are not MAAS submission targets unless infrastructure, platform operations, Kubernetes/platform ownership, CI/CD/release engineering, observability, incident response, SRE, or cloud infrastructure operations are clearly the primary work.
 
 Hard red flags always force `jd_maas_standard.status = "fail"` even if the score would otherwise be high.
 

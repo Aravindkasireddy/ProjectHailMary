@@ -203,7 +203,7 @@ export default function SettingsPanel({
               <span className="text-xs font-bold text-slate-200">LinkedIn Guest Finder</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Stealthily crawls LinkedIn's public guest listings for your target job titles in the US. Runs out-of-the-box.
+              Stealthily crawls LinkedIn&apos;s public guest listings for your target job titles in the US. Runs out-of-the-box.
             </p>
           </div>
           <div className="bg-slate-950/40 border border-slate-850 p-4 rounded-xl space-y-2">

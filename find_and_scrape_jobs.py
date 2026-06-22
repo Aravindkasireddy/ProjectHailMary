@@ -1696,6 +1696,29 @@ def resolve_career_link(job_title, company_name, jd_text, html=None):
     return None
 
 
+def _resolved_career_url_is_live(url: str) -> bool:
+    """Verify a resolved career URL (search result or LLM-suggested) actually resolves
+    before trusting it as job_url. LLM resolution in particular can hallucinate
+    plausible-looking but fake URLs (placeholder IDs, generic search pages) with no
+    grounding — accepting those unverified is what caused dozens of duplicate rows
+    per (company, title) pair, since each hallucinated guess becomes a new job_url.
+    Conservative: any ambiguity (network error, 401/403/5xx) is treated as "not verified
+    live" so we fall back to the real, stable LinkedIn URL instead of a guess.
+    """
+    try:
+        from job_link_health import check_job_posting_live
+
+        info = check_job_posting_live(url, timeout=8.0)
+        return (
+            not info.get("uncertain")
+            and not info.get("stale")
+            and isinstance(info.get("http_status"), int)
+            and 200 <= info["http_status"] < 300
+        )
+    except Exception:
+        return False
+
+
 def linkedin_job_view_url(url: str) -> str:
     """
     LinkedIn /jobs/search?currentJobId=… is a search shell, not a stable job page.
@@ -1753,6 +1776,9 @@ def scrape_linkedin(url):
                 req_id = id_match.group(1)
             
         resolved_url = resolve_career_link(title, company, jd_text, html)
+        if resolved_url and not _resolved_career_url_is_live(resolved_url):
+            log(f"Discarding unverified resolved career URL (not live): {resolved_url}")
+            resolved_url = None
         final_url = resolved_url if resolved_url else fetch_url
         
         return {
