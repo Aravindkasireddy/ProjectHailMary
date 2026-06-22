@@ -2078,11 +2078,12 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Stale Check button */}
+          {/* Stale Check button (batch local JSON; per-row checks use “Check live” on each card) */}
           {authRole === 'admin' && (
             <button
               onClick={triggerStaleCheck}
               disabled={staleCheckStatus.status === 'running'}
+              title="Admin: batch scan local approved_jobs*.json only. To flag Supabase rows, use “Check live” under each job title."
               className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${staleCheckStatus.status === 'running'
                   ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                   : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
@@ -3146,6 +3147,35 @@ export default function Dashboard() {
                           </div>
                         </div>
 
+                        {/* Per-job URL probe — placed here so it stays visible without scrolling long cards */}
+                        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void checkJobPostingLive(job)}
+                            disabled={checkingLiveJobUrl === job.job_url || !authToken}
+                            className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide border transition-colors ${
+                              checkingLiveJobUrl === job.job_url
+                                ? 'bg-slate-800/90 text-slate-500 border-slate-700 cursor-wait'
+                                : !authToken
+                                  ? 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
+                                  : 'bg-violet-950/50 hover:bg-violet-900/55 text-violet-200 border-violet-800/50 hover:border-violet-600/50'
+                            }`}
+                            title={
+                              !authToken
+                                ? 'Log in to probe the posting URL'
+                                : 'Fetch the posting URL and mark Closed / Likely active (saved to your jobs)'
+                            }
+                          >
+                            <Activity
+                              className={`w-3 h-3 mr-1 ${checkingLiveJobUrl === job.job_url ? 'animate-spin' : ''}`}
+                            />
+                            {checkingLiveJobUrl === job.job_url ? 'Checking…' : 'Check live'}
+                          </button>
+                          <span className="text-[10px] text-slate-500 leading-snug max-w-[14rem]">
+                            HTTP probe on this URL · updates badges and Active-only filter
+                          </span>
+                        </div>
+
                         {job.visa_sponsor && (
                           <div className="mt-3 mb-3 p-4 bg-gradient-to-br from-slate-900/95 to-slate-950/95 border border-blue-900/30 rounded-2xl shadow-xl backdrop-blur-md">
                             {/* Panel Header */}
@@ -3503,33 +3533,15 @@ export default function Dashboard() {
                       {/* Card Actions Bottom */}
                       <div className="mt-5 pt-3.5 border-t border-slate-850 flex items-center justify-between">
 
-                        <div className="flex items-center gap-2 min-w-0">
-                          <button
-                            type="button"
-                            onClick={() => void checkJobPostingLive(job)}
-                            disabled={checkingLiveJobUrl === job.job_url}
-                            className={`inline-flex items-center shrink-0 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors ${
-                              checkingLiveJobUrl === job.job_url
-                                ? 'bg-slate-800/80 text-slate-500 border-slate-700 cursor-wait'
-                                : 'bg-slate-800/60 hover:bg-slate-750 text-slate-200 border-slate-700 hover:border-slate-600'
-                            }`}
-                            title="Fetch the posting URL and detect if it looks closed, active, or inconclusive"
-                          >
-                            <Activity
-                              className={`w-3.5 h-3.5 mr-1 ${checkingLiveJobUrl === job.job_url ? 'animate-spin text-violet-400' : 'text-violet-400'}`}
-                            />
-                            {checkingLiveJobUrl === job.job_url ? 'Checking…' : 'Check live'}
-                          </button>
-                          <a
-                            href={browserOpenJobUrl(job.job_url)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link truncate"
-                          >
-                            View Site
-                            <ExternalLink className="w-3 h-3 ml-1 shrink-0 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform" />
-                          </a>
-                        </div>
+                        <a
+                          href={browserOpenJobUrl(job.job_url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link truncate min-w-0"
+                        >
+                          View Site
+                          <ExternalLink className="w-3 h-3 ml-1 shrink-0 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform" />
+                        </a>
 
                         <div className="flex items-center space-x-2">
                           {activeTab === 'approved' && authRole === 'admin' && (
