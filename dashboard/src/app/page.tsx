@@ -96,6 +96,9 @@ interface Job {
   job_id?: string;
   description_hash?: string;
   id?: string;
+  /** Set by near_dedup.group_and_flag_duplicates on the backend; the original is kept. */
+  is_duplicate?: boolean;
+  duplicate_of?: string | null;
   /** Last on-demand HTTP probe from /api/job/check-live */
   listing_health?: {
     uncertain: boolean;
@@ -1760,11 +1763,13 @@ export default function Dashboard() {
     }
   };
 
-  // Categorize jobs
-  const approvedJobs = jobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0));
-  const rejectedJobs = jobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0)));
-  const pendingJobs = jobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
-  const humanReviewJobs = jobs.filter(j => {
+  // Categorize jobs. Backend flags near-duplicates (near_dedup.group_and_flag_duplicates)
+  // but never removes them from the response, so the UI must filter is_duplicate itself.
+  const dedupedJobs = jobs.filter(j => !j.is_duplicate);
+  const approvedJobs = dedupedJobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0));
+  const rejectedJobs = dedupedJobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0)));
+  const pendingJobs = dedupedJobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
+  const humanReviewJobs = dedupedJobs.filter(j => {
     if (j.archived) return false;
     const p = j.apply_decision_payload;
     const rec =
