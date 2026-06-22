@@ -236,7 +236,8 @@ JOBSEARCH_ROOT=/path/to/Gemini-jobsearch ./scripts/run_pipeline.sh
 On **push** and **pull_request** to `main` (and pushes to `cursor/**` branches), **CI** runs:
 
 - **Python:** `pip install -r requirements.txt`, `pytest`, and `compileall` on core modules.
-- **Dashboard:** `npm ci`, **`npm run build`** (required). **`npm run lint`** runs in CI with *continue on error* until legacy `any`/quote issues in `page.tsx` are cleaned up.
+- **Dashboard:** `npm ci`, **`npm run build`** (required). **`npm run lint`** runs in CI with *continue on error* until legacy `any`/quote issues in `page.tsx` are cleaned up. The build step needs **`NEXT_PUBLIC_SUPABASE_URL`** / **`NEXT_PUBLIC_SUPABASE_ANON_KEY`** as repo secrets — `next build` prerenders `/company-scraper`, which constructs a Supabase client at build time and fails without them.
+- **Deploy** (push to `main` only, after both jobs above pass): SSHes into the production VM and redeploys. See **[Production deployment](#production-deployment)** below.
 
 Workflow file: `.github/workflows/ci.yml`.
 
@@ -251,6 +252,27 @@ Full local gate (**includes strict** `npm run lint`, which may fail until `page.
 ```bash
 make ci
 ```
+
+## Production deployment
+
+Live at **https://jobs.arkfarms.store**, served by a single GCP VM running Docker Compose (API on 8080, web on 3000) behind an Nginx + DNS setup configured directly on the VM (not tracked in this repo — see `deploy/README_GCE.md` for VM provisioning).
+
+**Auto-deploy on push to `main`:** the `deploy` job in `.github/workflows/ci.yml` runs only after both the `python` and `dashboard` CI jobs pass. It SSHes into the VM and runs:
+
+```bash
+git reset --hard origin/main
+docker compose up --build -d
+curl -sf http://localhost:8080/api/health
+```
+
+**Manual approval gate:** the `deploy` job targets a GitHub `production` environment with a required-reviewer rule and admin-bypass disabled — so every deploy (including the maintainer's own pushes) pauses in the Actions UI until manually approved (**Actions → run → "Review pending deployments" → Approve and deploy**). This is a deliberate safety gate between "tests passed" and "code is live," not an oversight.
+
+**One-time setup** (already done for this repo's VM, documented here in case the deploy target ever changes):
+1. On the VM: generate a dedicated key (`ssh-keygen -t ed25519 -f ~/.ssh/gh_deploy_key`), append the `.pub` to `~/.ssh/authorized_keys`.
+2. In GitHub repo secrets: `PROD_SSH_HOST`, `PROD_SSH_USER`, `PROD_SSH_KEY` (the dedicated private key, not a personal one), `PROD_APP_DIR` (path to the repo clone on the VM).
+3. In `Settings → Environments → production`: enable **Required reviewers**, add an approver, and uncheck **"Allow administrators to bypass configured protection rules"** if you want the gate to apply to admins too (otherwise admins skip the approval step).
+
+**Caveat:** `git reset --hard` on deploy discards any uncommitted changes on the VM (not `.env`, which is gitignored). Don't hand-edit files directly on the production VM expecting them to survive the next deploy.
 
 ## CLI options
 

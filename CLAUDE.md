@@ -5,7 +5,7 @@ Multi-tenant job sourcing/matching platform for DevOps/SRE-type roles. Pipeline 
 ## Stack
 - **Backend**: Python 3.11+, stdlib `http.server` (no FastAPI/Flask), Playwright (WebKit) for scraping, BeautifulSoup, Apify (hosted scraping actors, see below), Supabase (Postgres+Auth+RLS), Gemini API for classification, OpenAI for resume tailoring, Notion API, Discord webhooks.
 - **Frontend**: `dashboard/` — Next.js 16.2.6 (App Router), React 19.2.4, Tailwind 4, TypeScript, Supabase JS client.
-- **Infra**: Docker Compose (API on 8080, Web on 3000), GitHub Actions CI.
+- **Infra**: Docker Compose (API on 8080, Web on 3000), GitHub Actions CI + auto-deploy to prod (see "Production deployment" below).
 
 ## Repo layout
 - `find_and_scrape_jobs.py` — Stage 1: Yahoo + ATS job discovery → `scraped_jobs.json`
@@ -58,6 +58,16 @@ Test coverage: `tests/test_apify_scraping.py` covers `_normalize_items()` mappin
 `dashboard_server.py` was a single ~4040-line file: ~50 module-level helper functions plus the `DashboardHandler` HTTP routing class. The pure/standalone helper groups (config persistence, stale-checking, Notion sync, H1B matching, watched-company scheduling, auth) were extracted into the sibling modules listed above in "Repo layout" — same function names/signatures/behavior, just relocated. **`DashboardHandler`'s do_GET/do_POST routing logic itself was deliberately left untouched** — there's no test coverage for the HTTP route layer (the pytest suite tests helpers, not endpoints), so moving ~40 route branches blind was judged too risky for one pass. Where an extracted function needed state still owned by `dashboard_server.py` (`WORKSPACE_DIR`, `resolve_path`, `_invalidate_jobs_cache`, etc.), the new modules do a lazy `import dashboard_server as ds` inside the function body to avoid circular imports while always reading current values. Verified via `import dashboard_server` smoke test, full pytest suite (34 passed, same as before the split), and a live server boot hitting `/api/health` + `/api/health/playwright`.
 
 If you want to go further (route-layer extraction), add HTTP-level tests for the routes you're about to move *first* — there's currently nothing to catch a routing regression.
+
+## Production deployment
+Live at **jobs.arkfarms.store** — a single GCP VM (`8.230.100.65`, user `aravindkasireddy5`, repo cloned at `~/ProjectHailMary`) running Docker Compose (API container on 8080, web container on 3000) behind Nginx + DNS already configured on the VM (not in this repo). GitHub remote for this repo is `Aravindkasireddy/ProjectHailMary`, not `Gemini-jobsearch` — same content, different remote name.
+
+**Pipeline** (`.github/workflows/ci.yml`, `deploy` job): on every push to `main`, after the `python` and `dashboard` test/build jobs both pass, a `deploy` job targeting the `production` GitHub environment SSHes into the VM and runs `git reset --hard origin/main && docker compose up --build -d`, then curls `/api/health` to confirm.
+- **Approval gate**: the `production` environment has a `required_reviewers` rule (reviewer: `Aravindkasireddy`) with **admin-bypass turned off** — meaning every deploy, including the repo owner's own pushes, pauses at the `deploy` job until manually approved in the Actions UI ("Review pending deployments" → check `production` → **Approve and deploy**).
+- **Deploy key**: GitHub Actions uses a dedicated key (`github-actions-deploy`, generated on the VM, added to its own `~/.ssh/authorized_keys`) stored in the `PROD_SSH_KEY` secret — not the maintainer's personal SSH key.
+- **Secrets required** (repo-level, `Settings → Secrets and variables → Actions`): `PROD_SSH_HOST`, `PROD_SSH_USER`, `PROD_SSH_KEY`, `PROD_APP_DIR` (deploy SSH target); `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (needed by the `dashboard` job's `next build` — the `/company-scraper` page prerenders a Supabase client at build time and throws `supabaseUrl is required` without these; this was a real CI failure encountered and fixed, not a hypothetical).
+- **`git reset --hard origin/main` on deploy** wipes any uncommitted changes on the VM (not `.env` — gitignored, untouched). The VM's repo has some pipeline-output JSON files tracked in git that get locally modified by the running pipeline; these are pipeline output, fine to discard on deploy, not user data.
+- Verified end-to-end (2026-06-22): pushed a change, approved the gate, confirmed via direct SSH that the VM's `git log` HEAD matched, containers rebuilt healthy, `/api/health` responded, and a real Apify actor call succeeded from inside the running `api` container (not just locally).
 
 ## Key Supabase tables (`scripts/schema.sql`)
 - `public.jobs` — one row per `(user_id, job_url)`; includes classification, salary, decision, sync state
