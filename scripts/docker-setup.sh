@@ -10,7 +10,7 @@ if [[ ! -f .env ]]; then
   if [[ -f .env.example ]]; then
     cp .env.example .env
     echo "[docker-setup] Created .env from .env.example"
-    echo "[docker-setup] Edit .env and set at least SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (and any Notion/Gemini keys you use)."
+    echo "[docker-setup] Edit .env and set at least SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (and any Gemini keys you use)."
   else
     echo "[docker-setup] ERROR: .env missing and no .env.example found." >&2
     exit 1

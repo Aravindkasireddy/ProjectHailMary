@@ -67,7 +67,7 @@ def test_send_daily_digest_alert_formats_payload(mock_load_config, mock_effectiv
     mock_post.return_value.status_code = 204
     
     jobs = [
-        ({
+        {
             "job_url": "https://example.com/job1",
             "job_title": "SRE",
             "company_name": "Acme",
@@ -75,7 +75,7 @@ def test_send_daily_digest_alert_formats_payload(mock_load_config, mock_effectiv
             "location_work_type": "Remote",
             "confidence_score": 0.95,
             "rationale": "Strong background matches"
-        }, "page_id_1")
+        }
     ]
     
     success = send_daily_digest_alert(jobs, 1)

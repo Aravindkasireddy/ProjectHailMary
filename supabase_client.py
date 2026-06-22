@@ -1,7 +1,6 @@
 # supabase_client.py
 import os
 import json
-import sqlite3
 import jwt
 from datetime import datetime
 from typing import Union
@@ -228,25 +227,19 @@ def upload_user_jobs(user_id: str, email: str):
         approved_path = workspace_dir / f"approved_jobs_{suffix}.json"
         active_path = workspace_dir / f"active_candidate_jobs_{suffix}.json"
         failed_path = workspace_dir / f"failed_candidate_jobs_{suffix}.json"
-        synced_path = workspace_dir / f"synced_jobs_{suffix}.json"
-        
+
         # Helpers
         def load_json(p):
             if os.path.exists(p):
                 with open(p, 'r', encoding='utf-8') as f:
                     return json.load(f)
             return []
-            
+
         scraped_records = load_json(scraped_path)
         approved_records = load_json(approved_path)
         active_records = load_json(active_path)
         failed_records = load_json(failed_path)
-        
-        synced_jobs = {}
-        if os.path.exists(synced_path):
-            with open(synced_path, 'r', encoding='utf-8') as f:
-                synced_jobs = json.load(f)
-                
+
         def clean_confidence(score):
             if score is None:
                 return 100.0
@@ -288,8 +281,6 @@ def upload_user_jobs(user_id: str, email: str):
                     "rationale": job.get("rationale") or existing.get("rationale") or "",
                     "red_flags": red_flags or existing.get("red_flags") or [],
                     "apply_decision_payload": payload or existing.get("apply_decision_payload") or {},
-                    "synced": url in synced_jobs or existing.get("synced", False),
-                    "synced_data": synced_jobs.get(url) or existing.get("synced_data") or {},
                     "scraped_at": job.get("scraped_at") or existing.get("scraped_at") or datetime.utcnow().isoformat(),
                     "stale": bool(job.get("stale", existing.get("stale", False))),
                     "archived": bool(job.get("archived", existing.get("archived", False))),
@@ -307,66 +298,6 @@ def upload_user_jobs(user_id: str, email: str):
         add_jobs(active_records, "Unreviewed", "APPLY")
         add_jobs(failed_records, "Rejected", "DO_NOT_APPLY")
         
-        # Read from sqlite notion reports too
-        sqlite_db_path = workspace_dir / "data" / "notion_job_reports.db"
-        if sqlite_db_path.exists():
-            conn = sqlite3.connect(str(sqlite_db_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notion_job_reports'")
-            if cursor.fetchone():
-                rows = cursor.execute("SELECT * FROM notion_job_reports WHERE user_email = ?", (email,)).fetchall()
-                for row in rows:
-                    url = row["job_url"]
-                    if not url:
-                        continue
-                    existing = jobs_to_upload.get(url, {})
-                    
-                    red_flags = []
-                    if row["red_flags_json"]:
-                        try:
-                            red_flags = json.loads(row["red_flags_json"])
-                        except Exception:
-                            pass
-                            
-                    payload = {}
-                    if row["apply_decision_payload_json"]:
-                        try:
-                            payload = json.loads(row["apply_decision_payload_json"])
-                        except Exception:
-                            pass
-                            
-                    jobs_to_upload[url] = {
-                        "user_id": user_id,
-                        "job_title": row["job_title"] or existing.get("job_title") or "Unknown Title",
-                        "company_name": row["company_name"] or existing.get("company_name") or "Unknown",
-                        "job_url": url,
-                        "requirement_id": row["requirement_id"] or existing.get("requirement_id") or "Unknown",
-                        "job_description": row["job_description"] or existing.get("job_description") or "",
-                        "location_work_type": row["location_work_type"] or existing.get("location_work_type") or "Remote",
-                        "apply_decision": row["apply_decision"] or existing.get("apply_decision") or "APPLY",
-                        "strongest_label": row["strongest_label"] or existing.get("strongest_label") or "DevOps Engineer",
-                        "confidence_score": clean_confidence(row["confidence_score"] or existing.get("confidence_score")),
-                        "rationale": row["rationale"] or existing.get("rationale") or "",
-                        "red_flags": red_flags or existing.get("red_flags") or [],
-                        "apply_decision_payload": payload or existing.get("apply_decision_payload") or {},
-                        "synced": True,
-                        "synced_data": {
-                            "page_id": row["notion_page_id"],
-                            "synced_at": row["synced_at"]
-                        },
-                        "scraped_at": row["date_added"] or existing.get("scraped_at") or datetime.utcnow().isoformat(),
-                        "stale": bool(row["archived"]) or existing.get("stale", False),
-                        "archived": bool(row["archived"]) or existing.get("archived", False),
-                        "pipeline_stage": row["pipeline_stage"] or existing.get("pipeline_stage") or "Approved",
-                        "min_salary": row["min_salary"] if row["min_salary"] is not None else existing.get("min_salary"),
-                        "max_salary": row["max_salary"] if row["max_salary"] is not None else existing.get("max_salary"),
-                        "is_hourly": bool(row["is_hourly"]) or existing.get("is_hourly", False),
-                        "salary_text": row["salary_text"] or existing.get("salary_text"),
-                        "benefits": existing.get("benefits") or []
-                    }
-            conn.close()
-            
         records_to_upload = list(jobs_to_upload.values())
 
         official_only = False

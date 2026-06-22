@@ -8,7 +8,7 @@
 logs/
 *.log
 
-# Local SQLite mirror of Notion-synced jobs (created at runtime)
+# Local SQLite data (users DB, pipeline metrics, etc. -- created at runtime)
 /data/
 
 # Python

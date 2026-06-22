@@ -1,13 +1,13 @@
 # Gemini-jobsearch (MAAS job sourcing)
 
-Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Discovery targets US roles (remote, hybrid, or onsite), optional Notion sync and Discord/Slack webhooks.
+Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Discovery targets US roles (remote, hybrid, or onsite). Supabase (`public.jobs`) is the sole job-data store; optional Discord/Slack webhooks notify on new approved jobs.
 
 **On Windows**, running via **[Docker](#docker-api--dashboard)** is the most reliable path (Playwright + bash pipeline + one command for API + UI).
 
 ### Local data vs Supabase
 
 - **Supabase** holds the live job board (`public.jobs`) and user settings; you can use the dashboard **without** keeping job JSON on disk.
-- The **Python pipeline** (`find_and_scrape_jobs.py`, classify scripts, `dashboard_server.py` upload paths) still **writes JSON and logs under the repo root** by design (and `data/notion_job_reports.db` after Notion syncs). That is normal for this repo today.
+- The **Python pipeline** (`find_and_scrape_jobs.py`, classify scripts, `dashboard_server.py` upload paths) still **writes JSON and logs under the repo root** by design (and `data/app_users.db` for local dashboard login accounts). That is normal for this repo today.
 - To **wipe generated artifacts** on your Mac (job blobs, `data/`, `logs/`, `scratch/`, Next `.next` cache): run **`./scripts/clear_local_jobsearch_data.sh`** (or **`sh ./scripts/clear_local_jobsearch_data.sh`**) or **`./scripts/clear_local_jobsearch_data.sh --yes`** for no prompt. It does **not** delete `.env` or your own folders like `Opt_freindly/`.
 - To avoid writing into the repo for a session, you can set **`JOBSEARCH_ROOT`** to a throwaway directory (see `jobsearch_paths.py`); the app will use that path instead of the clone for workspace files.
 - The **browser** may still keep dashboard auth in **localStorage**; clear site data for your dev URL if you want that gone too.
@@ -24,26 +24,16 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 | `scripts/scrape_and_filter_candidates.py` | Re-scrape / validate + red-flag prefilter → `active_candidate_jobs.json`, `failed_candidate_jobs.json` |
 | `scripts/classify_and_save.py` | Gemini (optional) + rules → `approved_jobs.json` |
 | `company_scraper/` | On-demand **company-targeted** scrape: paste **company name**, **careers URL**, or **one job URL** → discovers listing pages (ATS + fallbacks), collects up to hundreds of roles, filters **IT-related** titles, upserts to Supabase `jobs` via `POST /api/scrape/company` (poll `GET /api/scrape/company/status`) |
-| `dashboard_server.py` | API on **port 8080**, scheduler, Notion + webhook helpers; scrape history **`GET /api/scrape/status`**, **`GET /api/scrape/status/<id>`**, **`GET /api/scrape/active`** |
+| `dashboard_server.py` | API on **port 8080**, scheduler, webhook helpers; scrape history **`GET /api/scrape/status`**, **`GET /api/scrape/status/<id>`**, **`GET /api/scrape/active`** |
 | `dashboard/` | Next.js UI (default **port 3000**); **Company Scraper** UI at `/company-scraper`. The main job board reads **`public.jobs` from Supabase** (local `*.json` files are pipeline staging until you upload/sync). Optional **company-hosted apply URLs only** filter: Settings → **Company-hosted apply URLs only** (stored in **`user_configs.search_official_career_job_urls_only`**); run **`scripts/add_search_official_career_job_urls_only.sql`** once if the column is missing. Logic is shared by `employer_job_url.py` and `dashboard/src/lib/employerJobUrl.ts`. |
 | `Job_classifier_prompt.txt` | Large classifier instructions (policy blocks can be rebuilt from `policy_config.json`) |
 | `config.json` | Target titles, scheduler, **search** tuning, optional `webhook_url` |
 | `policy_config.json` | Salary / experience / visa / clearance knobs for prompt rebuild |
-| `notion_sqlite_mirror.py` | Writes **`data/notion_job_reports.db`** whenever a job is successfully synced to Notion (same core fields as the Notion row) |
+| `user_auth_db.py` | Writes **`data/app_users.db`** — local SQLite store for dashboard login accounts (admin/user), independent of Supabase Auth |
 
-## Notion + local SQLite mirror
+## Storage
 
-Every successful Notion sync from `dashboard_server.py` (manual **Sync**, scheduler auto-sync, or “already in Notion” duplicate hit) **upserts** a row into:
-
-`data/notion_job_reports.db` → table **`notion_job_reports`**
-
-The DB file is gitignored. The **table** is created when **`dashboard_server.py` starts** (or on first successful sync). **Rows appear only after a successful Notion sync** (manual **Sync**, scheduler auto-sync, or `save_to_notion.py`). If `notion_job_reports.db` is **0 bytes** with no tables (e.g. created with `touch`), delete it and restart the server or sync once.
-
-Inspect locally:
-
-```bash
-sqlite3 data/notion_job_reports.db "SELECT job_title, company_name, notion_page_id, synced_at FROM notion_job_reports ORDER BY synced_at DESC LIMIT 10;"
-```
+**Supabase (`public.jobs`) is the sole job-data store.** Local `*.json` files are pipeline staging/audit trail before upload; there is no Notion sync, no Notion SQLite mirror, and no `synced`/`synced_data` job-tracking concept — those were removed along with the Notion integration.
 
 ## Docker (API + dashboard)
 
@@ -61,7 +51,7 @@ Use this for a **single-command** stack: **Python API on 8080** (with **Playwrig
    Or: `chmod +x scripts/docker-setup.sh && ./scripts/docker-setup.sh`  
    This copies **`.env.example` → `.env`** when `.env` is missing, then runs **`docker compose build`**.
 
-3. Edit **`.env`**: set **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**, plus Notion/Gemini/webhooks as needed. Restart containers after changing env: **`docker compose up --build`**.
+3. Edit **`.env`**: set **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**, plus Gemini/webhooks as needed. Restart containers after changing env: **`docker compose up --build`**.
 4. Shell scripts must use **LF** line endings in the container. The repo has **`.gitattributes`** for `*.sh`; if you still see `/bin/bash^M` errors on Windows, re-checkout with LF or run `git add --renormalize .` once.
 
 ### Run
@@ -148,7 +138,6 @@ make docker-pipeline   # full pipeline script inside api
 2. **Environment** — copy `.env.example` to `.env` and set at least:
 
    - `GEMINI_API_KEY` (optional; classifier falls back to keyword rules without it)
-   - `NOTION_TOKEN` / `NOTION_DATABASE_ID` if you use Notion sync
    - `JOBSEARCH_WEBHOOK_URL` (optional; overrides `webhook_url` in `config.json` when set)
 
 3. **Run the API + scheduler**
@@ -181,7 +170,7 @@ make docker-pipeline   # full pipeline script inside api
 2. `scripts/scrape_and_filter_candidates.py` — refreshes postings and applies regex red-flag gates.
 3. `scripts/classify_and_save.py` — applies `candidate_jobs.json` overrides when present, else Gemini / keyword classifier.
 
-When sourcing runs from the **dashboard** with a logged-in Supabase user, **`upload_user_jobs`** merges scoped JSON (`scraped_jobs`, `active_candidate_jobs`, `failed_candidate_jobs`, `approved_jobs`, `synced_jobs`, plus the Notion SQLite mirror) into **`public.jobs`** after **each** stage (and on filter/classify failure with whatever was produced so far). Local JSON remains the pipeline’s working format; **Postgres is the published source for the UI.**
+When sourcing runs from the **dashboard** with a logged-in Supabase user, **`upload_user_jobs`** merges scoped JSON (`scraped_jobs`, `active_candidate_jobs`, `failed_candidate_jobs`, `approved_jobs`) into **`public.jobs`** after **each** stage (and on filter/classify failure with whatever was produced so far). Local JSON remains the pipeline’s working format; **Postgres is the published source for the UI.**
 
 Logs append to `logs/pipeline.log` (server runs) and `logs/scrape.log` (discovery script). Stage timing from **`dashboard_server.py`** scraper steps and from **`scripts/run_pipeline.sh`** is also appended as JSON lines to **`logs/pipeline_metrics.jsonl`** (best-effort). Optional classifier notes from the UI go to **`logs/classifier_feedback.jsonl`**.
 

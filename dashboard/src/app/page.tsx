@@ -76,8 +76,6 @@ interface Job {
   rationale: string;
   red_flags?: string[];
   apply_decision_payload?: DecisionPayload;
-  synced?: boolean;
-  synced_data?: unknown;
   scraped_at?: string;
   posted_at?: string;
   stale?: boolean;
@@ -180,8 +178,7 @@ function jobListPollUnchanged(prev: Job[], next: Job[]): boolean {
       a.scraped_at !== b.scraped_at ||
       a.apply_decision !== b.apply_decision ||
       a.pipeline_stage !== b.pipeline_stage ||
-      a.archived !== b.archived ||
-      a.synced !== b.synced
+      a.archived !== b.archived
     ) {
       return false;
     }
@@ -254,7 +251,6 @@ export default function Dashboard() {
     last_run: null as string | null,
     last_metrics: {} as Record<string, number>,
   });
-  const [notionConnection, setNotionConnection] = useState({ connected: false, message: 'Checking...', dbName: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<
     'approved' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume'
@@ -285,12 +281,10 @@ export default function Dashboard() {
   const handling401Ref = useRef(false);
   const jobsForPollRef = useRef<Job[]>([]);
 
-  // Custom States for Advanced Sourcing, Notion Sync, and Live Logs Console
+  // Custom States for Advanced Sourcing and Live Logs Console
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string | null>(null);
   const [scraperLogs, setScraperLogs] = useState<string[]>([]);
   const [isLogsExpanded, setIsLogsExpanded] = useState(false);
-  const [notionSyncLoading, setNotionSyncLoading] = useState(false);
-  const [notionStatusSyncLoading, setNotionStatusSyncLoading] = useState(false);
 
   // Custom States for Salary Insights and Kanban Board
   const [salaryInsights, setSalaryInsights] = useState<{
@@ -339,7 +333,6 @@ export default function Dashboard() {
   const [joobleApiKeyInput, setJoobleApiKeyInput] = useState('');
 
   // General Loading & Notification UI States
-  const [syncingJobUrl, setSyncingJobUrl] = useState<string | null>(null);
   const [checkingLiveJobUrl, setCheckingLiveJobUrl] = useState<string | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [resettingTitles, setResettingTitles] = useState(false);
@@ -508,22 +501,6 @@ export default function Dashboard() {
       }
     } catch {
       // Silence is golden
-    }
-  };
-
-  const checkNotionStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/test-notion`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setNotionConnection({ connected: true, message: 'Connected', dbName: data.db_name });
-        } else {
-          setNotionConnection({ connected: false, message: data.message, dbName: '' });
-        }
-      }
-    } catch {
-      setNotionConnection({ connected: false, message: 'Offline', dbName: '' });
     }
   };
 
@@ -770,44 +747,6 @@ export default function Dashboard() {
     }
   };
 
-  // Sync approved, unsynced jobs to Notion in bulk
-  const syncAllToNotion = async () => {
-    setNotionSyncLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/sync-notion`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        showStatus(data.message, 'success');
-        fetchData();
-      } else {
-        showStatus(data.message || 'Batch Notion Sync failed.', 'error');
-      }
-    } catch {
-      showStatus('Failed to connect to backend for Notion sync.', 'error');
-    } finally {
-      setNotionSyncLoading(false);
-    }
-  };
-
-  // Sync statuses from Notion back to local SQLite/JSON databases
-  const syncStatusFromNotion = async () => {
-    setNotionStatusSyncLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/sync-notion-status`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        showStatus(data.message, 'success');
-        fetchData();
-      } else {
-        showStatus(data.message || 'Two-way Notion status sync failed.', 'error');
-      }
-    } catch {
-      showStatus('Failed to connect to backend for status check.', 'error');
-    } finally {
-      setNotionStatusSyncLoading(false);
-    }
-  };
-
   // Poll scraper console logs when logs drawer is expanded
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
@@ -935,7 +874,6 @@ export default function Dashboard() {
         setJobs(filterJobsOfficialCareersOnly(deduped, officialOnly));
       }
 
-      checkNotionStatus();
       checkScraperStatus();
       checkStaleStatus();
     } catch {
@@ -1333,32 +1271,6 @@ export default function Dashboard() {
       setJobs(prev => prev.map(j => j.job_url === job_url ? { ...j, archived: true } : j));
     } catch {
       showStatus('Failed to archive job.', 'error');
-    }
-  };
-
-  // Sync Job to Notion
-  const syncJob = async (job: Job) => {
-    setSyncingJobUrl(job.job_url);
-    try {
-      const res = await fetch(`${API_BASE}/api/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_url: job.job_url })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          showStatus(`Synced "${job.job_title}" successfully!`, 'success');
-          // Update status locally
-          setJobs(prev => prev.map(j => j.job_url === job.job_url ? { ...j, synced: true } : j));
-        } else {
-          showStatus(data.message, 'error');
-        }
-      }
-    } catch {
-      showStatus('Notion sync request failed.', 'error');
-    } finally {
-      setSyncingJobUrl(null);
     }
   };
 
@@ -2020,26 +1932,6 @@ export default function Dashboard() {
             Logout
           </button>
 
-          {/* Notion Status */}
-          <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 shadow-inner">
-            <Database className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-xs font-medium text-slate-300">Notion DB:</span>
-            {notionConnection.connected ? (
-              <span className="inline-flex items-center text-xs font-semibold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-800/50">
-                <Check className="w-3 h-3 mr-1" />
-                {notionConnection.dbName || 'Connected'}
-              </span>
-            ) : (
-              <button
-                onClick={checkNotionStatus}
-                className="inline-flex items-center text-xs font-semibold text-rose-400 bg-rose-950/40 px-2 py-0.5 rounded-full border border-rose-800/50 hover:bg-rose-900/30 transition-colors"
-              >
-                <XCircle className="w-3 h-3 mr-1" />
-                Disconnected
-              </button>
-            )}
-          </div>
-
           {/* Webhook Status indicator */}
           {(config.webhook_url || config.webhook_source === 'environment') && (
             <div className="flex items-center space-x-1.5 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 text-xs text-indigo-300">
@@ -2298,7 +2190,7 @@ export default function Dashboard() {
         {/* Toolbar & Filter Tabs */}
         <section className="flex flex-col bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-4 rounded-2xl gap-4 shadow-xl">
 
-          {/* Top Row: Navigation Tabs & Notion Buttons */}
+          {/* Top Row: Navigation Tabs */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
             {/* Navigation Tabs */}
             <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/50 flex-wrap gap-1">
@@ -2383,42 +2275,6 @@ export default function Dashboard() {
                 </>
               )}
             </div>
-
-            {/* Notion Sync Actions */}
-            {authRole === 'admin' && (
-              <div className="flex items-center gap-2 self-start lg:self-auto">
-                <button
-                  type="button"
-                  onClick={syncAllToNotion}
-                  disabled={notionSyncLoading || !notionConnection.connected}
-                  className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
-                    notionSyncLoading
-                      ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
-                      : !notionConnection.connected
-                      ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 border-violet-500/20 text-white shadow-md shadow-violet-500/10'
-                  }`}
-                >
-                  <Database className={`w-3.5 h-3.5 mr-1.5 ${notionSyncLoading ? 'animate-spin' : ''}`} />
-                  {notionSyncLoading ? 'Syncing...' : 'Sync to Notion'}
-                </button>
-                <button
-                  type="button"
-                  onClick={syncStatusFromNotion}
-                  disabled={notionStatusSyncLoading || !notionConnection.connected}
-                  className={`inline-flex items-center px-3 py-1.5 border rounded-xl text-xs font-semibold transition-all shadow-inner active:scale-95 ${
-                    notionStatusSyncLoading
-                      ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
-                      : !notionConnection.connected
-                      ? 'bg-slate-900/40 border-slate-850 text-slate-500 cursor-not-allowed'
-                      : 'bg-slate-900/90 hover:bg-slate-800 border-slate-700 hover:border-slate-600 text-slate-200'
-                  }`}
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${notionStatusSyncLoading ? 'animate-spin' : ''}`} />
-                  {notionStatusSyncLoading ? 'Pulling...' : 'Pull Notion Status'}
-                </button>
-              </div>
-            )}
           </div>
 
           {/* Bottom Row: Search bar & Category filter */}
@@ -3599,34 +3455,7 @@ export default function Dashboard() {
                           </button>
 
                           {/* Action specific buttons */}
-                          {activeTab === 'approved' ? (
-                            authRole === 'admin' && (
-                              <button
-                                onClick={() => syncJob(job)}
-                                disabled={job.synced || syncingJobUrl === job.job_url}
-                                className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold shadow-md transition-all ${job.synced
-                                    ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-800/40 cursor-not-allowed'
-                                    : syncingJobUrl === job.job_url
-                                      ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/10 border border-emerald-500/20 active:scale-95'
-                                  }`}
-                              >
-                                {job.synced ? (
-                                  <>
-                                    <Check className="w-3 h-3 mr-1.5" />
-                                    Synced
-                                  </>
-                                ) : syncingJobUrl === job.job_url ? (
-                                  'Syncing...'
-                                ) : (
-                                  <>
-                                    <Database className="w-3 h-3 mr-1.5" />
-                                    Sync Notion
-                                  </>
-                                )}
-                              </button>
-                            )
-                          ) : (
+                          {activeTab !== 'approved' && (
                             /* If rejected or candidate, show quick Approve Override */
                             authRole === 'admin' && (
                               <button

@@ -1,14 +1,13 @@
-"""Config/policy persistence and synced-jobs tracking helpers.
+"""Config/policy persistence helpers.
 
 Extracted verbatim from dashboard_server.py. These functions depend on
-module-level paths/constants (CONFIG_PATH, POLICY_CONFIG_PATH, SYNCED_PATH,
+module-level paths/constants (CONFIG_PATH, POLICY_CONFIG_PATH,
 WORKSPACE_DIR) and the resolve_path() helper, which still live in
 dashboard_server.py as the single source of truth. They are imported lazily
 inside each function to avoid a circular import at module load time.
 """
 import os
 import json
-from datetime import datetime
 
 
 def load_config(email=None):
@@ -212,30 +211,3 @@ pure scrum master / delivery coordination without hands-on engineering scope
         return False, f"Rebuild failed: {str(e)}"
 
 
-def load_synced_jobs(email=None):
-    import dashboard_server as ds
-
-    path = ds.resolve_path(ds.SYNCED_PATH, email)
-    if os.path.exists(path):
-        try:
-            with open(path, 'r') as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-
-def mark_job_synced(url, page_id, email=None):
-    import dashboard_server as ds
-
-    synced = load_synced_jobs(email)
-    synced[url] = {
-        "page_id": page_id,
-        "synced_at": datetime.utcnow().isoformat()
-    }
-    try:
-        path = ds.resolve_path(ds.SYNCED_PATH, email)
-        with open(path, 'w') as f:
-            json.dump(synced, f, indent=2)
-    except Exception as e:
-        print(f"Error saving synced jobs: {e}")

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Remove local pipeline artifacts (job JSON, logs, Notion SQLite mirror).
+# Remove local pipeline artifacts (job JSON, logs, local SQLite users DB).
+# NOTE: this also deletes data/app_users.db (local dashboard login accounts) --
+# you will need to re-register admin/user accounts after running this.
 # Does NOT delete: .env, tracked config.json / policy_config.json, source code, Opt_freindly/, etc.
 #
 # POSIX sh — safe to run as:  sh ./scripts/clear_local_jobsearch_data.sh

@@ -1558,7 +1558,7 @@ def main():
         if "req_id_override" in cls:
             job["requirement_id"] = cls["req_id_override"]
             
-        # Notion save gate
+        # Approved-category gate
         allowed_categories = {
             "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
             "Cloud Infrastructure Engineer", "DevSecOps",

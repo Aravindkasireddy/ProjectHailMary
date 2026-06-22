@@ -36,8 +36,8 @@ test:
 
 compile:
 	$(PYTHON) -m compileall -q \
-		jobsearch_paths.py jobsearch_webhook.py notion_sqlite_mirror.py \
-		dashboard_server.py find_and_scrape_jobs.py save_to_notion.py scrape_jobs.py \
+		jobsearch_paths.py jobsearch_webhook.py user_auth_db.py \
+		dashboard_server.py find_and_scrape_jobs.py scrape_jobs.py \
 		scripts/
 
 lint-dashboard:

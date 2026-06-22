@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Publish merged local job JSON (+ Notion SQLite mirror) to Supabase public.jobs.
+Publish merged local job JSON to Supabase public.jobs.
 
 Used by scripts/run_pipeline.sh when MAAS_USER_ID and MAAS_USER_EMAIL are set.
 Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env (see supabase_client).

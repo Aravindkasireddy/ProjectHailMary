@@ -120,7 +120,7 @@ export default function SettingsPanel({
           </label>
         </div>
 
-        <p className="text-xs text-slate-500">Sends alerts when new approved jobs are synced to Notion.</p>
+        <p className="text-xs text-slate-500">Sends alerts when new approved jobs are found.</p>
       </div>
 
       {/* Target titles */}

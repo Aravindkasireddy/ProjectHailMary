@@ -1,5 +1,11 @@
 -- schema.sql
 -- Setup jobs and user_configs tables for Gemini-jobsearch on Supabase Postgres database.
+-- Supabase (public.jobs) is the sole job-data store -- Notion sync has been removed.
+-- Note: the live database may still have `synced`/`synced_data` (public.jobs) and
+-- `notion_token`/`notion_database_id` (public.user_configs) columns from the old
+-- Notion integration. They are harmless dead columns and are intentionally left in
+-- place on existing installs (no destructive migration here); this file's
+-- CREATE TABLE statements no longer define them for fresh installs.
 
 -- 1. Create jobs table
 CREATE TABLE IF NOT EXISTS public.jobs (
@@ -17,8 +23,6 @@ CREATE TABLE IF NOT EXISTS public.jobs (
   rationale TEXT,
   red_flags JSONB DEFAULT '[]'::JSONB,
   apply_decision_payload JSONB DEFAULT '{}'::JSONB,
-  synced BOOLEAN DEFAULT false,
-  synced_data JSONB DEFAULT '{}'::JSONB,
   scraped_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
   stale BOOLEAN DEFAULT false,
   archived BOOLEAN DEFAULT false,
@@ -73,8 +77,6 @@ CREATE TABLE IF NOT EXISTS public.user_configs (
   policy_enforce_visa_sponsorship BOOLEAN DEFAULT true,
   policy_enforce_no_clearance BOOLEAN DEFAULT true,
   policy_custom_red_flag_keywords JSONB DEFAULT '[]'::JSONB,
-  notion_token TEXT,
-  notion_database_id TEXT,
   webhook_url TEXT,
   base_resume TEXT,
   jooble_api_key TEXT,

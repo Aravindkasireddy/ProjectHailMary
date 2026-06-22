@@ -129,43 +129,6 @@
             gap: 15px;
         }
 
-        .notion-status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background: var(--bg-surface);
-            padding: 8px 16px;
-            border-radius: 30px;
-            border: 1px solid var(--border-color);
-            font-size: 0.85rem;
-            font-weight: 500;
-            box-shadow: var(--shadow-sm);
-            transition: var(--transition-smooth);
-        }
-
-        .status-indicator {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-
-        .status-checking {
-            background-color: var(--color-warning);
-            box-shadow: 0 0 10px var(--color-warning);
-            animation: blink 1.2s infinite;
-        }
-
-        .status-connected {
-            background-color: var(--color-success);
-            box-shadow: 0 0 10px var(--color-success);
-        }
-
-        .status-disconnected {
-            background-color: var(--color-danger);
-            box-shadow: 0 0 10px var(--color-danger);
-        }
-
         /* Container Layout */
         .container {
             max-width: 1400px;
@@ -207,7 +170,6 @@
         .stat-card.total::before { background-color: var(--color-primary); }
         .stat-card.approved::before { background-color: var(--color-success); }
         .stat-card.rejected::before { background-color: var(--color-danger); }
-        .stat-card.synced::before { background-color: var(--color-info); }
 
         .stat-card:hover {
             transform: translateY(-4px);
@@ -243,7 +205,6 @@
         .stat-card.total .stat-icon { background: var(--color-primary-glow); color: var(--color-primary); }
         .stat-card.approved .stat-icon { background: var(--color-success-glow); color: var(--color-success); }
         .stat-card.rejected .stat-icon { background: var(--color-danger-glow); color: var(--color-danger); }
-        .stat-card.synced .stat-icon { background: var(--color-info-glow); color: var(--color-info); }
 
         /* Toolbar and filters */
         .toolbar {
@@ -522,7 +483,6 @@
 
         .pill.label-primary { background: rgba(99, 102, 241, 0.08); color: var(--color-primary); border-color: rgba(99,102,241,0.2); }
         .pill.label-danger { background: rgba(244, 63, 94, 0.08); color: var(--color-danger); border-color: rgba(244,63,94,0.2); }
-        .pill.label-synced { background: rgba(6, 182, 212, 0.08); color: var(--color-info); border-color: rgba(6,182,212,0.2); }
 
         .card-footer {
             display: flex;
@@ -532,16 +492,6 @@
             border-top: 1px solid var(--border-color);
             margin-top: auto;
         }
-
-        .card-notion-indicator {
-            font-size: 0.8rem;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .indicator-synced { color: var(--color-info); }
-        .indicator-unsynced { color: var(--text-dark); }
 
         /* Modal Overlay */
         .modal-overlay {
@@ -846,10 +796,6 @@
         </div>
         <div class="header-actions">
             <button class="btn" id="btn-settings" title="Configuration & Webhooks Settings"><i class="fa-solid fa-gear"></i> Settings</button>
-            <div class="notion-status" id="notion-status-pill">
-                <span class="status-indicator status-checking" id="notion-indicator"></span>
-                <span id="notion-status-text">Notion Checking...</span>
-            </div>
         </div>
     </header>
 
@@ -882,13 +828,6 @@
                 <div class="stat-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
             </div>
             
-            <div class="stat-card synced">
-                <div class="stat-info">
-                    <h3>Synced to Notion</h3>
-                    <div class="stat-val" id="stat-synced">0</div>
-                </div>
-                <div class="stat-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
-            </div>
         </section>
 
         <!-- New Jobs Collapsible Card -->
@@ -914,17 +853,14 @@
                     <option value="all">All Jobs</option>
                     <option value="approved">Approved</option>
                     <option value="rejected">Filtered / Rejected</option>
-                    <option value="synced">Synced to Notion</option>
-                    <option value="unsynced">Unsynced Approved</option>
                 </select>
             </div>
-            
+
             <div class="actions-group">
                 <div class="scraper-badge" id="scraper-badge-el" style="display: none;">
                     <i class="fa-solid fa-circle-notch fa-spin text-primary"></i>
                     <span id="scraper-badge-msg">Running...</span>
                 </div>
-                <button class="btn" id="btn-test-notion" title="Check connection to Notion API"><i class="fa-solid fa-plug"></i> Test Notion</button>
                 <button class="btn btn-primary" id="btn-run-scraper"><i class="fa-solid fa-rotate"></i> Run Job Sourcing Agent</button>
             </div>
         </section>
@@ -1024,7 +960,6 @@
             <!-- Action Controls inside Modal -->
             <div style="display: flex; gap: 15px; margin-top: 30px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid var(--border-color);">
                 <button class="btn" id="btn-modal-save"><i class="fa-solid fa-floppy-disk"></i> Save Details</button>
-                <button class="btn btn-success" id="btn-modal-sync"><i class="fa-solid fa-cloud-arrow-up"></i> Sync to Notion</button>
             </div>
 
             <!-- Override Block -->
@@ -1083,7 +1018,7 @@
 
             <div class="modal-content-section" style="border-top: 1px solid var(--border-color); padding-top: 20px;">
                 <div class="section-title"><i class="fa-solid fa-bell"></i> Slack / Discord Notification Webhook</div>
-                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">Post styled alerts to your Slack/Discord when a new job is approved and synced to Notion.</p>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">Post styled alerts to your Slack/Discord when new jobs are approved.</p>
                 <div class="form-group">
                     <label for="settings-webhook-url">Webhook URL</label>
                     <div style="display: flex; gap: 10px;">
@@ -1123,32 +1058,6 @@
                         <p>Verify that <code>dashboard_server.py</code> is currently running in your shell.</p>
                     </div>
                 `;
-            }
-        }
-
-        // Check Notion API connection status
-        async function checkNotionConnection() {
-            const ind = document.getElementById('notion-indicator');
-            const txt = document.getElementById('notion-status-text');
-            
-            ind.className = 'status-indicator status-checking';
-            txt.innerText = 'Checking Notion connection...';
-
-            try {
-                const response = await fetch('/api/test-notion');
-                const data = await response.json();
-                
-                if (data.success) {
-                    ind.className = 'status-indicator status-connected';
-                    txt.innerText = `Connected: ${data.db_name}`;
-                } else {
-                    ind.className = 'status-indicator status-disconnected';
-                    txt.innerText = 'Notion Disconnected (404)';
-                    txt.title = data.message;
-                }
-            } catch (error) {
-                ind.className = 'status-indicator status-disconnected';
-                txt.innerText = 'Server Offline';
             }
         }
 
@@ -1216,12 +1125,10 @@
             const total = allJobs.length;
             const approved = allJobs.filter(j => j.status === 'approved').length;
             const rejected = allJobs.filter(j => j.status === 'rejected').length;
-            const synced = allJobs.filter(j => j.synced).length;
 
             document.getElementById('stat-total').innerText = total;
             document.getElementById('stat-approved').innerText = approved;
             document.getElementById('stat-rejected').innerText = rejected;
-            document.getElementById('stat-synced').innerText = synced;
         }
 
         // Render Cards Grid
@@ -1243,9 +1150,7 @@
                 if (filter === 'all') return true;
                 if (filter === 'approved') return job.status === 'approved';
                 if (filter === 'rejected') return job.status === 'rejected';
-                if (filter === 'synced') return job.synced === true;
-                if (filter === 'unsynced') return job.status === 'approved' && !job.synced;
-                
+
                 return true;
             });
 
@@ -1269,7 +1174,6 @@
                 const cardClass = isApproved ? 'is-approved' : 'is-rejected';
 
                 const pillLabel = job.strongest_label || 'OutOfScope';
-                const isSynced = job.synced;
 
                 return `
                     <div class="job-card ${cardClass}">
@@ -1291,16 +1195,10 @@
                             
                             <div class="label-pills">
                                 <span class="pill ${isApproved ? 'label-primary' : 'label-danger'}">${escapeHTML(pillLabel)}</span>
-                                ${isSynced ? '<span class="pill label-synced"><i class="fa-solid fa-cloud-check"></i> Synced</span>' : ''}
                             </div>
                         </div>
-                        
+
                         <div class="card-footer">
-                            <span class="card-notion-indicator ${isSynced ? 'indicator-synced' : 'indicator-unsynced'}">
-                                <i class="fa-solid ${isSynced ? 'fa-cloud-arrow-up' : 'fa-circle-question'}"></i>
-                                ${isSynced ? 'Synced to Notion' : 'Not Synced'}
-                            </span>
-                            
                             <button class="btn" style="padding: 8px 14px; font-size: 0.85rem;" onclick="openDetailModal('${encodeURIComponent(job.job_url)}')">
                                 Inspect Details <i class="fa-solid fa-chevron-right"></i>
                             </button>
@@ -1342,25 +1240,16 @@
                 flagsContainer.style.display = 'none';
             }
 
-            // Sync Buttons and Override configuration
-            const syncBtn = document.getElementById('btn-modal-sync');
+            // Override configuration
             const overrideBox = document.getElementById('modal-override-box');
             const classificationSection = document.getElementById('modal-classification-section');
 
             if (selectedJob.status === 'approved') {
-                syncBtn.className = 'btn btn-success';
                 overrideBox.style.display = 'none';
                 classificationSection.style.display = 'block';
             } else {
-                syncBtn.className = 'btn btn-success btn-disabled';
                 overrideBox.style.display = 'block';
                 classificationSection.style.display = 'none';
-            }
-
-            if (selectedJob.synced) {
-                syncBtn.innerText = 'Synced (Push Again)';
-            } else {
-                syncBtn.innerText = 'Sync to Notion';
             }
 
             // Open overlay
@@ -1428,42 +1317,6 @@
             }
 
             saveJobDetails('approved');
-        }
-
-        // Push approved job to Notion
-        async function syncToNotion() {
-            if (!selectedJob) return;
-            if (selectedJob.status !== 'approved') {
-                alert("Only Approved (APPLY) jobs can be synced to Notion. Run a manual override first.");
-                return;
-            }
-
-            const syncBtn = document.getElementById('btn-modal-sync');
-            const origText = syncBtn.innerHTML;
-            
-            syncBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing...';
-            syncBtn.classList.add('btn-disabled');
-
-            try {
-                const response = await fetch('/api/sync', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ job_url: selectedJob.job_url })
-                });
-                const res = await response.json();
-                if (res.success) {
-                    alert("Job synced successfully to Notion!");
-                    await fetchJobs();
-                    closeModal();
-                } else {
-                    alert(`Sync failed: ${res.message}`);
-                }
-            } catch (err) {
-                alert(`Network error syncing: ${err.message}`);
-            } finally {
-                syncBtn.innerHTML = origText;
-                syncBtn.classList.remove('btn-disabled');
-            }
         }
 
         // Settings Modal Handlers
@@ -1600,16 +1453,14 @@
         // Event Listeners Setup
         document.addEventListener('DOMContentLoaded', () => {
             fetchJobs();
-            checkNotionConnection();
 
             // Filters
             document.getElementById('search-input').addEventListener('input', renderJobsGrid);
             document.getElementById('status-filter').addEventListener('change', renderJobsGrid);
-            
+
             // Buttons
-            document.getElementById('btn-test-notion').addEventListener('click', checkNotionConnection);
             document.getElementById('btn-run-scraper').addEventListener('click', runScraper);
-            
+
             // Modal close
             document.getElementById('btn-close-modal').addEventListener('click', closeModal);
             document.getElementById('detail-modal').addEventListener('click', (e) => {
@@ -1619,7 +1470,6 @@
             // Modal actions
             document.getElementById('btn-modal-save').addEventListener('click', () => saveJobDetails());
             document.getElementById('btn-modal-override').addEventListener('click', triggerOverride);
-            document.getElementById('btn-modal-sync').addEventListener('click', syncToNotion);
 
             // Settings gear & modal actions
             document.getElementById('btn-settings').addEventListener('click', openSettingsModal);

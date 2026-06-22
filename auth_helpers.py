@@ -29,10 +29,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 def verify_user_credentials(email, password):
     import dashboard_server as ds
-    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    from user_auth_db import db_path, ensure_users_schema
     import sqlite3
 
-    ensure_notion_mirror_schema(ds.WORKSPACE_DIR)
+    ensure_users_schema(ds.WORKSPACE_DIR)
     db_file = db_path(ds.WORKSPACE_DIR)
 
     conn = sqlite3.connect(str(db_file))
@@ -78,10 +78,10 @@ def verify_user_credentials(email, password):
 
 def register_user(email, password, role="user"):
     import dashboard_server as ds
-    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
+    from user_auth_db import db_path, ensure_users_schema
     import sqlite3
 
-    ensure_notion_mirror_schema(ds.WORKSPACE_DIR)
+    ensure_users_schema(ds.WORKSPACE_DIR)
     db_file = db_path(ds.WORKSPACE_DIR)
 
     conn = sqlite3.connect(str(db_file))

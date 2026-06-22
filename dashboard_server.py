@@ -17,7 +17,6 @@ from jobsearch_paths import workspace_root
 from benefits_extractor import extract_benefits
 from near_dedup import group_and_flag_duplicates
 from jobsearch_webhook import effective_webhook_url, public_config_for_api
-from notion_sqlite_mirror import upsert_notion_job_report, ensure_notion_mirror_schema
 from services.resume_service import generate_resume
 
 # Load env variables from repo root
@@ -43,6 +42,7 @@ active_sessions = {}
 
 # Password hashing + DB user helpers moved to auth_helpers.py
 from auth_helpers import hash_password, verify_password, verify_user_credentials, register_user  # noqa: E402,F401
+from user_auth_db import ensure_users_schema  # noqa: E402,F401
 
 # Filename scoping helper
 def resolve_path(base_path, email=None):
@@ -62,7 +62,6 @@ POLICY_CONFIG_PATH = os.path.join(WORKSPACE_DIR, "policy_config.json")
 APPROVED_PATH = os.path.join(WORKSPACE_DIR, "approved_jobs.json")
 FAILED_PATH = os.path.join(WORKSPACE_DIR, "failed_candidate_jobs.json")
 ACTIVE_PATH = os.path.join(WORKSPACE_DIR, "active_candidate_jobs.json")
-SYNCED_PATH = os.path.join(WORKSPACE_DIR, "synced_jobs.json")
 
 # User-scoped scraper status store
 scraper_states = {}
@@ -247,25 +246,7 @@ def archive_job_on_disk(url, email=None):
             pass
             
     found = False
-    
-    # Check SQLite database mirror first
-    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
-    try:
-        ensure_notion_mirror_schema(WORKSPACE_DIR)
-        db_file = db_path(WORKSPACE_DIR)
-        if os.path.exists(db_file):
-            import sqlite3
-            conn = sqlite3.connect(str(db_file))
-            cursor = conn.cursor()
-            row = cursor.execute("SELECT 1 FROM notion_job_reports WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai')).fetchone()
-            if row:
-                conn.execute("UPDATE notion_job_reports SET archived = 1 WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai'))
-                conn.commit()
-                found = True
-            conn.close()
-    except Exception as e:
-        print(f"Error archiving job in SQLite mirror: {e}")
-    
+
     for j in approved:
         if j.get("job_url") == url:
             j["archived"] = True
@@ -296,15 +277,13 @@ def archive_job_on_disk(url, email=None):
         
     return True, "Job archived successfully."
 
-# Config/policy persistence + synced-jobs tracking helpers (moved to dashboard_config_store.py)
+# Config/policy persistence helpers (moved to dashboard_config_store.py)
 from dashboard_config_store import (  # noqa: E402,F401
     load_config,
     save_config,
     load_policy_config,
     save_policy_config,
     rebuild_classifier_prompt,
-    load_synced_jobs,
-    mark_job_synced,
 )
 
 _cached_jobs_data = {}
@@ -312,21 +291,19 @@ _cached_jobs_mtimes = {}
 
 def load_all_jobs(email=None):
     global _cached_jobs_data, _cached_jobs_mtimes
-    
+
     email_key = email or "admin@hailmary.ai"
-    
+
     approved_path = resolve_path(APPROVED_PATH, email)
     active_path = resolve_path(ACTIVE_PATH, email)
     failed_path = resolve_path(FAILED_PATH, email)
-    synced_path = resolve_path(SYNCED_PATH, email)
-    
+
     paths_to_track = {
         "approved": approved_path,
         "active": active_path,
         "failed": failed_path,
-        "synced": synced_path
     }
-    
+
     current_mtimes = {}
     for key, path in paths_to_track.items():
         if os.path.exists(path):
@@ -338,94 +315,13 @@ def load_all_jobs(email=None):
         return _cached_jobs_data[email_key]
     jobs = []
     approved_urls = set()
-    synced_jobs = load_synced_jobs(email)
-    
+
     # Import salary extractor helper
     try:
         from salary_extractor import extract_salary
     except ImportError:
         extract_salary = None
 
-    # Load synced jobs from local SQLite database (Notion mirror)
-    from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
-    try:
-        ensure_notion_mirror_schema(WORKSPACE_DIR)
-        db_file = db_path(WORKSPACE_DIR)
-        if os.path.exists(db_file):
-            import sqlite3
-            conn = sqlite3.connect(str(db_file))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM notion_job_reports WHERE user_email = ?", (email or 'admin@hailmary.ai',))
-            rows = cursor.fetchall()
-            for row in rows:
-                url = row['job_url']
-                if not url:
-                    continue
-                
-                red_flags = []
-                if row['red_flags_json']:
-                    try:
-                        red_flags = json.loads(row['red_flags_json'])
-                    except Exception:
-                        pass
-                
-                payload = {}
-                if row['apply_decision_payload_json']:
-                    try:
-                        payload = json.loads(row['apply_decision_payload_json'])
-                    except Exception:
-                        pass
-                
-                confidence = row['confidence_score']
-                if confidence is not None:
-                    if confidence <= 1.0:
-                        confidence = confidence * 100.0
-                else:
-                    confidence = 100.0
-
-                j = {
-                    "job_title": row['job_title'] or "Unknown Title",
-                    "company_name": row['company_name'] or "Unknown",
-                    "job_url": url,
-                    "requirement_id": row['requirement_id'] or "Unknown",
-                    "job_description": row['job_description'] or "",
-                    "location_work_type": row['location_work_type'] or "Remote",
-                    "scraped_at": row['date_added'] or datetime.utcnow().strftime("%Y-%m-%d"),
-                    "red_flags": red_flags,
-                    "apply_decision": row['apply_decision'] or "APPLY",
-                    "strongest_label": row['strongest_label'] or "DevOps Engineer",
-                    "confidence_score": confidence,
-                    "rationale": row['rationale'] or "",
-                    "apply_decision_payload": payload,
-                    "benefits": payload.get("benefits", []),
-                    "status": "approved",
-                    "synced": True,
-                    "synced_data": {
-                        "page_id": row['notion_page_id'],
-                        "synced_at": row['synced_at']
-                    },
-                    "source_file": "notion_job_reports.db",
-                    "pipeline_stage": row['pipeline_stage'] or 'Approved',
-                    "min_salary": row['min_salary'],
-                    "max_salary": row['max_salary'],
-                    "is_hourly": bool(row['is_hourly']),
-                    "salary_text": row['salary_text'],
-                    "archived": bool(row['archived'])
-                }
-                
-                # Retroactive salary parsing
-                if not j.get('salary_text') and extract_salary and j.get('job_description'):
-                    sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
-                    if sal_info:
-                        j.update(sal_info)
-                        
-                approved_urls.add(url)
-                jobs.append(j)
-            conn.close()
-    except Exception as e:
-        print(f"Error loading jobs from SQLite mirror: {e}")
-    
     # Load approved jobs
     approved_path = resolve_path(APPROVED_PATH, email)
     if os.path.exists(approved_path):
@@ -437,8 +333,6 @@ def load_all_jobs(email=None):
                     if url in approved_urls:
                         continue
                     j['status'] = 'approved'
-                    j['synced'] = url in synced_jobs
-                    j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'approved_jobs.json'
                     
                     if 'archived' not in j:
@@ -473,8 +367,6 @@ def load_all_jobs(email=None):
                     
                     # If not approved, it was rejected during classification
                     j['status'] = 'rejected'
-                    j['synced'] = url in synced_jobs
-                    j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'active_candidate_jobs.json'
                     
                     # Set default pipeline stage
@@ -513,8 +405,6 @@ def load_all_jobs(email=None):
                     if any(x.get('job_url') == url for x in jobs):
                         continue
                     j['status'] = 'rejected'
-                    j['synced'] = url in synced_jobs
-                    j['synced_data'] = synced_jobs.get(url)
                     j['source_file'] = 'failed_candidate_jobs.json'
                     j['apply_decision'] = 'DO_NOT_APPLY'
                     j['strongest_label'] = 'OutOfScope'
@@ -768,47 +658,34 @@ def override_job_on_disk(updated_job, email=None):
     except Exception as e:
         return False, f"Failed to save changes: {str(e)}"
 
-# Notion Sync Engine
-# Notion property building + job sync helpers moved to notion_sync.py
-from notion_sync import (  # noqa: E402,F401
-    clean_text_for_notion,
-    build_notion_properties,
-    build_page_children,
-    check_job_exists_in_notion,
-    _mirror_notion_row_to_sqlite,
-    sync_job_to_notion,
-)
-
 # Webhook Notification Dispatcher
-def send_webhook_alert(job, page_id, custom_msg=None, email=None):
+def send_webhook_alert(job, custom_msg=None, email=None):
     cfg = load_config(email)
     webhook_url = effective_webhook_url(cfg)
     if not webhook_url:
         return False
-        
+
     try:
-        notion_url = f"https://notion.so/{page_id.replace('-', '')}" if page_id else ""
-        
         if custom_msg:
             payload = {"text": custom_msg}
         else:
             # Styled markdown notification (Slack/Discord compatible)
             payload = {
-                "text": f"🎉 **New Job Saved to Notion!**\n"
+                "text": f"🎉 **New Approved Job!**\n"
                         f"🏢 **Company**: {job.get('company_name')}\n"
                         f"💼 **Title**: {job.get('job_title')}\n"
                         f"🏷️ **Role**: {job.get('strongest_label')}\n"
                         f"📍 **Location**: {job.get('location_work_type', 'Remote')}\n"
                         f"🆔 **Req ID**: {job.get('requirement_id', 'Unknown')}\n"
-                        f"🔗 **Links**: [Career Site]({job.get('job_url')}) | [Notion Database Page]({notion_url})\n"
+                        f"🔗 **Apply**: [Career Site]({job.get('job_url')})\n"
                         f"📝 **Rationale**: {job.get('rationale', 'No rationale provided.')}"
             }
-            
+
             # If it's a Discord webhook, we can optionally format as embeds
             if "discord.com" in webhook_url:
                 payload = {
                     "embeds": [{
-                        "title": "🎉 New Job Synced to Notion!",
+                        "title": "🎉 New Approved Job!",
                         "color": 6512369, # Indigo
                         "fields": [
                             {"name": "Company", "value": job.get('company_name', 'Unknown'), "inline": True},
@@ -816,33 +693,31 @@ def send_webhook_alert(job, page_id, custom_msg=None, email=None):
                             {"name": "Role Type", "value": job.get('strongest_label', 'Unknown'), "inline": True},
                             {"name": "Req ID", "value": job.get('requirement_id', 'Unknown'), "inline": True},
                             {"name": "Location", "value": job.get('location_work_type', 'Remote'), "inline": True},
-                            {"name": "Notion Link", "value": f"[View Page]({notion_url})" if notion_url else "N/A", "inline": True}
                         ],
                         "description": f"**Rationale**: {job.get('rationale', 'No rationale')}\n\n[Apply Directly on Career Site]({job.get('job_url')})"
                     }]
                 }
-                
+
         r = requests.post(webhook_url, json=payload, timeout=10)
         return r.status_code in [200, 204]
     except Exception as e:
         print(f"Error sending webhook notification: {e}")
         return False
 
-def send_daily_digest_alert(synced_jobs, total_synced_count):
+def send_daily_digest_alert(new_jobs, total_new_count):
     cfg = load_config()
     webhook_url = effective_webhook_url(cfg)
     if not webhook_url:
         return False
-        
+
     try:
         search_cfg = cfg.get("search") or {}
         max_items = search_cfg.get("max_digest_items", 10)
-        
+
         # Build Discord Embed
         if "discord.com" in webhook_url:
             fields = []
-            for job, page_id in synced_jobs[:max_items]:
-                notion_url = f"https://notion.so/{page_id.replace('-', '')}" if page_id else ""
+            for job in new_jobs[:max_items]:
                 job_title = job.get('job_title', 'Unknown Title')
                 company = job.get('company_name', 'Unknown Company')
                 role = job.get('strongest_label', 'Unknown Role')
@@ -856,20 +731,20 @@ def send_daily_digest_alert(synced_jobs, total_synced_count):
                     conf_str = f" ({conf}% Match)"
                 else:
                     conf_str = ""
-                    
+
                 fields.append({
                     "name": f"💼 {job_title} @ {company}",
                     "value": f"🏷️ **Role**: {role}{conf_str}\n"
                              f"📍 **Location**: {loc}\n"
-                             f"🔗 [Career Site]({job.get('job_url')}) | [Notion Page]({notion_url})\n"
+                             f"🔗 [Apply on Career Site]({job.get('job_url')})\n"
                              f"📝 **Rationale**: {job.get('rationale', 'No rationale provided.')[:150]}..."
                 })
-                
-            overflow = total_synced_count - len(fields)
-            desc = f"Successfully synced **{total_synced_count}** new approved jobs to Notion in this sourcing run!"
+
+            overflow = total_new_count - len(fields)
+            desc = f"Found **{total_new_count}** new approved jobs in this sourcing run!"
             if overflow > 0:
-                desc += f"\n*(Showing top {max_items} jobs. {overflow} more synced to Notion)*"
-                
+                desc += f"\n*(Showing top {max_items} jobs. {overflow} more found)*"
+
             payload = {
                 "embeds": [{
                     "title": "💼 MAAS Job Sourcing Run Digest",
@@ -881,15 +756,14 @@ def send_daily_digest_alert(synced_jobs, total_synced_count):
             }
         else:
             # Plain text fallback (Slack or other text webhook)
-            lines = [f"💼 **MAAS Job Sourcing Run Digest**", f"Successfully synced *{total_synced_count}* new approved jobs to Notion!"]
-            for job, page_id in synced_jobs[:max_items]:
-                notion_url = f"https://notion.so/{page_id.replace('-', '')}" if page_id else ""
-                lines.append(f"• *{job.get('job_title')}* at *{job.get('company_name')}* ({job.get('location_work_type', 'Remote')}) - <{notion_url}|Notion Page> | <{job.get('job_url')}|Apply>")
-            overflow = total_synced_count - len(synced_jobs[:max_items])
+            lines = [f"💼 **MAAS Job Sourcing Run Digest**", f"Found *{total_new_count}* new approved jobs!"]
+            for job in new_jobs[:max_items]:
+                lines.append(f"• *{job.get('job_title')}* at *{job.get('company_name')}* ({job.get('location_work_type', 'Remote')}) - <{job.get('job_url')}|Apply>")
+            overflow = total_new_count - len(new_jobs[:max_items])
             if overflow > 0:
-                lines.append(f"_...and {overflow} more jobs synced to Notion._")
+                lines.append(f"_...and {overflow} more new jobs._")
             payload = {"text": "\n".join(lines)}
-            
+
         r = requests.post(webhook_url, json=payload, timeout=15)
         return r.status_code in [200, 204]
     except Exception as e:
@@ -1059,41 +933,26 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None, scrape_run_id=
             pass
         state["last_metrics"] = metrics
 
-        # Load the newly approved jobs and auto-sync them if cron triggered
-        # For auto runs, we sync them and send webhook notifications
-        token = os.getenv("NOTION_TOKEN")
-        db_id = os.getenv("NOTION_DATABASE_ID")
-        if token and db_id and os.path.exists(approved_path):
-            try:
-                cfg = load_config(email)
-                search_cfg = cfg.get("search") or {}
-                send_digest_only = search_cfg.get("send_digest_only", True)
-                
-                with open(approved_path, 'r') as f:
-                    app_jobs = json.load(f)
-                synced_jobs = load_synced_jobs(email)
-                
-                newly_synced = []
-                for job in app_jobs:
-                    url = job.get("job_url")
-                    if url and url not in synced_jobs:
-                        # Auto sync
-                        success, page_id, _ = sync_job_to_notion(job, token, db_id, email=email)
-                        if success:
-                            mark_job_synced(url, page_id, email)
-                            newly_synced.append((job, page_id))
-                            if not send_digest_only:
-                                send_webhook_alert(job, page_id, email=email)
-                                
-                if send_digest_only and newly_synced:
-                    send_daily_digest_alert(newly_synced, len(newly_synced))
-            except Exception as e:
-                print(f"Error auto-syncing approved jobs: {e}")
-                
         # Identify newly scraped jobs by comparing scraped_at to start_time
         all_jobs = load_all_jobs(email)
         new_jobs = [j for j in all_jobs if j.get('scraped_at') and j['scraped_at'] >= start_time]
         state["new_jobs"] = new_jobs
+
+        # Webhook notification for newly approved jobs found in this run
+        try:
+            cfg = load_config(email)
+            search_cfg = cfg.get("search") or {}
+            send_digest_only = search_cfg.get("send_digest_only", True)
+
+            newly_approved = [j for j in new_jobs if j.get("status") == "approved"]
+            if newly_approved:
+                if send_digest_only:
+                    send_daily_digest_alert(newly_approved, len(newly_approved))
+                else:
+                    for job in newly_approved:
+                        send_webhook_alert(job, email=email)
+        except Exception as e:
+            print(f"Error sending webhook notification for new jobs: {e}")
 
         state["status"] = "completed"
         state["message"] = f"Job sourcing complete! {len(new_jobs)} new jobs found."
@@ -1559,36 +1418,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             email = self.get_auth_email()
             data = calculate_analytics(email)
             self.wfile.write(json.dumps(data).encode('utf-8'))
-            return
-            
-        # API: Test Notion database connection
-        elif parsed_url.path == "/api/test-notion":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_cors_headers()
-            self.end_headers()
-            
-            token = os.getenv("NOTION_TOKEN")
-            db_id = os.getenv("NOTION_DATABASE_ID")
-            
-            if not token or not db_id:
-                res = {"success": False, "message": "NOTION_TOKEN or NOTION_DATABASE_ID missing in environment."}
-            else:
-                url = f"https://api.notion.com/v1/databases/{db_id}"
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Notion-Version": "2022-06-28"
-                }
-                try:
-                    r = requests.get(url, headers=headers, timeout=10)
-                    if r.status_code == 200:
-                        res = {"success": True, "message": "Successfully connected to Notion!", "db_name": r.json().get("title", [{}])[0].get("plain_text", "MAAS Database")}
-                    else:
-                        res = {"success": False, "message": f"Connection failed (Status {r.status_code}): {r.text}"}
-                except Exception as e:
-                    res = {"success": False, "message": f"Network error: {str(e)}"}
-            
-            self.wfile.write(json.dumps(res).encode('utf-8'))
             return
             
         # API: Check scraper status
@@ -2137,80 +1966,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         found_list = failed
                         break
             if not target_job:
-                # Check SQLite database mirror
-                from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
-                try:
-                    ensure_notion_mirror_schema(WORKSPACE_DIR)
-                    db_file = db_path(WORKSPACE_DIR)
-                    if os.path.exists(db_file):
-                        import sqlite3
-                        conn = sqlite3.connect(str(db_file))
-                        conn.row_factory = sqlite3.Row
-                        cursor = conn.cursor()
-                        row = cursor.execute("SELECT * FROM notion_job_reports WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai')).fetchone()
-                        if row:
-                            red_flags = []
-                            if row['red_flags_json']:
-                                try:
-                                    red_flags = json.loads(row['red_flags_json'])
-                                except Exception:
-                                    pass
-                            payload_data = {}
-                            if row['apply_decision_payload_json']:
-                                try:
-                                    payload_data = json.loads(row['apply_decision_payload_json'])
-                                except Exception:
-                                    pass
-                            
-                            confidence = row['confidence_score']
-                            if confidence is not None:
-                                if confidence <= 1.0:
-                                    confidence = confidence * 100.0
-                            else:
-                                confidence = 100.0
-
-                            target_job = {
-                                "job_title": row['job_title'] or "Unknown Title",
-                                "company_name": row['company_name'] or "Unknown",
-                                "job_url": url,
-                                "requirement_id": row['requirement_id'] or "Unknown",
-                                "job_description": row['job_description'] or "",
-                                "location_work_type": row['location_work_type'] or "Remote",
-                                "scraped_at": row['date_added'],
-                                "red_flags": red_flags,
-                                "apply_decision": row['apply_decision'] or "APPLY",
-                                "strongest_label": row['strongest_label'] or "DevOps Engineer",
-                                "confidence_score": confidence,
-                                "rationale": row['rationale'] or "",
-                                "apply_decision_payload": payload_data,
-                                "benefits": payload_data.get("benefits", []),
-                                "status": "approved",
-                                "synced": True,
-                                "synced_data": {
-                                    "page_id": row['notion_page_id'],
-                                    "synced_at": row['synced_at']
-                                },
-                                "source_file": "notion_job_reports.db",
-                                "pipeline_stage": new_stage,
-                                "min_salary": row['min_salary'],
-                                "max_salary": row['max_salary'],
-                                "is_hourly": bool(row['is_hourly']),
-                                "salary_text": row['salary_text'],
-                                "archived": bool(row['archived'])
-                            }
-                            # Update the stage in SQLite
-                            conn.execute("UPDATE notion_job_reports SET pipeline_stage = ? WHERE job_url = ? AND user_email = ?", (new_stage, url, email or 'admin@hailmary.ai'))
-                            conn.commit()
-                        conn.close()
-                except Exception as e:
-                    print(f"Error checking/updating SQLite mirror in update-pipeline-stage: {e}")
-                        
-            if not target_job:
                 self.wfile.write(json.dumps({"success": False, "message": "Job not found."}).encode('utf-8'))
                 return
-                
+
             target_job["pipeline_stage"] = new_stage
-            
+
             # Save back to JSON lists
             try:
                 with open(approved_path, 'w') as f:
@@ -2222,95 +1982,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.wfile.write(json.dumps({"success": False, "message": f"Failed to save JSON updates: {str(e)}"}).encode('utf-8'))
                 return
-                
-            # Update SQLite mirror if synced
-            synced_jobs = load_synced_jobs(email)
-            page_id = None
-            db_id = os.getenv("NOTION_DATABASE_ID")
-            
-            if url in synced_jobs:
-                page_id = synced_jobs[url].get("page_id")
-                
-            if page_id:
-                try:
-                    from notion_sqlite_mirror import upsert_notion_job_report
-                    upsert_notion_job_report(target_job, page_id, db_id or "", user_email=email or 'admin@hailmary.ai')
-                except Exception as e:
-                    print(f"Warning: Failed to update SQLite mirror: {e}")
-                    
-                # Attempt to sync back to Notion
-                token = os.getenv("NOTION_TOKEN")
-                if token and page_id:
-                    notion_url = f"https://api.notion.com/v1/pages/{page_id}"
-                    headers = {
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                        "Notion-Version": "2022-06-28"
-                    }
-                    notion_payload = {
-                        "properties": {
-                            "Pipeline Stage": {
-                                "select": {"name": new_stage}
-                            }
-                        }
-                    }
-                    try:
-                        r = requests.patch(notion_url, headers=headers, json=notion_payload, timeout=8)
-                        if r.status_code != 200:
-                            notion_payload_fallback = {
-                                "properties": {
-                                    "Pipeline Stage": {
-                                        "rich_text": [{"text": {"content": new_stage}}]
-                                    }
-                                }
-                            }
-                            requests.patch(notion_url, headers=headers, json=notion_payload_fallback, timeout=8)
-                    except Exception:
-                        pass
-                        
+
             self.wfile.write(json.dumps({"success": True, "message": f"Pipeline stage updated to '{new_stage}'"}).encode('utf-8'))
-            return
-            
-        # API: Sync job to Notion
-        elif parsed_url.path == "/api/sync":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_cors_headers()
-            self.end_headers()
-            
-            url = payload.get("job_url")
-            if not url:
-                self.wfile.write(json.dumps({"success": False, "message": "Missing job_url"}).encode('utf-8'))
-                return
-                
-            email = self.get_auth_email()
-            # Find the job
-            all_jobs = load_all_jobs(email)
-            target_job = None
-            for j in all_jobs:
-                if j.get("job_url") == url:
-                    target_job = j
-                    break
-                    
-            if not target_job:
-                self.wfile.write(json.dumps({"success": False, "message": "Job not found."}).encode('utf-8'))
-                return
-                
-            token = os.getenv("NOTION_TOKEN")
-            db_id = os.getenv("NOTION_DATABASE_ID")
-            
-            if not token or not db_id:
-                self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
-                return
-                
-            success, page_id, error_msg = sync_job_to_notion(target_job, token, db_id, email)
-            if success:
-                mark_job_synced(url, page_id, email)
-                # Dispatch Webhook alert!
-                send_webhook_alert(target_job, page_id, email=email)
-                self.wfile.write(json.dumps({"success": True, "message": "Successfully synced to Notion!", "page_id": page_id}).encode('utf-8'))
-            else:
-                self.wfile.write(json.dumps({"success": False, "message": f"Notion Sync failed: {error_msg}"}).encode('utf-8'))
             return
 
         # API: Trigger scraping run
@@ -2597,174 +2270,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             email = self.get_auth_email()
             success, msg = archive_job_on_disk(url, email)
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
-            return
-
-        # API: Sync all approved, unsynced jobs to Notion (batch sync)
-        elif parsed_url.path == "/api/sync-notion":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_cors_headers()
-            self.end_headers()
-            
-            email = self.get_auth_email()
-            token = os.getenv("NOTION_TOKEN")
-            db_id = os.getenv("NOTION_DATABASE_ID")
-            if not token or not db_id:
-                self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
-                return
-                
-            all_jobs = load_all_jobs(email)
-            unsynced_approved = [j for j in all_jobs if j.get("status") == "approved" and not j.get("synced")]
-            
-            if not unsynced_approved:
-                self.wfile.write(json.dumps({"success": True, "message": "No new approved jobs to sync."}).encode('utf-8'))
-                return
-                
-            synced_count = 0
-            failed_count = 0
-            last_err = ""
-            
-            for j in unsynced_approved:
-                url = j.get("job_url")
-                success, page_id, error_msg = sync_job_to_notion(j, token, db_id, email)
-                if success:
-                    mark_job_synced(url, page_id, email)
-                    send_webhook_alert(j, page_id, email=email)
-                    synced_count += 1
-                else:
-                    failed_count += 1
-                    last_err = error_msg
-                    
-            msg = f"Successfully synced {synced_count} jobs."
-            if failed_count > 0:
-                msg += f" Failed to sync {failed_count} jobs. Last error: {last_err}"
-            
-            self.wfile.write(json.dumps({"success": synced_count > 0, "message": msg}).encode('utf-8'))
-            return
-
-        # API: Sync job statuses from Notion back to local SQLite/JSON databases (Two-Way Sync)
-        elif parsed_url.path == "/api/sync-notion-status":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_cors_headers()
-            self.end_headers()
-            
-            token = os.getenv("NOTION_TOKEN")
-            db_id = os.getenv("NOTION_DATABASE_ID")
-            if not token or not db_id:
-                self.wfile.write(json.dumps({"success": False, "message": "Notion environment variables not configured in .env."}).encode('utf-8'))
-                return
-                
-            email = self.get_auth_email()
-            synced_jobs = load_synced_jobs(email)
-            if not synced_jobs:
-                self.wfile.write(json.dumps({"success": True, "message": "No synced jobs to check."}).encode('utf-8'))
-                return
-                
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28"
-            }
-            
-            updated_count = 0
-            errors = 0
-            
-            approved_path = resolve_path(APPROVED_PATH, email)
-            active_path = resolve_path(ACTIVE_PATH, email)
-
-            approved = []
-            if os.path.exists(approved_path):
-                try:
-                    with open(approved_path, 'r') as f:
-                        approved = json.load(f)
-                except Exception:
-                    pass
-            
-            active = []
-            if os.path.exists(active_path):
-                try:
-                    with open(active_path, 'r') as f:
-                        active = json.load(f)
-                except Exception:
-                    pass
-                    
-            for url, sync_info in list(synced_jobs.items()):
-                page_id = sync_info.get("page_id")
-                if not page_id:
-                    continue
-                    
-                page_url = f"https://api.notion.com/v1/pages/{page_id}"
-                try:
-                    r = requests.get(page_url, headers=headers, timeout=8)
-                    if r.status_code == 200:
-                        page_data = r.json()
-                        props = page_data.get("properties", {}) or {}
-                        
-                        decision = None
-                        decision_prop = props.get("Apply Decision") or {}
-                        if "select" in decision_prop:
-                            sel = decision_prop["select"]
-                            decision = sel.get("name") if sel else None
-                        elif "rich_text" in decision_prop:
-                            rt = decision_prop["rich_text"]
-                            decision = "".join([t.get("text", {}).get("content", "") for t in rt]).strip()
-                            
-                        if decision:
-                            found = False
-                            for job in approved:
-                                if job.get("job_url") == url:
-                                    if job.get("apply_decision") != decision:
-                                        job["apply_decision"] = decision
-                                        updated_count += 1
-                                    found = True
-                                    break
-                            
-                            if not found:
-                                for job in active:
-                                    if job.get("job_url") == url:
-                                        if job.get("apply_decision") != decision:
-                                            job["apply_decision"] = decision
-                                            updated_count += 1
-                                        found = True
-                                        break
-                                        
-                            # Also update in the SQLite database mirror
-                            from notion_sqlite_mirror import db_path, ensure_notion_mirror_schema
-                            try:
-                                ensure_notion_mirror_schema(WORKSPACE_DIR)
-                                db_file = db_path(WORKSPACE_DIR)
-                                if os.path.exists(db_file):
-                                    import sqlite3
-                                    conn = sqlite3.connect(str(db_file))
-                                    cursor = conn.cursor()
-                                    row = cursor.execute("SELECT apply_decision FROM notion_job_reports WHERE job_url = ? AND user_email = ?", (url, email or 'admin@hailmary.ai')).fetchone()
-                                    if row:
-                                        if row[0] != decision:
-                                            conn.execute("UPDATE notion_job_reports SET apply_decision = ? WHERE job_url = ? AND user_email = ?", (decision, url, email or 'admin@hailmary.ai'))
-                                            conn.commit()
-                                            if not found:
-                                                updated_count += 1
-                                    conn.close()
-                            except Exception as e:
-                                print(f"Error updating SQLite mirror in two-way sync: {e}")
-                                        
-                except Exception as e:
-                    errors += 1
-                    
-            if updated_count > 0:
-                try:
-                    with open(approved_path, 'w') as f:
-                        json.dump(approved, f, indent=2)
-                    with open(active_path, 'w') as f:
-                        json.dump(active, f, indent=2)
-                except Exception as e:
-                    self.wfile.write(json.dumps({"success": False, "message": f"Failed to save synced states: {str(e)}"}).encode('utf-8'))
-                    return
-                    
-            msg = f"Two-way sync complete. Updated {updated_count} job decisions."
-            if errors > 0:
-                msg += f" (Encountered {errors} network check warnings)."
-            self.wfile.write(json.dumps({"success": True, "message": msg}).encode('utf-8'))
             return
 
         # API: Save base resume
@@ -3061,9 +2566,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def main():
     try:
-        ensure_notion_mirror_schema(WORKSPACE_DIR)
+        ensure_users_schema(WORKSPACE_DIR)
     except Exception as e:
-        print(f"Notion SQLite mirror init warning: {e}")
+        print(f"Users DB init warning: {e}")
 
     # Start background scheduler thread
     sched_thread = threading.Thread(target=scheduler_loop, daemon=True)

@@ -22,15 +22,15 @@ def clean_test_server(tmp_path):
     os.environ["ADMIN_PASSWORD"] = "testadmin"
     os.environ["USER_PASSWORD"] = "testuser"
     
-    # Force reload of server and mirror modules to clean up module-level paths/db schemas
+    # Force reload of server and users-db modules to clean up module-level paths/db schemas
     if "dashboard_server" in sys.modules:
         importlib.reload(sys.modules["dashboard_server"])
     else:
         import dashboard_server
-        
-    if "notion_sqlite_mirror" in sys.modules:
-        importlib.reload(sys.modules["notion_sqlite_mirror"])
-    
+
+    if "user_auth_db" in sys.modules:
+        importlib.reload(sys.modules["user_auth_db"])
+
     import dashboard_server
     
     port = get_free_port()
