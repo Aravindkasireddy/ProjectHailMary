@@ -8,7 +8,8 @@
     "DevSecOps",
     "Site Reliability Engineer (SRE)",
     "Continuous Integration (CI/CD)",
-    "Data Platform Engineer"
+    "Data Platform Engineer",
+    "System Engineer"
   ],
   "scheduler": {
     "enabled": true,
@@ -107,7 +108,16 @@
       "verkada",
       "vialogic",
       "wikimedia",
-      "zscaler"
+      "zscaler",
+      "coinbase",
+      "scaleai",
+      "anthropic",
+      "databricks",
+      "instacart",
+      "samsara",
+      "webflow",
+      "mongodb",
+      "doximity"
     ],
     "lever": [
       "3pillarglobal",
@@ -276,7 +286,12 @@
       "vultr",
       "webai",
       "whatnot",
-      "workos"
+      "workos",
+      "ramp",
+      "modal",
+      "temporal",
+      "cohere",
+      "replit"
     ],
     "smartrecruiters": [
       "abbvie",
