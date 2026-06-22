@@ -1601,6 +1601,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(get_scraper_state(email)).encode('utf-8'))
             return
 
+        elif parsed_url.path == "/api/apify-usage":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            from company_scraper.scrapers import apify_client
+
+            self.wfile.write(json.dumps(apify_client.get_usage_summary()).encode("utf-8"))
+            return
+
         elif parsed_url.path == "/api/scrape/company/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

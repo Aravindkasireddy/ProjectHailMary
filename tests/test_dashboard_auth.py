@@ -123,6 +123,55 @@ def test_company_scraper_post_requires_admin(test_server):
     assert r.status_code == 403
 
 
+def test_health_endpoints_no_auth_required(test_server):
+    # /api/health and /api/config/default-target-titles are deliberately
+    # public (used by load balancers / unauthenticated UI bootstrapping).
+    r = requests.get(f"{test_server}/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+    r = requests.get(f"{test_server}/api/config/default-target-titles")
+    assert r.status_code == 200
+    assert isinstance(r.json().get("target_titles"), list)
+
+
+def test_config_policy_analytics_require_auth_and_return_json(test_server):
+    for path in ("/api/config", "/api/policy", "/api/analytics"):
+        r = requests.get(f"{test_server}{path}")
+        assert r.status_code == 401, path
+
+    r = requests.post(f"{test_server}/api/login", json={"password": "testuser"})
+    token = r.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = requests.get(f"{test_server}/api/config", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), dict)
+
+    r = requests.get(f"{test_server}/api/policy", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), dict)
+
+    r = requests.get(f"{test_server}/api/analytics", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), dict)
+
+
+def test_apify_usage_endpoint(test_server):
+    r = requests.get(f"{test_server}/api/apify-usage")
+    assert r.status_code == 401
+
+    r = requests.post(f"{test_server}/api/login", json={"password": "testuser"})
+    token = r.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(f"{test_server}/api/apify-usage", headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert "configured" in data
+    assert "runs_today" in data
+    assert "max_runs_per_day" in data
+
+
 def test_scrape_runs_status_endpoints_auth(test_server):
     r = requests.get(f"{test_server}/api/scrape/status")
     assert r.status_code == 401

@@ -75,6 +75,25 @@ def _check_and_increment_daily_usage() -> None:
         log.warning("apify usage tracking failed (continuing without cap): %s", e)
 
 
+def get_usage_summary() -> dict[str, Any]:
+    """Read-only snapshot of today's Apify run count for dashboard display."""
+    cap = _max_runs_per_day()
+    today = _today_key()
+    runs_today = 0
+    try:
+        if _USAGE_FILE.exists():
+            data = json.loads(_USAGE_FILE.read_text() or "{}")
+            runs_today = int(data.get(today, 0))
+    except Exception as e:
+        log.warning("apify usage read failed: %s", e)
+    return {
+        "configured": is_configured(),
+        "date": today,
+        "runs_today": runs_today,
+        "max_runs_per_day": cap,
+    }
+
+
 def run_actor(actor_id: str, run_input: dict[str, Any], *, timeout_secs: int = 180) -> list[dict[str, Any]]:
     """Run an Apify actor to completion and return its dataset items.
 
