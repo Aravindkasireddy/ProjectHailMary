@@ -22,10 +22,11 @@ Multi-tenant job sourcing/matching platform for DevOps/SRE-type roles. Pipeline 
 - `company_scraper/` — on-demand single-company scraper (Greenhouse/Lever/Workday/iCIMS/generic), invoked as subprocess from `dashboard_server.py` via `company_scraper/main.py`
   - `company_scraper/scrapers/apify_client.py` — Apify wrapper used by `workday.py` and `generic.py` (see "Scraping methods by source" below)
 - `services/resume_service.py` — JD signal extraction + GPT-4o resume tailoring
-- `dashboard/` — Next.js UI (`src/app/page.tsx` is the main job board; `company-scraper/page.tsx` is the scraper UI)
+- `dashboard/` — Next.js UI (`src/app/page.tsx`, ~3750 lines, is the main job board; `company-scraper/page.tsx` is the scraper UI)
+  - `dashboard/components/JobCard.tsx` — extracted per-job card (badges, salary/visa panel, classifier output, all action buttons) from `page.tsx`; state/API calls stay in `page.tsx`, passed down as callback props
 - `tests/` — pytest suite (auth, multi-tenant RLS, query expansion, mirror sync, path resolution)
 - `scripts/schema.sql`, `scripts/*.sql` — Supabase table DDL/migrations
-- `Job_classifier_prompt.txt` (70KB) — Gemini system prompt defining role/label rules
+- `Job_classifier_prompt.txt` — Gemini system prompt defining role/label rules (rewritten 2026-06-22, see "Classifier prompt" below)
 - `config.json` — target titles, scheduler, search params, target ATS companies
 - `policy_config.json` — salary/visa/clearance thresholds
 
@@ -65,6 +66,11 @@ There's an existing in-memory cache for `load_all_jobs()`: `_cached_jobs_data`/`
 ## Observability
 - **`/api/apify-usage`** (auth required): returns `{configured, date, runs_today, max_runs_per_day}` from `apify_client.get_usage_summary()` — read-only view of the daily Apify spend guardrail, for surfacing in the dashboard UI without SSHing into the VM.
 - **CI failure alerts**: `.github/workflows/ci.yml` has a `notify-on-failure` job (needs: `[python, dashboard, deploy]`, `if: failure()`) that posts to Discord via the existing bot (`DISCORD_BOT_TOKEN`/`DISCORD_CHANNEL_ID` — same bot used by `jobsearch_webhook.py`, not a separate incoming webhook). Each Discord-posting step itself is conditioned on those two secrets being non-empty, so the job no-ops cleanly instead of erroring if they're not yet added as repo secrets (as of 2026-06-22 they are **not yet added** — alerting is wired but inactive until you add them).
+
+## Classifier prompt
+`Job_classifier_prompt.txt` was fully rewritten 2026-06-22 with a new role taxonomy (added System Engineer, Data Platform Engineer, MLOps, AIOps; retired Database/Network/Security Engineer families entirely — those now hit `OutOfScope` + red flag "Retired MAAS role family"). Salary is explicitly **no longer a red flag** (old prompt blocked on salary below a threshold; new prompt's Compensation rule says salary should never trigger DO_NOT_APPLY). Experience-cap logic is now fixed MAAS-standard text (3–6 yrs non-SRE, 3–7 yrs SRE) rather than derived from `policy_config.json`'s `max_experience_years`/`min_salary_*`.
+
+**`dashboard_config_store.rebuild_classifier_prompt()` was updated to match**: it used to splice a config-driven block between `"## RED FLAG RULES"` and `"## DATABASE ENGINEER RULE"` (which no longer exists in the new prompt — would have silently broken). It now splices only the `"### Work authorization restriction"` sub-block (between that header and `"### Experience requirement violation"`), still driven by `policy_config.json`'s `enforce_visa_sponsorship`/`enforce_no_clearance`/`custom_red_flag_keywords` — the rest of the much-larger new RED FLAG RULES section (generic-support, software-dev-dominant, niche-domain, role-alignment, compensation sub-rules) is static and untouched by rebuild. Verified via direct call and through the live `/api/policy` endpoint, including the visa/clearance-disabled paths.
 
 ## Production deployment
 Live at **jobs.arkfarms.store** — a single GCP VM (`8.230.100.65`, user `aravindkasireddy5`, repo cloned at `~/ProjectHailMary`) running Docker Compose (API container on 8080, web container on 3000) behind Nginx + DNS already configured on the VM (not in this repo). GitHub remote for this repo is `Aravindkasireddy/ProjectHailMary`, not `Gemini-jobsearch` — same content, different remote name.

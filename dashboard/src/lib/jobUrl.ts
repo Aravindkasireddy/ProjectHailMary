@@ -71,7 +71,7 @@ export function canonicalJobUrl(url: string): string {
     u.search = q ? `?${q}` : '';
     u.protocol = 'https:';
     u.hostname = u.hostname.toLowerCase();
-    let path = u.pathname.replace(/\/$/, '') || '';
+    const path = u.pathname.replace(/\/$/, '') || '';
     u.pathname = path || '/';
     return u.toString();
   } catch {

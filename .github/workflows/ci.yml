@@ -64,9 +64,8 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
-      - name: Lint (informational)
+      - name: Lint
         working-directory: dashboard
-        continue-on-error: true
         run: npm run lint
 
       - name: Build
