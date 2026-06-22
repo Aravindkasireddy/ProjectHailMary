@@ -104,9 +104,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Discord alert
-        if: ${{ secrets.DISCORD_BOT_TOKEN != '' && secrets.DISCORD_CHANNEL_ID != '' }}
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: |
-          curl -sf -X POST "https://discord.com/api/v10/channels/${{ secrets.DISCORD_CHANNEL_ID }}/messages" \
-            -H "Authorization: Bot ${{ secrets.DISCORD_BOT_TOKEN }}" \
+          if [ -z "$DISCORD_BOT_TOKEN" ] || [ -z "$DISCORD_CHANNEL_ID" ]; then
+            echo "Discord secrets not configured, skipping alert"
+            exit 0
+          fi
+          curl -sf -X POST "https://discord.com/api/v10/channels/$DISCORD_CHANNEL_ID/messages" \
+            -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"content\": \"⚠️ CI/CD failed on main (${{ github.sha }})\\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
