@@ -285,6 +285,13 @@ export default function Dashboard() {
 
   // Custom States for Advanced Sourcing and Live Logs Console
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string | null>(null);
+  // Saved filter presets (High-fit / Fresh jobs / Remote-first / Needs review)
+  const [confidenceBandFilter, setConfidenceBandFilter] = useState<'all' | 'high' | 'borderline'>('all');
+  const [remoteOnlyFilter, setRemoteOnlyFilter] = useState(false);
+  const [activeFilterPreset, setActiveFilterPreset] = useState<string | null>(null);
+  // Bulk selection/actions on the approved feed
+  const [selectedJobUrls, setSelectedJobUrls] = useState<Set<string>>(new Set());
+  const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [scraperLogs, setScraperLogs] = useState<string[]>([]);
   const [isLogsExpanded, setIsLogsExpanded] = useState(false);
 
@@ -745,6 +752,55 @@ export default function Dashboard() {
       setJobs(prev => prev.map(j => j.job_url === jobUrl ? { ...j, pipeline_stage: newStage } : j));
     } catch {
       showStatus('Failed to update pipeline stage.', 'error');
+    }
+  };
+
+  const toggleJobSelection = (jobUrl: string) => {
+    setSelectedJobUrls(prev => {
+      const next = new Set(prev);
+      if (next.has(jobUrl)) next.delete(jobUrl);
+      else next.add(jobUrl);
+      return next;
+    });
+  };
+
+  const selectAllVisible = (urls: string[]) => setSelectedJobUrls(new Set(urls));
+  const clearSelection = () => setSelectedJobUrls(new Set());
+
+  const bulkUpdatePipelineStage = async (newStage: string) => {
+    const urls = Array.from(selectedJobUrls);
+    if (urls.length === 0) return;
+    setBulkActionBusy(true);
+    try {
+      const { error } = await supabase.from('jobs').update({ pipeline_stage: newStage }).in('job_url', urls);
+      if (error) throw error;
+      setJobs(prev => prev.map(j => urls.includes(j.job_url) ? { ...j, pipeline_stage: newStage } : j));
+      showStatus(`Updated ${urls.length} job(s) to "${newStage}".`, 'success');
+      clearSelection();
+    } catch {
+      showStatus('Bulk update failed.', 'error');
+    } finally {
+      setBulkActionBusy(false);
+    }
+  };
+
+  const bulkReject = async () => {
+    const urls = Array.from(selectedJobUrls);
+    if (urls.length === 0) return;
+    setBulkActionBusy(true);
+    try {
+      const { error } = await supabase
+        .from('jobs')
+        .update({ apply_decision: 'DO_NOT_APPLY', pipeline_stage: 'Rejected' })
+        .in('job_url', urls);
+      if (error) throw error;
+      setJobs(prev => prev.map(j => urls.includes(j.job_url) ? { ...j, apply_decision: 'DO_NOT_APPLY', pipeline_stage: 'Rejected' } : j));
+      showStatus(`Rejected ${urls.length} job(s).`, 'success');
+      clearSelection();
+    } catch {
+      showStatus('Bulk reject failed.', 'error');
+    } finally {
+      setBulkActionBusy(false);
     }
   };
 
@@ -1720,6 +1776,18 @@ export default function Dashboard() {
       list = list.filter(j => j.strongest_label === selectedRoleFilter);
     }
 
+    // Saved preset: confidence band (High-fit = 90+, Needs review = 50-89)
+    if (confidenceBandFilter === 'high') {
+      list = list.filter(j => (j.confidence_score ?? 0) >= 90);
+    } else if (confidenceBandFilter === 'borderline') {
+      list = list.filter(j => (j.confidence_score ?? 0) >= 50 && (j.confidence_score ?? 0) < 90);
+    }
+
+    // Saved preset: Remote-first
+    if (remoteOnlyFilter) {
+      list = list.filter(j => (j.location_work_type || '').toLowerCase().includes('remote'));
+    }
+
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       list = list.filter(j =>
@@ -2311,6 +2379,43 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Saved Filter Presets */}
+          {activeTab === 'approved' && (
+            <div className="flex items-center gap-2 flex-wrap border-t border-slate-800/40 pt-3">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">Quick filters:</span>
+              {([
+                { key: 'high_fit', label: 'High-fit', apply: () => { setConfidenceBandFilter('high'); setRemoteOnlyFilter(false); setScrapedTimeframe('all'); } },
+                { key: 'fresh', label: 'Fresh jobs', apply: () => { setScrapedTimeframe('today'); setConfidenceBandFilter('all'); setRemoteOnlyFilter(false); } },
+                { key: 'remote', label: 'Remote-first', apply: () => { setRemoteOnlyFilter(true); setConfidenceBandFilter('all'); setScrapedTimeframe('all'); } },
+                { key: 'needs_review', label: 'Needs review', apply: () => { setConfidenceBandFilter('borderline'); setRemoteOnlyFilter(false); setScrapedTimeframe('all'); } },
+              ] as const).map(preset => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  onClick={() => {
+                    if (activeFilterPreset === preset.key) {
+                      // toggle off: clear everything this preset touches
+                      setActiveFilterPreset(null);
+                      setConfidenceBandFilter('all');
+                      setRemoteOnlyFilter(false);
+                      setScrapedTimeframe('all');
+                    } else {
+                      setActiveFilterPreset(preset.key);
+                      preset.apply();
+                    }
+                  }}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                    activeFilterPreset === preset.key
+                      ? 'bg-violet-600/90 text-white border-violet-500'
+                      : 'bg-slate-900/60 text-slate-300 border-slate-700 hover:border-violet-600/50 hover:text-violet-300'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Bottom Row: Search bar & Category filter */}
           {activeTab !== 'settings' && (
             <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 w-full justify-between border-t border-slate-800/40 pt-3 flex-wrap">
@@ -2748,6 +2853,79 @@ export default function Dashboard() {
 
                     </div>
 
+                    {/* Classifier QA: precision + false-positive tracking */}
+                    {(() => {
+                      const approvedWithConf = dedupedJobs.filter(j => j.apply_decision === 'APPLY' && j.confidence_score !== undefined);
+                      const bands = {
+                        veryStrong: approvedWithConf.filter(j => (j.confidence_score ?? 0) >= 90).length,
+                        strong: approvedWithConf.filter(j => (j.confidence_score ?? 0) >= 70 && (j.confidence_score ?? 0) < 90).length,
+                        borderline: approvedWithConf.filter(j => (j.confidence_score ?? 0) >= 50 && (j.confidence_score ?? 0) < 70).length,
+                        reviewNeeded: approvedWithConf.filter(j => (j.confidence_score ?? 0) < 50).length,
+                      };
+                      const totalConf = approvedWithConf.length || 1;
+                      const recentOutOfScope = dedupedJobs
+                        .filter(j => j.strongest_label === 'OutOfScope' || j.apply_decision === 'DO_NOT_APPLY')
+                        .sort((a, b) => new Date(b.scraped_at || 0).getTime() - new Date(a.scraped_at || 0).getTime())
+                        .slice(0, 8);
+                      return (
+                        <div className="bg-slate-900/30 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 shadow-xl">
+                          <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center space-x-2">
+                              <Shield className="w-4 h-4 text-violet-400" />
+                              <h3 className="text-sm font-bold text-white">Classifier QA</h3>
+                            </div>
+                            <span className="text-[10px] text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full font-semibold">
+                              Precision &amp; Drift Review
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Confidence distribution */}
+                            <div className="space-y-3">
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Approved Confidence Distribution</h4>
+                              {([
+                                { label: 'Very Strong (90-100)', count: bands.veryStrong, color: 'bg-emerald-500' },
+                                { label: 'Strong (70-89)', count: bands.strong, color: 'bg-amber-500' },
+                                { label: 'Borderline (50-69)', count: bands.borderline, color: 'bg-orange-500' },
+                                { label: 'Review Needed (<50)', count: bands.reviewNeeded, color: 'bg-rose-500' },
+                              ] as const).map(b => (
+                                <div key={b.label} className="space-y-1">
+                                  <div className="flex justify-between text-[11px] text-slate-400">
+                                    <span>{b.label}</span>
+                                    <span className="font-mono font-bold text-slate-200">{b.count} ({((b.count / totalConf) * 100).toFixed(0)}%)</span>
+                                  </div>
+                                  <div className="w-full bg-slate-950/60 rounded-full h-1.5 overflow-hidden">
+                                    <div className={`h-full rounded-full ${b.color}`} style={{ width: `${(b.count / totalConf) * 100}%` }} />
+                                  </div>
+                                </div>
+                              ))}
+                              {(bands.borderline + bands.reviewNeeded) > 0 && (
+                                <p className="text-[10px] text-amber-400/80 pt-1">
+                                  {bands.borderline + bands.reviewNeeded} approved job(s) scored below 70% confidence — worth a manual spot-check via Inspect &amp; Edit.
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Recently rejected as out-of-scope */}
+                            <div className="space-y-2 bg-slate-950/40 border border-slate-850 p-4 rounded-2xl">
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recently Rejected (OutOfScope)</h4>
+                              <p className="text-[10px] text-slate-500 mb-2">Sample for reviewing policy drift — are these correctly excluded?</p>
+                              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                                {recentOutOfScope.length === 0 ? (
+                                  <p className="text-[11px] text-slate-600 italic">No OutOfScope rejections found.</p>
+                                ) : recentOutOfScope.map((j, i) => (
+                                  <div key={j.job_url + i} className="flex items-center justify-between text-[11px] py-1.5 border-b border-slate-900/60 last:border-0">
+                                    <span className="text-slate-300 truncate pr-2">{j.job_title} <span className="text-slate-500">@ {j.company_name}</span></span>
+                                    <span className="text-rose-400/80 shrink-0 text-[10px] uppercase font-semibold">{(j.red_flags && j.red_flags[0]) || 'OutOfScope'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                   </div>
                 );
               })()}
@@ -2957,28 +3135,79 @@ export default function Dashboard() {
                   })}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {filteredJobs().map((job, idx) => (
-                    <JobCard
-                      key={job.job_url + idx}
-                      job={job}
-                      activeTab={activeTab}
-                      authRole={authRole}
-                      authToken={authToken}
-                      checkingLiveJobUrl={checkingLiveJobUrl}
-                      browserOpenJobUrl={browserOpenJobUrl}
-                      getRelativeScrapedTime={getRelativeScrapedTime}
-                      formatScrapedDate={formatScrapedDate}
-                      onCheckLive={checkJobPostingLive}
-                      onGenerateTailoring={generateTailoring}
-                      onUpdatePipelineStage={updatePipelineStage}
-                      onSubmitClassifierFeedback={submitClassifierFeedback}
-                      onOpenModal={openModal}
-                      onApproveOverride={approveOverride}
-                      onDeleteJob={deleteJob}
-                    />
-                  ))}
-                </div>
+                <>
+                  {activeTab === 'approved' && authRole === 'admin' && (
+                    <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => selectedJobUrls.size > 0 ? clearSelection() : selectAllVisible(filteredJobs().map(j => j.job_url))}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 bg-slate-900/60 text-slate-300 hover:border-violet-600/50 hover:text-violet-300 transition-colors"
+                        >
+                          {selectedJobUrls.size > 0 ? `Clear (${selectedJobUrls.size})` : `Select all ${filteredJobs().length} visible`}
+                        </button>
+                      </div>
+                      {selectedJobUrls.size > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-slate-400">{selectedJobUrls.size} selected</span>
+                          <button
+                            type="button"
+                            disabled={bulkActionBusy}
+                            onClick={() => bulkUpdatePipelineStage('Applied')}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600/90 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
+                          >
+                            Mark Applied
+                          </button>
+                          <button
+                            type="button"
+                            disabled={bulkActionBusy}
+                            onClick={bulkReject}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600/90 hover:bg-rose-500 text-white disabled:opacity-50 transition-colors"
+                          >
+                            Reject Selected
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {filteredJobs().map((job, idx) => (
+                      <div key={job.job_url + idx} className="relative">
+                        {activeTab === 'approved' && authRole === 'admin' && (
+                          <button
+                            type="button"
+                            onClick={() => toggleJobSelection(job.job_url)}
+                            className={`absolute top-3 left-3 z-10 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${
+                              selectedJobUrls.has(job.job_url)
+                                ? 'bg-violet-600 border-violet-500'
+                                : 'bg-slate-950/80 border-slate-700 hover:border-violet-500'
+                            }`}
+                            aria-label="Select job"
+                          >
+                            {selectedJobUrls.has(job.job_url) && <Check className="w-3 h-3 text-white" />}
+                          </button>
+                        )}
+                        <JobCard
+                          job={job}
+                          activeTab={activeTab}
+                          authRole={authRole}
+                          authToken={authToken}
+                          checkingLiveJobUrl={checkingLiveJobUrl}
+                          browserOpenJobUrl={browserOpenJobUrl}
+                          getRelativeScrapedTime={getRelativeScrapedTime}
+                          formatScrapedDate={formatScrapedDate}
+                          onCheckLive={checkJobPostingLive}
+                          onGenerateTailoring={generateTailoring}
+                          onUpdatePipelineStage={updatePipelineStage}
+                          onSubmitClassifierFeedback={submitClassifierFeedback}
+                          onOpenModal={openModal}
+                          onApproveOverride={approveOverride}
+                          onDeleteJob={deleteJob}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           )}
