@@ -51,3 +51,14 @@ def test_cloud_network_and_security_titles_remain_out_of_scope():
         result = classify_job_dynamically(job)
         assert result["strongest_label"] == "OutOfScope", title
         assert result["apply_decision"] == "DO_NOT_APPLY", title
+
+
+def test_automotive_engineering_titles_from_company_scraper_are_out_of_scope():
+    # Confirmed live 2026-06-23: company_scraper/publisher.py never called any
+    # classifier at all before this fix, so these landed in the Approved feed
+    # labeled "DevOps Engineer" purely from publisher.py's hardcoded default.
+    for title in ("Perception Software Engineer - ADAS", "Sr. Process Engineer, Body in White"):
+        job = {"job_title": title, "job_description": "", "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] == "OutOfScope", title
+        assert result["apply_decision"] == "DO_NOT_APPLY", title

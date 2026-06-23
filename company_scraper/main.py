@@ -421,6 +421,33 @@ def run(input_str: str, scrape_run_id=None, it_prefs: dict[str, Any] | None = No
     summary["it_jobs_found"] = len(it_jobs)
     tr(f"IT filter pass: {len(it_jobs)} of {len(jobs)} rows (tiered score + your prefs).")
 
+    # Real incident (2026-06-23): company-scraped jobs were never classified at
+    # all before reaching Supabase - publisher.py just defaulted every row to
+    # strongest_label="DevOps Engineer", apply_decision="APPLY", confidence=100
+    # whenever those fields were missing (which was always, since passes_it_job
+    # is a loose title/department IT-relevance filter, not the MAAS role
+    # classifier). Confirmed live: "Perception Software Engineer - ADAS" and
+    # "Sr. Process Engineer, Body in White" both landed in the Approved feed
+    # labeled DevOps Engineer with rationale "Company-targeted scrape" - not a
+    # real classification. Run the same rule-based classifier the main
+    # pipeline uses (free, local, no extra API cost) so these rows get a real
+    # label/decision instead of an unconditional default.
+    try:
+        sys.path.insert(0, str(_ROOT / "scripts"))
+        from classify_and_save import classify_job_dynamically
+
+        for j in it_jobs:
+            cls = classify_job_dynamically(j)
+            j["apply_decision"] = cls["apply_decision"]
+            j["strongest_label"] = cls["strongest_label"]
+            j["confidence_score"] = cls["confidence_score"]
+            j["red_flags"] = cls["red_flags"]
+            j["rationale"] = cls["rationale"]
+            j["apply_decision_payload"] = cls["payload"]
+        tr(f"Classified {len(it_jobs)} rows via rule-based classifier (no Gemini/OpenAI calls).")
+    except Exception as e:
+        log.warning("rule-based classification of company-scraped jobs failed: %s", e)
+
     _emit_progress("saving", tracker)
 
     try:

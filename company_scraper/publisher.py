@@ -37,11 +37,20 @@ def _row(
         "requirement_id": job.get("requirement_id") or "Unknown",
         "job_description": job.get("job_description") or "",
         "location_work_type": job.get("location_work_type") or "Remote",
-        "apply_decision": job.get("apply_decision") or "APPLY",
-        "strongest_label": job.get("strongest_label") or "DevOps Engineer",
-        "confidence_score": _conf(job.get("confidence_score")),
-        "rationale": job.get("rationale") or "Company-targeted scrape",
-        "red_flags": job.get("red_flags") if isinstance(job.get("red_flags"), list) else [],
+        # Real incident (2026-06-23): these used to default to APPLY/"DevOps
+        # Engineer"/100% whenever main.py's classification step didn't run
+        # (which used to be always - see main.py's classify_job_dynamically
+        # call). If classification genuinely didn't happen, default to "don't
+        # know" (OutOfScope/DO_NOT_APPLY), never an unconditional auto-approve.
+        "apply_decision": job.get("apply_decision") or "DO_NOT_APPLY",
+        "strongest_label": job.get("strongest_label") or "OutOfScope",
+        "confidence_score": _conf(job.get("confidence_score")) if job.get("strongest_label") else 0.0,
+        "rationale": job.get("rationale") or "Not classified (company-targeted scrape ran without a classification step)",
+        "red_flags": (
+            job["red_flags"] if isinstance(job.get("red_flags"), list)
+            else [] if job.get("strongest_label")
+            else ["Not classified"]
+        ),
         "apply_decision_payload": payload,
         "synced": bool(job.get("synced", False)),
         "synced_data": job.get("synced_data") if isinstance(job.get("synced_data"), dict) else {},
