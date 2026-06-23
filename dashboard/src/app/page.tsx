@@ -2133,7 +2133,7 @@ export default function Dashboard() {
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <h4 className="text-sm font-bold text-slate-200">Sourcing Agent Last Run Results</h4>
+                <h4 className="text-sm font-bold text-slate-200">Sourcing Agent Last Run Results <span className="text-slate-500 font-normal">(This Run Only)</span></h4>
               </div>
               <p className="text-xs text-slate-400">
                 {scraperStatus.last_run ? `Completed: ${new Date(scraperStatus.last_run).toLocaleString(undefined, {
@@ -2182,10 +2182,10 @@ export default function Dashboard() {
 
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
             <div>
-              <p className="text-sm text-slate-400 font-medium">Approved Jobs</p>
+              <p className="text-sm text-slate-400 font-medium">Approved Jobs <span className="text-slate-600 font-normal">(All-Time)</span></p>
               <h3 className="text-3xl font-extrabold text-white mt-1">{approvedJobs.length}</h3>
               <p className="text-xs text-emerald-400 mt-1 flex items-center">
-                <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Match policy guidelines
+                <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Total stored, match policy guidelines
               </p>
             </div>
             <div className="p-3 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl">
@@ -2195,10 +2195,10 @@ export default function Dashboard() {
 
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
             <div>
-              <p className="text-sm text-slate-400 font-medium">Unreviewed Candidates</p>
+              <p className="text-sm text-slate-400 font-medium">Unreviewed Candidates <span className="text-slate-600 font-normal">(All-Time)</span></p>
               <h3 className="text-3xl font-extrabold text-white mt-1">{pendingJobs.length}</h3>
               <p className="text-xs text-amber-400 mt-1 flex items-center">
-                <Sliders className="w-3.5 h-3.5 mr-1" /> Pending override decision
+                <Sliders className="w-3.5 h-3.5 mr-1" /> Total stored, pending override decision
               </p>
             </div>
             <div className="p-3 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-2xl">
@@ -2208,10 +2208,10 @@ export default function Dashboard() {
 
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
             <div>
-              <p className="text-sm text-slate-400 font-medium">Filtered / Rejected</p>
+              <p className="text-sm text-slate-400 font-medium">Filtered / Rejected <span className="text-slate-600 font-normal">(All-Time)</span></p>
               <h3 className="text-3xl font-extrabold text-white mt-1">{rejectedJobs.length}</h3>
               <p className="text-xs text-rose-400 mt-1 flex items-center">
-                <XCircle className="w-3.5 h-3.5 mr-1" /> Failed policy filters
+                <XCircle className="w-3.5 h-3.5 mr-1" /> Total stored, failed policy filters
               </p>
             </div>
             <div className="p-3 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-2xl">

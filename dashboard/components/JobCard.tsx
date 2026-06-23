@@ -495,6 +495,11 @@ export default function JobCard({
           <div className="mt-3.5 flex items-center justify-between text-xs">
             <span className="text-slate-400 font-medium">Policy Confidence Score:</span>
             <div className="flex items-center space-x-1.5 font-bold">
+              <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                job.confidence_score >= 90 ? 'bg-emerald-950/60 text-emerald-400' : job.confidence_score >= 70 ? 'bg-amber-950/60 text-amber-400' : job.confidence_score >= 50 ? 'bg-orange-950/60 text-orange-400' : 'bg-rose-950/60 text-rose-400'
+              }`}>
+                {job.confidence_score >= 90 ? 'Very Strong' : job.confidence_score >= 70 ? 'Strong' : job.confidence_score >= 50 ? 'Borderline' : 'Review Needed'}
+              </span>
               <span className={
                 job.confidence_score >= 90 ? 'text-emerald-400' : job.confidence_score >= 70 ? 'text-amber-400' : 'text-rose-400'
               }>
