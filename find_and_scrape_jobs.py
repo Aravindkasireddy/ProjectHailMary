@@ -90,6 +90,26 @@ SEARCH_STATE = {
     "aborted": False
 }
 
+
+def _yahoo_reachable() -> bool:
+    """One cheap probe to confirm Yahoo search isn't currently blocking this IP
+    outright, before spinning up the concurrent per-title search workers. Each
+    worker has its own 5-consecutive-failure circuit breaker, so without this
+    upfront check, a persistent block gets independently re-discovered by every
+    concurrent worker (confirmed live 2026-06-23: 237 Yahoo errors / 119 abort
+    triggers logged over a week of runs, most from this exact redundant pattern
+    rather than genuinely intermittent failures).
+    """
+    try:
+        r = requests.get(
+            "https://search.yahoo.com/search?p=test",
+            headers={"User-Agent": get_random_user_agent()},
+            timeout=8,
+        )
+        return r.status_code < 500
+    except Exception:
+        return False
+
 USER_AGENTS = [
     # Chrome on Windows/Mac/Linux
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -3611,10 +3631,19 @@ def main(dry_run=False):
     if dry_run:
         log("DRY RUN: collecting URLs only (no per-job page scrape).")
 
+    if not SEARCH_STATE["aborted"] and not _yahoo_reachable():
+        log(
+            "Skipping Yahoo search discovery entirely: a single reachability probe failed "
+            "(persistent block/rate-limit from this IP, not a transient blip). Avoids "
+            "burning the per-title 5-failure circuit breaker independently in every "
+            "concurrent search worker before each one discovers the same block."
+        )
+        SEARCH_STATE["aborted"] = True
+
     yield_threshold = search_cfg.get("yield_threshold", 2)
     api_key = os.environ.get("GEMINI_API_KEY")
-    
-    synonyms_map = expand_target_titles_with_gemini(target_titles, api_key)
+
+    synonyms_map = {} if SEARCH_STATE["aborted"] else expand_target_titles_with_gemini(target_titles, api_key)
 
     log(f"Running Yahoo searches for {len(target_titles)} target titles in a throttled thread pool...")
     

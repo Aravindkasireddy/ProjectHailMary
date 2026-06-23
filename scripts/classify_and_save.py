@@ -760,12 +760,22 @@ Return a JSON object conforming exactly to the following structure (see system i
                         last_err = e
                         err_msg = str(e).lower()
                         if any(term in err_msg for term in ["429", "400", "403", "quota", "limit", "exhausted", "invalid", "blocked", "denied", "resourceexhausted"]):
-                            print(f"  Gemini key {active_key[:8]}... hit failure/quota. Rotating...", flush=True)
                             if rotate_gemini_key(active_key):
+                                print(f"  Gemini key {active_key[:8]}... hit failure/quota. Rotating...", flush=True)
                                 last_err = "rotated"
                                 break
-                            else:
-                                break
+                            # No other key to rotate to (e.g. a single-key setup, confirmed
+                            # live 2026-06-23 - production only has one GEMINI_API_KEY). A
+                            # 429/quota hit here is frequently a transient per-minute rate
+                            # limit rather than a hard daily exhaustion, so back off and
+                            # retry the SAME key instead of giving up on this job's Gemini
+                            # classification immediately (which previously skipped straight
+                            # to keyword-only fallback on every single rate-limit hit).
+                            if attempt < 3:
+                                print(f"  Gemini key {active_key[:8]}... rate-limited with no other key available. Backing off and retrying same key (attempt {attempt}/3)...", flush=True)
+                                time.sleep(2.0 * (2 ** (attempt - 1)))
+                                continue
+                            break
                         if attempt < 3:
                             time.sleep(0.6 * (2 ** (attempt - 1)))
                 
