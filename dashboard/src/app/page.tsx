@@ -2473,7 +2473,7 @@ export default function Dashboard() {
                           <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Approval Rate</p>
                           <BarChart3 className="w-4 h-4 text-violet-400 group-hover:text-violet-300 transition-colors" />
                         </div>
-                        <h3 className="text-3xl font-extrabold text-violet-400 mt-2 tracking-tight">{analyticsData.approval_rate}%</h3>
+                        <h3 className="text-3xl font-extrabold text-violet-400 mt-2 tracking-tight">{analyticsData.approval_rate.toFixed(1)}%</h3>
                         <p className="text-[10px] text-slate-500 mt-1">Sourcing qualification yield</p>
                       </div>
                     </div>
