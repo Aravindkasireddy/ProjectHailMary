@@ -2246,7 +2246,7 @@ export default function Dashboard() {
         )}
 
         {/* Dashboard Stat Counters */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
             <div>
@@ -2263,20 +2263,7 @@ export default function Dashboard() {
 
           <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
             <div>
-              <p className="text-sm text-slate-400 font-medium">Unreviewed Candidates <span className="text-slate-600 font-normal">(All-Time)</span></p>
-              <h3 className="text-3xl font-extrabold text-white mt-1">{pendingJobs.length}</h3>
-              <p className="text-xs text-amber-400 mt-1 flex items-center">
-                <Sliders className="w-3.5 h-3.5 mr-1" /> Total stored, pending override decision
-              </p>
-            </div>
-            <div className="p-3 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-2xl">
-              <Sliders className="w-6 h-6" />
-            </div>
-          </div>
-
-          <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800/85 p-6 rounded-2xl flex items-center justify-between shadow-xl">
-            <div>
-              <p className="text-sm text-slate-400 font-medium">Filtered / Rejected <span className="text-slate-600 font-normal">(All-Time)</span></p>
+              <p className="text-sm text-slate-400 font-medium">Rejected <span className="text-slate-600 font-normal">(All-Time)</span></p>
               <h3 className="text-3xl font-extrabold text-white mt-1">{rejectedJobs.length}</h3>
               <p className="text-xs text-rose-400 mt-1 flex items-center">
                 <XCircle className="w-3.5 h-3.5 mr-1" /> Total stored, failed policy filters
@@ -2306,15 +2293,6 @@ export default function Dashboard() {
                 Approved ({approvedJobs.length})
               </button>
               <button
-                onClick={() => handleTabChange('pending')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'pending'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                Unreviewed ({pendingJobs.length})
-              </button>
-              <button
                 onClick={() => handleTabChange('human_review')}
                 className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'human_review'
                     ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
@@ -2330,7 +2308,7 @@ export default function Dashboard() {
                     : 'text-slate-400 hover:text-slate-200'
                   }`}
               >
-                Filtered ({rejectedJobs.length})
+                Rejected ({rejectedJobs.length})
               </button>
               <button
                 onClick={() => handleTabChange('analytics')}
@@ -3011,10 +2989,8 @@ export default function Dashboard() {
                     {activeTab === 'approved'
                       ? 'Approved Postings'
                       : activeTab === 'rejected'
-                        ? 'Filtered Postings'
-                        : activeTab === 'human_review'
-                          ? 'Classifier: human review'
-                          : 'Pending Review'}
+                        ? 'Rejected Postings'
+                        : 'Classifier: human review'}
                   </h2>
                 </div>
                 <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-900">

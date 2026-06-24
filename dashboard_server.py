@@ -355,10 +355,13 @@ def load_all_jobs(email=None):
                     # If not approved, it was rejected during classification
                     j['status'] = 'rejected'
                     j['source_file'] = 'active_candidate_jobs.json'
-                    
-                    # Set default pipeline stage
+
+                    # Set default pipeline stage ("Unreviewed" retired 2026-06-25 -
+                    # there's no human-review step in this pipeline, classification
+                    # is always auto-decided, so a job reaching this branch was
+                    # rejected, not "pending review").
                     if 'pipeline_stage' not in j:
-                        j['pipeline_stage'] = 'Unreviewed'
+                        j['pipeline_stage'] = 'Rejected'
                     
                     # Retroactive salary parsing
                     if not j.get('salary_text') and extract_salary and j.get('job_description'):

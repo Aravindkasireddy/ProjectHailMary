@@ -410,7 +410,18 @@ def upload_user_jobs(user_id: str, email: str):
                     "job_description": job.get("job_description") or existing.get("job_description") or "",
                     "location_work_type": job.get("location_work_type") or existing.get("location_work_type") or "Remote",
                     "apply_decision": job.get("apply_decision") or existing.get("apply_decision") or default_decision,
-                    "strongest_label": job.get("strongest_label") or existing.get("strongest_label") or "DevOps Engineer",
+                    # Real incident (2026-06-25): this used to default unconditionally to
+                    # "DevOps Engineer" regardless of default_decision. A job with no
+                    # apply_decision/strongest_label is one classify_and_save.py never
+                    # finished classifying (it only ever writes the APPROVED subset back
+                    # out - rejected jobs are silently dropped, and active_candidate_jobs.json
+                    # is never updated in place). Defaulting those to "DevOps Engineer"/APPLY
+                    # put real rejects (confirmed live: "Cloud Security Engineer", "Senior
+                    # Database Engineer" - both retired role families) into the live Approved
+                    # feed. "Don't know" should default to OutOfScope, never an auto-approve.
+                    "strongest_label": job.get("strongest_label") or existing.get("strongest_label") or (
+                        "OutOfScope" if default_decision == "DO_NOT_APPLY" else "DevOps Engineer"
+                    ),
                     "confidence_score": clean_confidence(job.get("confidence_score") or existing.get("confidence_score")),
                     "rationale": job.get("rationale") or existing.get("rationale") or "",
                     "red_flags": red_flags or existing.get("red_flags") or [],
@@ -429,7 +440,14 @@ def upload_user_jobs(user_id: str, email: str):
         # Raw scrape first; later stages overlay (Supabase is the published view).
         add_jobs(scraped_records, "Scraped", "APPLY")
         add_jobs(approved_records, "Approved", "APPLY")
-        add_jobs(active_records, "Unreviewed", "APPLY")
+        # "Unreviewed" retired (2026-06-25): there is no human-review step in this
+        # pipeline - classify_and_save.py auto-decides APPLY/DO_NOT_APPLY for every
+        # job. active_candidate_jobs.json entries that reach this call are ones
+        # classify_and_save.py never wrote a final decision for (i.e. it rejected
+        # them, since it only writes the approved subset back out) - default them
+        # to DO_NOT_APPLY/Rejected, not APPLY, so an unclassified job can't look
+        # like an approved one in the live feed.
+        add_jobs(active_records, "Rejected", "DO_NOT_APPLY")
         add_jobs(failed_records, "Rejected", "DO_NOT_APPLY")
         
         records_to_upload = list(jobs_to_upload.values())

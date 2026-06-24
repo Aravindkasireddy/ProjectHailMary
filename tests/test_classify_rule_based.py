@@ -53,6 +53,26 @@ def test_cloud_network_and_security_titles_remain_out_of_scope():
         assert result["apply_decision"] == "DO_NOT_APPLY", title
 
 
+def test_database_engineer_titles_are_out_of_scope():
+    # Real incident (2026-06-25): Database Engineer/Cloud Database Engineer/DBA
+    # were documented as retired alongside Cloud Network/Security Engineer
+    # (2026-06-22), but - unlike those two - never got an explicit override
+    # check, so they remained scoreable/APPLY-eligible in label_scores.
+    # Confirmed live: 14 jobs titled "Database Engineer", "DBA Engineer",
+    # "Senior Database Engineer II", etc. were auto-approved this way.
+    for title in (
+        "Database Engineer",
+        "DBA Engineer",
+        "Senior Database Engineer",
+        "Senior Database Engineer II",
+        "Junior Database Engineer",
+    ):
+        job = {"job_title": title, "job_description": "", "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] == "OutOfScope", title
+        assert result["apply_decision"] == "DO_NOT_APPLY", title
+
+
 def test_retired_data_platform_mlops_aiops_titles_are_out_of_scope():
     # Retired 2026-06-24 alongside Database/Network/Security Engineer families.
     # Without the explicit retired-title check, a title like "AI Platform

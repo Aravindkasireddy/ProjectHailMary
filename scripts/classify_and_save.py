@@ -796,6 +796,16 @@ def classify_job_dynamically(job):
         "data platform engineer", "data infrastructure engineer",
         "mlops", "machine learning engineer",
         "aiops", "ai platform engineer",
+        # Database Engineer / Cloud Database Engineer / DBA were retired
+        # 2026-06-22 alongside Cloud Network/Security Engineer, but - unlike
+        # those two - never got an explicit override check here. Confirmed
+        # live 2026-06-25: 14 jobs titled "Database Engineer", "DBA Engineer",
+        # "Senior Database Engineer", "Cloud Software Engineer - Database",
+        # etc. were still scoring into label_scores["Database Engineer"]/
+        # ["Cloud Database Engineer"] and getting auto-approved, since those
+        # two labels were still present (scoreable) in the label_scores dict
+        # even though the role family itself was supposed to be retired.
+        "database engineer", "dba engineer", "database administrator",
     )
     if "cloud network engineer" in title:
         if _nw not in red_flags:
