@@ -1990,7 +1990,14 @@ def fetch_linkedin_guest_jobs(target_titles, search_cfg, found_urls, dry_run, dr
                 
                 title_tag = card.find('h3', class_=re.compile('title|base-search-card__title')) or card.find('h3')
                 job_title = title_tag.text.strip() if title_tag else ""
-                
+
+                # Skip LinkedIn Easy Apply postings per user instruction. Matching on
+                # the card's visible text rather than a specific CSS class, since
+                # LinkedIn's "Easy Apply" badge class names shift between markup
+                # versions but the visible label text does not.
+                if "easy apply" in card.get_text(" ", strip=True).lower():
+                    continue
+
                 if not is_target_job(job_title, [title]):
                     continue
                 

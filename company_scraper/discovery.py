@@ -25,12 +25,22 @@ def _yahoo_links(query: str) -> List[str]:
             if m:
                 from urllib.parse import unquote
 
-                links.append(unquote(m.group(1)))
-            else:
-                parsed = urlparse(href)
-                dom = parsed.netloc.lower()
-                if parsed.scheme.startswith("http") and "yahoo.com" not in dom and "yimg.com" not in dom:
-                    links.append(href)
+                href = unquote(m.group(1))
+            # Real bug (2026-06-24): the RU= branch used to append its decoded
+            # URL unconditionally, with no domain filter - unlike this check,
+            # which the non-RU= branch already had. Yahoo's own search-results
+            # page embeds internal links (e.g. shopping.yahoo.com widgets)
+            # behind the RU= redirect param, and those were being returned as
+            # if they were genuine external "careers URL" results - confirmed
+            # live, this caused find_careers_url() to return a literal Yahoo
+            # search page for most companies that needed the Yahoo fallback,
+            # which detect_ats() then misclassified as "greenhouse" purely
+            # because the substring "greenhouse.io" appeared in the URL's own
+            # query string (the original search query embedded in the link).
+            parsed = urlparse(href)
+            dom = parsed.netloc.lower()
+            if parsed.scheme.startswith("http") and "yahoo.com" not in dom and "yimg.com" not in dom:
+                links.append(href)
     except Exception:
         pass
     return links

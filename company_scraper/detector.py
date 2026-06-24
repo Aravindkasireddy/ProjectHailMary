@@ -176,14 +176,20 @@ def detect_input_type(input_str: str) -> InputKind:
 
 
 def detect_ats(url: str) -> AtsKind:
-    u = (url or "").lower()
-    if "greenhouse.io" in u or "boards.greenhouse.io" in u:
+    # Check the host only, not the full URL string (real bug, 2026-06-24):
+    # checking "greenhouse.io" in the whole lowercased URL meant a link whose
+    # *query string* merely contained the text "greenhouse.io" - e.g. a Yahoo
+    # search-results URL embedding the original "site:greenhouse.io" query -
+    # got misclassified as a genuine Greenhouse board. The host is the only
+    # part of the URL that can honestly tell you which site you're on.
+    host = (urlparse(url or "").netloc or "").lower()
+    if "greenhouse.io" in host:
         return "greenhouse"
-    if "lever.co" in u or "jobs.lever.co" in u:
+    if "lever.co" in host:
         return "lever"
-    if "myworkdayjobs.com" in u or "workdayjobs.com" in u or "wd5.myworkdayjobs.com" in u:
+    if "myworkdayjobs.com" in host or "workdayjobs.com" in host:
         return "workday"
-    if "icims.com" in u:
+    if "icims.com" in host:
         return "icims"
     try:
         r = request_with_retry("GET", url, timeout=15, max_attempts=2)

@@ -63,3 +63,4 @@ dashboard/.pnpm-debug.log*
 /dry_run_urls.json
 /eslint_report.txt
 /scratch/
+opt_friendly_ats_probe.json
