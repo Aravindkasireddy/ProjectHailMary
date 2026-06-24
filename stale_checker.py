@@ -110,7 +110,17 @@ def persist_job_stale_flag(email, job_url, stale):
     return True, ""
 
 
-def stale_check_worker(email=None):
+def stale_check_worker(email=None, user_id=None):
+    """Bulk-check approved jobs for staleness and persist the result.
+
+    Real incident (2026-06-24): this used to only read/write the local
+    ``approved_jobs.json`` file. Supabase ``public.jobs`` is the sole
+    job-data store for the dashboard (see CLAUDE.md), so those local-only
+    writes never reached the table the UI actually reads from - confirmed
+    live, 0 of 2777 Supabase rows had ever been flagged stale despite jobs
+    sitting unverified for over a week. Now also updates Supabase per job
+    when a user_id is available, same as the single-job check-live endpoint.
+    """
     import dashboard_server as ds
 
     state = get_stale_check_state(email)
@@ -119,6 +129,15 @@ def stale_check_worker(email=None):
     state["total"] = 0
     state["completed"] = 0
     state["stale_found"] = 0
+
+    sb = None
+    if user_id:
+        try:
+            from supabase_client import get_supabase_client
+
+            sb = get_supabase_client()
+        except Exception as e:
+            print(f"Stale check worker: could not init Supabase client: {e}")
 
     approved_path = ds.resolve_path(ds.APPROVED_PATH, email)
     try:
@@ -146,6 +165,14 @@ def stale_check_worker(email=None):
                 state["stale_found"] += 1
             else:
                 job["stale"] = False
+
+            if url and sb is not None:
+                try:
+                    sb.table("jobs").update({"stale": job["stale"]}).eq("job_url", url).eq(
+                        "user_id", str(user_id)
+                    ).execute()
+                except Exception as e:
+                    print(f"Stale check worker: Supabase update failed for {url}: {e}")
 
             updated_jobs.append(job)
             state["completed"] = idx + 1

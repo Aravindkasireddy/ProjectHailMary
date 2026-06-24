@@ -946,6 +946,19 @@ def scraper_worker(email=None, past_24h_only=False, user_id=None, scrape_run_id=
         if tracker:
             summary = {**metrics, "new_jobs_count": len(new_jobs), "message": state["message"]}
             tracker.complete(summary)
+
+        # Auto-run staleness checking after every scrape (was previously
+        # manual-trigger only via a UI button that, confirmed live, nobody had
+        # ever clicked - 0 of 2777 Supabase rows had ever been flagged stale).
+        # Fire-and-forget in its own thread so it doesn't delay this run's
+        # "complete" status; reuses the same per-email staleness state/lock
+        # the manual /api/check-stale button uses, so they won't double-run.
+        try:
+            stale_state = get_stale_check_state(email)
+            if stale_state["status"] != "running":
+                threading.Thread(target=stale_check_worker, args=(email, user_id)).start()
+        except Exception as e:
+            print(f"Failed to auto-start stale check after scrape: {e}")
     except Exception as e:
         state["status"] = "failed"
         state["message"] = f"Scraper execution error: {str(e)}"
@@ -2073,11 +2086,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             email = self.get_auth_email()
+            uid = self.get_auth_user_id()
             state = get_stale_check_state(email)
             if state["status"] == "running":
                 res = {"success": False, "message": "Stale job check is already running."}
             else:
-                threading.Thread(target=stale_check_worker, args=(email,)).start()
+                threading.Thread(target=stale_check_worker, args=(email, uid)).start()
                 res = {"success": True, "message": "Stale job check started in background."}
                 
             self.wfile.write(json.dumps(res).encode('utf-8'))
