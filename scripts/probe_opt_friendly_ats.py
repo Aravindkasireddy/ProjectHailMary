@@ -65,13 +65,28 @@ def _save_progress(progress: dict) -> None:
 def _verify_company_on_page(company_name: str, url: str) -> bool:
     """Check the resolved board's own page text for the company's name, to catch
     slug-collision false positives (a generic slug guess resolving to some other
-    company's real, unrelated ATS board)."""
+    company's real, unrelated ATS board).
+
+    Real bug (2026-06-24): the first version used any(kw in text for kw in
+    keywords), but the slug guess IS one of those keywords (e.g. "brooks" for
+    "Brooks County School System") - so the resolved URL's own hostname always
+    trivially "matched" regardless of whether it was actually the same company
+    ("careers.brooks.com" naturally contains the text "brooks" everywhere on
+    the page even though it's an unrelated company, not Brooks County School
+    System). Confirmed live: this produced a false HIT for Brooks County
+    School System -> careers.brooks.com. Fixed by requiring at least 2 distinct
+    keyword matches when 2+ are available, since a coincidental brand-name
+    collision on one generic word is common but matching two unrelated words
+    (e.g. both "brooks" AND "county") from the same company is not.
+    """
     cleaned = clean_company_name(company_name).strip()
     keywords = [w for w in cleaned.split() if len(w) >= 3] or [company_name.lower()]
     try:
         r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
         text = (r.text or "").lower()
-        return any(kw in text for kw in keywords)
+        matches = sum(1 for kw in keywords if kw in text)
+        required = min(2, len(keywords))
+        return matches >= required
     except Exception:
         return False
 
@@ -101,15 +116,31 @@ def main():
     args = ap.parse_args()
 
     sb = get_supabase_client()
-    res = (
-        sb.table("h1b_sponsors")
-        .select("company_name,opt_friendly_score")
-        .not_.is_("opt_friendly_score", "null")
-        .order("opt_friendly_score", desc=True)
-        .limit(args.limit or 100000)
-        .execute()
-    )
-    companies = [r["company_name"] for r in res.data]
+    # PostgREST caps rows per request at 1000 (db-max-rows) regardless of the
+    # .limit() value passed here - confirmed live, an unpaginated .limit(100000)
+    # call silently returned only the top 1000 rows. Paginate with .range() to
+    # actually fetch the full ~9985-row OPT-friendly list.
+    companies: list[str] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        res = (
+            sb.table("h1b_sponsors")
+            .select("company_name,opt_friendly_score")
+            .not_.is_("opt_friendly_score", "null")
+            .order("opt_friendly_score", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        page = res.data or []
+        companies.extend(r["company_name"] for r in page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+        if args.limit and len(companies) >= args.limit:
+            break
+    if args.limit:
+        companies = companies[: args.limit]
     print(f"Total OPT-friendly companies to probe: {len(companies)}")
 
     progress = _load_progress()
