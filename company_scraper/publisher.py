@@ -25,6 +25,14 @@ def _row(
     job_for_fp = {**job, "job_url": url}
     fingerprint = canonical_fingerprint(job_for_fp)
 
+    try:
+        from h1b_sponsors import get_h1b_sponsors_cleaned
+        from sponsorship_classifier import classify_sponsorship
+
+        sponsorship = classify_sponsorship(job_for_fp, get_h1b_sponsors_cleaned())
+    except Exception:
+        sponsorship = {"sponsorship_status": "unknown", "confidence_score": 30.0}
+
     def _conf(v: Any) -> float:
         if v is None:
             return 100.0
@@ -71,6 +79,8 @@ def _row(
         "canonical_fingerprint": fingerprint,
         "ats_source": ats_platform,
         "sources": [make_source_entry(job_for_fp, ats_platform)],
+        "sponsorship_status": sponsorship["sponsorship_status"],
+        "sponsorship_confidence": sponsorship["confidence_score"],
     }
 
 
@@ -98,7 +108,7 @@ def upsert_jobs(
     if not rows:
         return 0
 
-    new_columns = ("canonical_fingerprint", "ats_source", "sources")
+    new_columns = ("canonical_fingerprint", "ats_source", "sources", "sponsorship_status", "sponsorship_confidence")
     batch_size = 50
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]

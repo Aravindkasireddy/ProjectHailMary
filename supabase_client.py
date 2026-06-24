@@ -319,6 +319,31 @@ def _dedupe_by_canonical_fingerprint(supabase, user_id: str, records: list) -> l
     return list(merged.values())
 
 
+def _attach_sponsorship_fields(records: list) -> None:
+    """Compute sponsorship_status/sponsorship_confidence in place for each record.
+
+    Deterministic (regex + h1b_sponsors lookup), not an LLM call - see
+    sponsorship_classifier.py for why. get_h1b_sponsors_cleaned() is its own
+    1-hour cache, so this doesn't add a new Supabase round-trip per call.
+    """
+    try:
+        from h1b_sponsors import get_h1b_sponsors_cleaned
+        from sponsorship_classifier import classify_sponsorship
+
+        sponsors_cleaned = get_h1b_sponsors_cleaned()
+    except Exception as e:
+        print(f"Sponsorship classification skipped (h1b_sponsors unavailable): {e}")
+        return
+
+    for r in records:
+        try:
+            result = classify_sponsorship(r, sponsors_cleaned)
+            r["sponsorship_status"] = result["sponsorship_status"]
+            r["sponsorship_confidence"] = result["confidence_score"]
+        except Exception as e:
+            print(f"Sponsorship classification failed for {r.get('job_url')}: {e}")
+
+
 def upload_user_jobs(user_id: str, email: str):
     """
     Reads local scoped job files and SQLite reports, merges them, and uploads them to Supabase jobs table.
@@ -442,6 +467,7 @@ def upload_user_jobs(user_id: str, email: str):
             return True
 
         records_to_upload = _dedupe_by_canonical_fingerprint(supabase, user_id, records_to_upload)
+        _attach_sponsorship_fields(records_to_upload)
 
         print(f"Upserting {len(records_to_upload)} jobs to Supabase for user {email}...")
 
@@ -495,7 +521,7 @@ def upload_user_jobs(user_id: str, email: str):
                 # applied to this install) - retry once without them rather than
                 # hard-failing the whole upload on a schema mismatch.
                 if "column" in str(e).lower() or "42703" in str(e):
-                    new_columns = ("canonical_fingerprint", "ats_source", "sources")
+                    new_columns = ("canonical_fingerprint", "ats_source", "sources", "sponsorship_status", "sponsorship_confidence")
                     stripped = [{k: v for k, v in r.items() if k not in new_columns} for r in batch]
                     supabase.table("jobs").upsert(stripped, on_conflict="user_id,job_url").execute()
                 else:
