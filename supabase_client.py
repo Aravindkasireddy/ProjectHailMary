@@ -210,6 +210,115 @@ def download_user_configs(user_id: str, email: str):
         print(f"Error downloading configs from Supabase: {e}")
         return False
 
+_ATS_HOST_HINTS = (
+    ("greenhouse.io", "greenhouse"),
+    ("lever.co", "lever"),
+    ("myworkdayjobs.com", "workday"),
+    ("workdayjobs.com", "workday"),
+    ("icims.com", "icims"),
+    ("ashbyhq.com", "ashby"),
+    ("smartrecruiters.com", "smartrecruiters"),
+    ("linkedin.com", "linkedin"),
+    ("indeed.com", "indeed"),
+    ("weworkremotely.com", "weworkremotely"),
+    ("remote.co", "remote_co"),
+    ("workatastartup.com", "ycombinator"),
+)
+
+
+def _guess_ats_source(job_url: str) -> str:
+    domain = (job_url or "").lower()
+    for hint, name in _ATS_HOST_HINTS:
+        if hint in domain:
+            return name
+    return "generic"
+
+
+def _dedupe_by_canonical_fingerprint(supabase, user_id: str, records: list) -> list:
+    """Merge same-canonical-job records (same company+title+location, different
+    job_url) into one row with multiple tracked sources, instead of letting a
+    Workday posting / LinkedIn repost / company-page repost become 3 separate
+    rows. Real problem this fixes: a user sees the same opening 2-4 times in
+    their feed under different URLs - this collapses them to 1 job, N sources.
+    """
+    from job_fingerprint import canonical_fingerprint, make_source_entry
+
+    for r in records:
+        r["canonical_fingerprint"] = canonical_fingerprint(r)
+        r.setdefault("ats_source", _guess_ats_source(r.get("job_url", "")))
+
+    fingerprints = list({r["canonical_fingerprint"] for r in records if r.get("canonical_fingerprint")})
+    if not fingerprints:
+        return records
+
+    # Look up existing canonical rows for this user that already own one of
+    # these fingerprints, so a repost discovered today merges into whatever
+    # row already exists instead of creating a new duplicate.
+    existing_by_fp: dict[str, dict] = {}
+    try:
+        res = (
+            supabase.table("jobs")
+            .select("job_url,canonical_fingerprint,sources")
+            .eq("user_id", user_id)
+            .in_("canonical_fingerprint", fingerprints)
+            .execute()
+        )
+        for row in res.data or []:
+            fp = row.get("canonical_fingerprint")
+            if fp and fp not in existing_by_fp:
+                existing_by_fp[fp] = row
+    except Exception as e:
+        # canonical_fingerprint column may not exist yet on this install
+        # (schema migration not yet applied) - degrade to no-op, same
+        # behavior as before this feature existed.
+        print(f"Canonical-fingerprint dedup skipped (schema not migrated yet?): {e}")
+        return records
+
+    merged: dict[str, dict] = {}
+    sources_to_append: dict[str, list] = {}  # existing job_url -> new source entries
+
+    for r in records:
+        fp = r.get("canonical_fingerprint")
+        existing_row = existing_by_fp.get(fp) if fp else None
+
+        if existing_row and existing_row["job_url"] != r["job_url"]:
+            # A different URL already canonically owns this fingerprint -
+            # don't insert this record as a new row, just record its URL as
+            # an extra source on the existing canonical row.
+            sources_to_append.setdefault(existing_row["job_url"], []).append(
+                make_source_entry(r, r.get("ats_source"))
+            )
+            continue
+
+        if fp in merged:
+            # Two new records in this same batch share a fingerprint (e.g.
+            # discovered via two sources in the same run) - keep the first as
+            # canonical, fold the rest in as extra sources on it.
+            merged[fp].setdefault("sources", [])
+            merged[fp]["sources"].append(make_source_entry(r, r.get("ats_source")))
+            continue
+
+        r.setdefault("sources", [])
+        r["sources"].append(make_source_entry(r, r.get("ats_source")))
+        merged[fp] = r
+
+    for existing_url, new_sources in sources_to_append.items():
+        try:
+            current = existing_by_fp[
+                next(fp for fp, row in existing_by_fp.items() if row["job_url"] == existing_url)
+            ].get("sources") or []
+            existing_urls = {s.get("source_url") for s in current}
+            additions = [s for s in new_sources if s.get("source_url") not in existing_urls]
+            if additions:
+                supabase.table("jobs").update({"sources": current + additions}).eq(
+                    "user_id", user_id
+                ).eq("job_url", existing_url).execute()
+        except Exception as e:
+            print(f"Failed to append merged sources for {existing_url}: {e}")
+
+    return list(merged.values())
+
+
 def upload_user_jobs(user_id: str, email: str):
     """
     Reads local scoped job files and SQLite reports, merges them, and uploads them to Supabase jobs table.
@@ -331,9 +440,11 @@ def upload_user_jobs(user_id: str, email: str):
         if not records_to_upload:
             print(f"No local jobs found for user {email} to upload.")
             return True
-            
+
+        records_to_upload = _dedupe_by_canonical_fingerprint(supabase, user_id, records_to_upload)
+
         print(f"Upserting {len(records_to_upload)} jobs to Supabase for user {email}...")
-        
+
         # Fetch existing jobs that already have embeddings to avoid redundant Gemini API calls
         try:
             res = supabase.table("jobs").select("job_url").not_.is_("embedding", "null").eq("user_id", user_id).execute()
@@ -376,8 +487,20 @@ def upload_user_jobs(user_id: str, email: str):
                     # For safety, let's just proceed.
                     pass
             
-            supabase.table("jobs").upsert(batch, on_conflict="user_id,job_url").execute()
-            
+            try:
+                supabase.table("jobs").upsert(batch, on_conflict="user_id,job_url").execute()
+            except Exception as e:
+                # canonical_fingerprint/ats_source/sources columns may not exist
+                # yet (scripts/add_canonical_fingerprint_columns.sql not yet
+                # applied to this install) - retry once without them rather than
+                # hard-failing the whole upload on a schema mismatch.
+                if "column" in str(e).lower() or "42703" in str(e):
+                    new_columns = ("canonical_fingerprint", "ats_source", "sources")
+                    stripped = [{k: v for k, v in r.items() if k not in new_columns} for r in batch]
+                    supabase.table("jobs").upsert(stripped, on_conflict="user_id,job_url").execute()
+                else:
+                    raise
+
         print(f"Successfully uploaded {len(records_to_upload)} jobs to Supabase for user {email}.")
         return True
     except Exception as e:

@@ -20,6 +20,11 @@ def _row(
     payload["ats_platform"] = ats_platform
     payload["is_company_targeted"] = True
 
+    from job_fingerprint import canonical_fingerprint, make_source_entry
+
+    job_for_fp = {**job, "job_url": url}
+    fingerprint = canonical_fingerprint(job_for_fp)
+
     def _conf(v: Any) -> float:
         if v is None:
             return 100.0
@@ -63,6 +68,9 @@ def _row(
         "is_hourly": bool(job.get("is_hourly", False)),
         "salary_text": job.get("salary_text"),
         "benefits": job.get("benefits") if isinstance(job.get("benefits"), list) else [],
+        "canonical_fingerprint": fingerprint,
+        "ats_source": ats_platform,
+        "sources": [make_source_entry(job_for_fp, ats_platform)],
     }
 
 
@@ -90,9 +98,21 @@ def upsert_jobs(
     if not rows:
         return 0
 
+    new_columns = ("canonical_fingerprint", "ats_source", "sources")
     batch_size = 50
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
-        supabase.table("jobs").upsert(batch, on_conflict="user_id,job_url").execute()
+        try:
+            supabase.table("jobs").upsert(batch, on_conflict="user_id,job_url").execute()
+        except Exception as e:
+            # canonical_fingerprint/ats_source/sources columns may not exist yet
+            # (scripts/add_canonical_fingerprint_columns.sql not yet applied to
+            # this install) - retry once without them rather than hard-failing
+            # job publishing on a schema mismatch.
+            if "column" in str(e).lower() or "42703" in str(e):
+                stripped = [{k: v for k, v in r.items() if k not in new_columns} for r in batch]
+                supabase.table("jobs").upsert(stripped, on_conflict="user_id,job_url").execute()
+            else:
+                raise
 
     return len(rows)
