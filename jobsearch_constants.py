@@ -12,7 +12,6 @@ DEFAULT_TARGET_TITLES = [
     "DevSecOps",
     "Site Reliability Engineer (SRE)",
     "Continuous Integration (CI/CD)",
-    "Data Platform Engineer",
     "System Engineer",
 ]
 
@@ -25,7 +24,7 @@ ALLOWED_STRONGEST_LABELS = frozenset(
         "DevSecOps",
         "Site Reliability Engineer (SRE)",
         "Continuous Integration (CI/CD)",
-        "Data Platform Engineer",
+        "System Engineer",
         "OutOfScope",
     }
 )

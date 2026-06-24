@@ -198,7 +198,7 @@ const CATEGORIES = [
   "DevSecOps",
   "Site Reliability Engineer (SRE)",
   "Continuous Integration (CI/CD)",
-  "Data Platform Engineer",
+  "System Engineer",
   "OutOfScope"
 ];
 
@@ -915,7 +915,7 @@ export default function Dashboard() {
             'DevSecOps',
             'Site Reliability Engineer (SRE)',
             'Continuous Integration (CI/CD)',
-            'Data Platform Engineer',
+            'System Engineer',
           ];
           await supabase.from('user_configs').insert({
             user_id: sessionData.session.user.id,

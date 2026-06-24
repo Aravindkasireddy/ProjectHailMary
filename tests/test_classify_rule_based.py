@@ -53,6 +53,30 @@ def test_cloud_network_and_security_titles_remain_out_of_scope():
         assert result["apply_decision"] == "DO_NOT_APPLY", title
 
 
+def test_retired_data_platform_mlops_aiops_titles_are_out_of_scope():
+    # Retired 2026-06-24 alongside Database/Network/Security Engineer families.
+    # Without the explicit retired-title check, a title like "AI Platform
+    # Engineer (AIOps)" still matched the generic "platform" in title
+    # heuristic and was misclassified as Platform Engineering / APPLY.
+    for title in (
+        "Data Platform Engineer",
+        "MLOps Engineer",
+        "AI Platform Engineer (AIOps)",
+        "Machine Learning Engineer",
+    ):
+        job = {"job_title": title, "job_description": "", "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] == "OutOfScope", title
+        assert result["apply_decision"] == "DO_NOT_APPLY", title
+
+
+def test_genuine_platform_engineering_title_still_classified_correctly():
+    job = {"job_title": "Platform Engineer", "job_description": "", "red_flags": []}
+    result = classify_job_dynamically(job)
+    assert result["strongest_label"] == "Platform Engineering"
+    assert result["apply_decision"] == "APPLY"
+
+
 def test_automotive_engineering_titles_from_company_scraper_are_out_of_scope():
     # Confirmed live 2026-06-23: company_scraper/publisher.py never called any
     # classifier at all before this fix, so these landed in the Approved feed

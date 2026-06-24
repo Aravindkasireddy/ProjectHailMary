@@ -36,9 +36,6 @@ DevSecOps
 Site Reliability Engineer (SRE)
 Continuous Integration (CI/CD)
 System Engineer
-Data Platform Engineer
-Machine Learning Engineer (MLOps)
-AI Platform Engineer (AIOps)
 OutOfScope
 
 ---
@@ -67,7 +64,6 @@ Use four signal layers for every active MAAS role. This is the current MAAS stan
 - "self-service developer workflows" → Platform Engineering
 - "standardize provisioning" → Cloud Automation Engineer
 - "keep production environments stable" → DevOps Engineer, SRE, or Cloud Infrastructure Engineer depending on scope
-- "pipeline reliability and data quality" → Data Platform Engineer
 
 4. Negative signals prevent keyword forcing. If the same tools appear inside product software development, customer enablement, generic support, retired cloud security/network/database specialist work, BI/reporting-only work, or monitoring-only escalation, do not force an active MAAS role.
 
@@ -84,8 +80,6 @@ Recent MAAS use-case anchors:
 - Cloud Infrastructure: hybrid/cloud infrastructure, VM/server lifecycle, patching, backup/DR, infrastructure health monitoring, server/storage/network incident resolution.
 - DevSecOps: security gates in CI/CD, secrets management, IAM/RBAC, image/dependency scanning, policy checks, compliance evidence automation.
 - System Engineer: RHEL/Linux administration, Ansible/Bash/Python automation, systemctl/journalctl troubleshooting, patch management, AD/SSSD, storage/capacity, monitoring/logging.
-- Data Platform: Databricks/Spark/Airflow/dbt/Kafka pipelines, lakehouse/warehouse operations, data quality, orchestration, governance, pipeline monitoring.
-- MLOps/AIOps: model/AI workload platform support, GPU/AI infrastructure, model serving, vector/embedding pipelines, ML/AI observability, automated remediation.
 
 Examples:
 
@@ -96,8 +90,8 @@ Kubernetes platform ownership dominates → Platform Engineering
 Reliability / incident response dominates → Site Reliability Engineer (SRE)
 Security embedded in delivery pipelines dominates → DevSecOps only when CI/CD and delivery guardrails dominate; cloud security architecture roles are OutOfScope
 
-Retired MAAS target roles: Cloud Security Engineer, Cloud Network Engineer, Database Engineer, Cloud Database Engineer, MongoDB DBA, MSSQL DBA, MySQL DBA, Oracle DBA, and PostgreSQL DBA. Do not classify jobs into these families. If one of these retired families is the primary role nature, return strongest_label OutOfScope, apply_decision DO_NOT_APPLY, and include red flag "Retired MAAS role family".
-Database Engineer and all DBA-specific role families are retired MAAS target roles; keep Data Platform Engineer active when the role is pipeline/lakehouse/ETL/platform-data engineering rather than database administration.
+Retired MAAS target roles: Cloud Security Engineer, Cloud Network Engineer, Database Engineer, Cloud Database Engineer, MongoDB DBA, MSSQL DBA, MySQL DBA, Oracle DBA, PostgreSQL DBA, Data Platform Engineer, Machine Learning Engineer (MLOps), and AI Platform Engineer (AIOps). Do not classify jobs into these families. If one of these retired families is the primary role nature, return strongest_label OutOfScope, apply_decision DO_NOT_APPLY, and include red flag "Retired MAAS role family".
+Database Engineer and all DBA-specific role families are retired MAAS target roles.
 
 ---
 
@@ -191,7 +185,6 @@ Do not classify from keyword stacking alone. For example:
 * Terraform mention alone does NOT mean Cloud Automation Engineer
 * Prometheus/Grafana mention alone does NOT mean Site Reliability Engineer (SRE)
 * IAM mention alone does NOT mean DevSecOps
-* SQL/database mention alone does NOT mean Data Platform Engineer
 
 Role-nature gate takes precedence over tool mentions.
 If the role is primarily customer-facing technical enablement, treat it as OutOfScope even when DevOps/cloud tools are listed.
@@ -210,9 +203,6 @@ The following roles belong to one MAAS DevOps-family ecosystem, but they are NOT
 * Site Reliability Engineer (SRE)
 * Continuous Integration (CI/CD)
 * System Engineer
-* Data Platform Engineer
-* Machine Learning Engineer (MLOps)
-* AI Platform Engineer (AIOps)
 
 Use the specialized label when that domain is primary. Use DevOps Engineer when the role is broadly cross-functional and no specialist domain clearly dominates.
 
@@ -225,14 +215,11 @@ When scores are close, use this precedence:
 1 Cloud Infrastructure Engineer
 2 Platform Engineering
 3 DevSecOps
-4 Data Platform Engineer
-5 Machine Learning Engineer (MLOps)
-6 AI Platform Engineer (AIOps)
-7 Cloud Automation Engineer
-8 Site Reliability Engineer (SRE)
-13 Continuous Integration (CI/CD)
-14 System Engineer
-15 DevOps Engineer
+4 Cloud Automation Engineer
+5 Site Reliability Engineer (SRE)
+6 Continuous Integration (CI/CD)
+7 System Engineer
+8 DevOps Engineer
 
 ---
 
@@ -1166,323 +1153,6 @@ THRESHOLD
 - system_score 3–4 → evaluate competing roles
 - system_score < 3 → do not classify as System Engineer
 
----
-
-## DATA PLATFORM ENGINEER RULE
-
-Choose Data Platform Engineer when data infrastructure, data processing systems, and cloud-based data platforms dominate the role.
-
-The role must demonstrate ownership of data pipelines, processing systems, and data platform architecture, regardless of whether it runs on cloud or on-prem.
-
---------------------------------------------------
-SIGNALS
---------------------------------------------------
-
-Core Signals (Strong Indicators):
-- data pipelines (batch and streaming)
-- data lakes (S3, ADLS, GCS-based architectures)
-- streaming infrastructure (Kafka, Kinesis, Pub/Sub)
-- data platform reliability and scalability
-- batch and stream processing systems
-- cloud-native data platforms
-
-Expanded Signals (Moderate Indicators):
-- ETL / ELT pipelines
-- data orchestration (workflow scheduling, dependencies)
-- real-time streaming systems
-- data ingestion frameworks
-- schema management and evolution
-- data quality and validation frameworks
-- metadata management and cataloging
-- distributed data processing
-- serverless data processing
-
-Cloud Data Signals (High Importance):
-- AWS data services (S3, Glue, EMR, Redshift, Kinesis)
-- Azure data services (ADLS, Data Factory, Synapse, Event Hubs)
-- GCP data services (BigQuery, Dataflow, Pub/Sub, Dataproc)
-- cloud-based data pipelines
-- managed data processing platforms
-
-Implicit Signals (Ownership Indicators):
-- ownership of data platform infrastructure
-- building scalable and reliable data pipelines
-- enabling data access for downstream consumers
-- maintaining data availability and performance
-- managing data lifecycle and governance
-
---------------------------------------------------
-STRONG DIFFERENTIATORS
---------------------------------------------------
-
-- building end-to-end data platforms (ingestion → processing → serving)
-- designing streaming architectures at scale
-- managing large-scale distributed data systems
-- implementing data reliability and observability
-- optimizing data pipeline performance and cost
-- supporting hybrid batch + real-time systems
-
---------------------------------------------------
-TECHNOLOGIES
---------------------------------------------------
-
-Core Technologies:
-- Apache Spark
-- Apache Kafka
-- Apache Airflow
-- Apache Flink
-- dbt
-
-Cloud Technologies:
-- AWS: S3, Glue, EMR, Redshift, Kinesis
-- Azure: ADLS, Data Factory, Synapse, Event Hubs
-- GCP: BigQuery, Dataflow, Pub/Sub, Dataproc
-
---------------------------------------------------
-NEGATIVE SIGNALS
---------------------------------------------------
-
-- data usage only (analytics, dashboards, reporting)
-- SQL-only roles without pipeline ownership
-- BI/Data Analyst roles
-- ML model development without data infrastructure ownership
-- infrastructure provisioning without data pipeline ownership
-
---------------------------------------------------
-DISAMBIGUATION
---------------------------------------------------
-
-- data + ML/model training dominant → Machine Learning Engineer (MLOps)
-- data + analytics/reporting dominant → OutOfScope
-- data + infrastructure provisioning dominant → Cloud Automation Engineer
-- data + platform/Kubernetes dominant → Platform Engineering
-
---------------------------------------------------
-SCORING
---------------------------------------------------
-
-data_score += 3
-
-Boost Conditions:
-
-if streaming_infrastructure or real_time_streaming:
-    data_score += 2
-
-if etl_orchestration or airflow or dbt:
-    data_score += 1
-
-if cloud_data_services:
-    data_score += 2
-
-if data_lakes and distributed_processing:
-    data_score += 1
-
---------------------------------------------------
-THRESHOLD
---------------------------------------------------
-
-- data_score >= 5 → classify as Data Platform Engineer
-- data_score 3–4 → evaluate competing roles
-- data_score < 3 → do not classify as Data Platform Engineer
----
-
-## ML PLATFORM RULE
-
---------------------------------------------------
-MACHINE LEARNING ENGINEER (MLOps)
---------------------------------------------------
-
-Choose Machine Learning Engineer (MLOps) when machine learning lifecycle, model pipelines, and ML platform infrastructure dominate the role.
-
-The role must demonstrate ownership of model training, deployment, and lifecycle automation, not just model development or data usage.
-
---------------------------------------------------
-SIGNALS
---------------------------------------------------
-
-Core Signals (Strong Indicators):
-- ML pipelines (training → validation → deployment)
-- model training infrastructure
-- model deployment pipelines (real-time / batch inference)
-- feature store systems
-- experiment tracking and model versioning
-- model monitoring (drift, performance, accuracy)
-
-Expanded Signals (Moderate Indicators):
-- ML lifecycle automation (end-to-end workflows)
-- feature engineering pipelines
-- hyperparameter tuning infrastructure
-- data → model → deployment orchestration
-- batch and real-time inference pipelines
-- model registry and governance
-
-Implicit Signals (Ownership Indicators):
-- ownership of ML platforms or ML workflows
-- enabling scalable model training and deployment
-- managing model lifecycle and reproducibility
-- collaboration with data science teams for productionization
-- improving model reliability and performance
-
---------------------------------------------------
-STRONG DIFFERENTIATORS
---------------------------------------------------
-
-- building end-to-end ML platforms
-- automating model training and deployment pipelines
-- managing feature stores and model registries
-- implementing model monitoring and drift detection
-- scaling ML systems for production workloads
-
---------------------------------------------------
-TECHNOLOGIES
---------------------------------------------------
-
-- Kubeflow
-- MLflow
-- TensorFlow Serving
-- Amazon SageMaker
-- Vertex AI / Azure ML (optional cloud ML platforms)
-
---------------------------------------------------
-NEGATIVE SIGNALS
---------------------------------------------------
-
-- model development only (no platform or deployment)
-- data analysis / notebook-only roles
-- AI research without production systems
-- data engineering without ML lifecycle ownership
-
---------------------------------------------------
-DISAMBIGUATION
---------------------------------------------------
-
-- ML + data pipelines dominant → Data Platform Engineer
-- ML + platform/Kubernetes dominant → Platform Engineering
-- ML + AI/LLM infrastructure dominant → AI Platform Engineer (AIOps)
-
---------------------------------------------------
-SCORING
---------------------------------------------------
-
-mlops_score += 4
-
-Boost Conditions:
-
-if ml_pipelines and model_deployment:
-    mlops_score += 2
-
-if feature_store or experiment_tracking:
-    mlops_score += 1
-
-if model_monitoring or drift_detection:
-    mlops_score += 1
-
---------------------------------------------------
-THRESHOLD
---------------------------------------------------
-
-- mlops_score >= 5 → classify as Machine Learning Engineer (MLOps)
-- mlops_score = 4 → strong signal, validate lifecycle ownership
-- mlops_score < 4 → do not classify as Machine Learning Engineer (MLOps)
-
---------------------------------------------------
-AI PLATFORM ENGINEER (AIOps)
---------------------------------------------------
-
-Choose AI Platform Engineer (AIOps) when AI infrastructure, LLM serving systems, and large-scale inference platforms dominate the role.
-
-The role must demonstrate ownership of AI/LLM infrastructure, distributed inference, and GPU-based systems, not traditional ML pipelines.
-
---------------------------------------------------
-SIGNALS
---------------------------------------------------
-
-Core Signals (Strong Indicators):
-- AI infrastructure platforms
-- LLM serving platforms
-- GPU compute clusters (NVIDIA, CUDA-based systems)
-- vector databases (embedding storage and retrieval)
-- inference pipelines (real-time AI serving)
-- AI observability (latency, throughput, token metrics)
-
-Expanded Signals (Moderate Indicators):
-- LLM deployment platforms
-- distributed inference systems
-- prompt serving / model APIs
-- embedding pipelines
-- retrieval-augmented generation (RAG) systems
-- model optimization (quantization, batching, caching)
-
-Implicit Signals (Ownership Indicators):
-- ownership of AI platform infrastructure
-- enabling scalable LLM/AI model serving
-- optimizing inference performance and cost
-- managing GPU resources and scheduling
-- building reusable AI platform capabilities
-
---------------------------------------------------
-STRONG DIFFERENTIATORS
---------------------------------------------------
-
-- building LLM serving platforms at scale
-- managing GPU clusters and scheduling workloads
-- designing vector search and retrieval systems
-- optimizing inference latency and throughput
-- implementing distributed AI inference systems
-
---------------------------------------------------
-TECHNOLOGIES
---------------------------------------------------
-
-- Ray
-- vLLM
-- NVIDIA GPU clusters (CUDA, Triton)
-- vector databases (Pinecone, Weaviate, FAISS)
-- LangServe / LLM serving frameworks
-
---------------------------------------------------
-NEGATIVE SIGNALS
---------------------------------------------------
-
-- traditional ML pipelines without LLM/AI infrastructure
-- data engineering roles without AI serving
-- application-level AI usage only (API consumption)
-- research roles without infrastructure ownership
-
---------------------------------------------------
-DISAMBIGUATION
---------------------------------------------------
-
-- AI + ML lifecycle dominant → Machine Learning Engineer (MLOps)
-- AI + data pipelines dominant → Data Platform Engineer
-- AI + platform/Kubernetes dominant → Platform Engineering
-
---------------------------------------------------
-SCORING
---------------------------------------------------
-
-aiops_score += 4
-
-Boost Conditions:
-
-if llm_serving and gpu_clusters:
-    aiops_score += 2
-
-if vector_databases or rag_systems:
-    aiops_score += 1
-
-if distributed_inference or model_optimization:
-    aiops_score += 1
-
---------------------------------------------------
-THRESHOLD
---------------------------------------------------
-
-- aiops_score >= 5 → classify as AI Platform Engineer (AIOps)
-- aiops_score = 4 → strong signal, validate infrastructure ownership
-- aiops_score < 4 → do not classify as AI Platform Engineer (AIOps)
----
-
 ## SCORING MODEL
 
 Initialize domain scores:
@@ -1495,9 +1165,6 @@ cicd_score = 0
 sre_score = 0
 devsecops_score = 0
 system_score = 0
-data_score = 0
-mlops_score = 0
-aiops_score = 0
 
 ---
 
@@ -1583,48 +1250,6 @@ SYSTEM WORK EVIDENCE
 
 system_score += 2
 
---------------------------------------------------
-
-DATA PLATFORM WORK EVIDENCE
-
-- build and operate Spark/Databricks/Airflow/dbt/Kafka pipelines and lakehouse/warehouse workflows
-- implement medallion/lakehouse pipelines, data quality tests, orchestration, schema changes, lineage/governance
-- monitor data pipeline reliability, streaming ingestion, and production data platform health
-Glue
-Dataproc
-Kinesis
-Pub/Sub
-
-data_score += 3
-
---------------------------------------------------
-
-MLOPS SIGNALS
-
-Kubeflow
-MLFlow
-model deployment
-feature store
-SageMaker
-Vertex AI
-Azure ML
-
-mlops_score += 3
-
---------------------------------------------------
-
-AIOPS SIGNALS
-
-LLM
-vector database
-GPU
-inference
-vLLM
-Ray
-embedding
-RAG
-
-aiops_score += 3
 ---
 
 ## ROLE DETERMINATION
@@ -1642,7 +1267,7 @@ aiops_score += 3
 4. Assign strongest_label using one exact ROLE LABEL value.
 5. Populate other_labels with nearby supporting roles only when technically justified.
 6. Use OutOfScope only when the role is not meaningfully aligned to the MAAS engineering categories.
-7. If the JD aligns 50% or more to MAAS objectives through infrastructure, platform, CI/CD, Kubernetes, cloud automation, SRE, DevOps, data-platform, MLOps/AIOps infrastructure, or release engineering ownership, keep it in MAAS review/posting flow instead of forcing OutOfScope solely because the title is adjacent.
+7. If the JD aligns 50% or more to MAAS objectives through infrastructure, platform, CI/CD, Kubernetes, cloud automation, SRE, or DevOps ownership, keep it in MAAS review/posting flow instead of forcing OutOfScope solely because the title is adjacent.
 
 ---
 
@@ -1711,10 +1336,7 @@ Return ONLY valid JSON.
     "sre": 0,
     "security": 0,
     "devsecops": 0,
-    "system": 0,
-    "data": 0,
-    "mlops": 0,
-    "aiops": 0
+    "system": 0
   },
 
   "dominant_domains": [],

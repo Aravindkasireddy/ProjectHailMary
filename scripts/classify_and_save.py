@@ -147,7 +147,7 @@ Description:
 Return a JSON object conforming exactly to the following structure (see system instruction for PASS/HUMAN_REVIEW/REJECT rules):
 {{
   "all_labels": ["<same as strongest_label first, optional 2nd/3rd labels>"],
-  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "Data Platform Engineer" | "Machine Learning Engineer (MLOps)" | "AI Platform Engineer (AIOps)" | "OutOfScope",
+  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "OutOfScope",
   "other_labels": [],
   "recommendation": "PASS" | "HUMAN_REVIEW" | "REJECT",
   "confidence_score": 0-100,
@@ -172,10 +172,7 @@ Return a JSON object conforming exactly to the following structure (see system i
     "system": 0-10,
     "network": 0-10,
     "database": 0-10,
-    "cloud_database": 0-10,
-    "data": 0-10,
-    "mlops": 0-10,
-    "aiops": 0-10
+    "cloud_database": 0-10
   }},
   "dominant_domains": [],
   "decision_trace": {{
@@ -256,7 +253,7 @@ Return a JSON object conforming exactly to the following structure (see system i
         allowed_label_set = set(ALLOWED_STRONGEST_LABELS)
         domain_keys = (
             "devops", "automation", "platform", "infrastructure", "security", "devsecops",
-            "sre", "cicd", "system", "network", "database", "cloud_database", "data", "mlops", "aiops",
+            "sre", "cicd", "system", "network", "database", "cloud_database",
         )
 
         strongest_label = result.get("strongest_label", "OutOfScope")
@@ -464,7 +461,7 @@ Description:
 Return a JSON object conforming exactly to the following structure (see system instruction for PASS/HUMAN_REVIEW/REJECT rules):
 {{
   "all_labels": ["<same as strongest_label first, optional 2nd/3rd labels>"],
-  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "Data Platform Engineer" | "Machine Learning Engineer (MLOps)" | "AI Platform Engineer (AIOps)" | "OutOfScope",
+  "strongest_label": "DevOps Engineer" | "Cloud Automation Engineer" | "Platform Engineering" | "Cloud Infrastructure Engineer" | "DevSecOps" | "Site Reliability Engineer (SRE)" | "Continuous Integration (CI/CD)" | "System Engineer" | "OutOfScope",
   "other_labels": [],
   "recommendation": "PASS" | "HUMAN_REVIEW" | "REJECT",
   "confidence_score": 0-100,
@@ -489,10 +486,7 @@ Return a JSON object conforming exactly to the following structure (see system i
     "system": 0-10,
     "network": 0-10,
     "database": 0-10,
-    "cloud_database": 0-10,
-    "data": 0-10,
-    "mlops": 0-10,
-    "aiops": 0-10
+    "cloud_database": 0-10
   }},
   "dominant_domains": [],
   "decision_trace": {{
@@ -538,7 +532,7 @@ Return a JSON object conforming exactly to the following structure (see system i
         allowed_label_set = set(ALLOWED_STRONGEST_LABELS)
         domain_keys = (
             "devops", "automation", "platform", "infrastructure", "security", "devsecops",
-            "sre", "cicd", "system", "network", "database", "cloud_database", "data", "mlops", "aiops",
+            "sre", "cicd", "system", "network", "database", "cloud_database",
         )
 
         strongest_label = result.get("strongest_label", "OutOfScope")
@@ -729,9 +723,6 @@ def classify_job_dynamically(job):
         "System Engineer": 0,
         "Database Engineer": 0,
         "Cloud Database Engineer": 0,
-        "Data Platform Engineer": 0,
-        "Machine Learning Engineer (MLOps)": 0,
-        "AI Platform Engineer (AIOps)": 0
     }
     
     # Simple keyword mapping
@@ -745,14 +736,7 @@ def classify_job_dynamically(job):
         label_scores["Site Reliability Engineer (SRE)"] += 10
         
     if "platform" in title:
-        if "data" in title:
-            label_scores["Data Platform Engineer"] += 10
-        elif "ml" in title or "machine learning" in title or "mlops" in title:
-            label_scores["Machine Learning Engineer (MLOps)"] += 10
-        elif "ai" in title or "aiops" in title:
-            label_scores["AI Platform Engineer (AIOps)"] += 10
-        else:
-            label_scores["Platform Engineering"] += 10
+        label_scores["Platform Engineering"] += 10
             
     if "automation" in title:
         label_scores["Cloud Automation Engineer"] += 10
@@ -771,12 +755,6 @@ def classify_job_dynamically(job):
         
     if "ci/cd" in title or "cicd" in title or "release" in title or "integration" in title:
         label_scores["Continuous Integration (CI/CD)"] += 10
-        
-    if "data" in title and "engineer" in title:
-        label_scores["Data Platform Engineer"] += 5
-        
-    if "machine learning" in title or "mlops" in title:
-        label_scores["Machine Learning Engineer (MLOps)"] += 5
         
     if "devops" in title:
         label_scores["DevOps Engineer"] += 5
@@ -798,12 +776,6 @@ def classify_job_dynamically(job):
             label_scores["DevSecOps"] += 2
         else:
             label_scores["DevSecOps"] += 1
-    if any(k in desc for k in ["spark", "databricks", "snowflake", "data pipeline", "etl", "data warehouse"]):
-        label_scores["Data Platform Engineer"] += 2
-    if any(k in desc for k in ["mlops", "model deployment", "kubeflow", "mlflow"]):
-        label_scores["Machine Learning Engineer (MLOps)"] += 2
-    if any(k in desc for k in ["aiops", "llm infra", "gpu workload"]):
-        label_scores["AI Platform Engineer (AIOps)"] += 2
     if any(k in desc for k in ["database administrator", "replication", "backup and recovery", "query optimization", "database clustering", "performance tuning", "high availability"]):
         label_scores["Database Engineer"] += 2
     if any(k in desc for k in ["rds", "aurora", "cloud database", "managed database", "cosmos db", "spanner"]):
@@ -815,6 +787,16 @@ def classify_job_dynamically(job):
     red_flags = list(job.get("red_flags", []))
     _nw = "Cloud network specialist role — outside MAAS consultant pipeline"
     _sw = "Cloud security specialist role — outside MAAS consultant pipeline"
+    _rf = "Retired MAAS role family"
+    # Data Platform Engineer / MLOps / AIOps were retired as MAAS target roles.
+    # Without this explicit check, titles like "AI Platform Engineer (AIOps)"
+    # would still match the generic "platform" in title heuristic above and
+    # get misclassified as Platform Engineering / APPLY instead of retired.
+    _retired_title_patterns = (
+        "data platform engineer", "data infrastructure engineer",
+        "mlops", "machine learning engineer",
+        "aiops", "ai platform engineer",
+    )
     if "cloud network engineer" in title:
         if _nw not in red_flags:
             red_flags.append(_nw)
@@ -823,6 +805,11 @@ def classify_job_dynamically(job):
     elif "cloud security engineer" in title:
         if _sw not in red_flags:
             red_flags.append(_sw)
+        top_label = "OutOfScope"
+        top_score = 0
+    elif any(p in title for p in _retired_title_patterns):
+        if _rf not in red_flags:
+            red_flags.append(_rf)
         top_label = "OutOfScope"
         top_score = 0
     elif top_score == 0:
@@ -853,7 +840,7 @@ def classify_job_dynamically(job):
 
     domain_keys_rb = (
         "devops", "automation", "platform", "infrastructure", "security", "devsecops",
-        "sre", "cicd", "system", "network", "database", "cloud_database", "data", "mlops", "aiops",
+        "sre", "cicd", "system", "network", "database", "cloud_database",
     )
     domain_scores_out = dict.fromkeys(domain_keys_rb, 0)
     label_to_domain = {
@@ -865,9 +852,6 @@ def classify_job_dynamically(job):
         "Site Reliability Engineer (SRE)": "sre",
         "Continuous Integration (CI/CD)": "cicd",
         "System Engineer": "system",
-        "Data Platform Engineer": "data",
-        "Machine Learning Engineer (MLOps)": "mlops",
-        "AI Platform Engineer (AIOps)": "aiops",
         "Database Engineer": "database",
         "Cloud Database Engineer": "cloud_database",
         "OutOfScope": "devops",
@@ -1005,8 +989,7 @@ def main():
             "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
             "Cloud Infrastructure Engineer", "DevSecOps",
             "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
-            "System Engineer", "Data Platform Engineer",
-            "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
+            "System Engineer"
         }
         if (job["apply_decision"] == "APPLY" and 
             len(job["red_flags"]) == 0 and 
@@ -1022,8 +1005,7 @@ def main():
         "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
         "Cloud Infrastructure Engineer", "DevSecOps",
         "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
-        "System Engineer", "Data Platform Engineer",
-        "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
+        "System Engineer"
     }
     approved_jobs = [
         j for j in approved_jobs

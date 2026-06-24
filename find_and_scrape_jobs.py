@@ -1,6 +1,22 @@
 import os
-import re
 import sys
+
+if __name__ == "__main__" and sys.platform == "darwin" and not os.environ.get("OBJC_DISABLE_INITIALIZE_FORK_SAFETY"):
+    # macOS-only crash fix (confirmed live 2026-06-24): this process makes HTTPS
+    # requests from several ThreadPoolExecutor worker threads, then Playwright
+    # forks a browser subprocess (sync_playwright -> subprocess.Popen -> fork()).
+    # Apple's Network.framework fork-child handlers (nw_settings_child_has_forked
+    # / NEFlowDirectorDestroy) are not safe to run after CFNetwork has been used
+    # from multiple threads, and crash with EXC_BAD_ACCESS - confirmed via 30
+    # crash reports in ~5 minutes, all with the identical fork()-time backtrace.
+    # This never reproduces on the Linux production VM (no Network.framework
+    # there). Setting this env var must happen before the ObjC runtime
+    # initializes, so we re-exec the interpreter with it set rather than just
+    # assigning os.environ (too late by the time this line runs).
+    os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+    os.execve(sys.executable, [sys.executable] + sys.argv, os.environ)
+
+import re
 import json
 import time
 import logging
@@ -91,6 +107,31 @@ SEARCH_STATE = {
 }
 
 
+_ENGINE_REACHABLE_CACHE = {}
+
+
+def _engine_reachable(name: str, probe_url: str) -> bool:
+    """Cached per-process reachability probe for a search engine. search_for_job_url()
+    (the per-job LinkedIn career-link resolution path) can be called hundreds of times
+    in a single run; without caching, a persistent IP block (confirmed live 2026-06-24
+    for both Yahoo and DuckDuckGo) gets independently re-discovered on every single job,
+    burning 3 failed attempts + backoff per engine per job for nothing.
+    """
+    if name in _ENGINE_REACHABLE_CACHE:
+        return _ENGINE_REACHABLE_CACHE[name]
+    try:
+        r = requests.get(probe_url, headers={"User-Agent": get_random_user_agent()}, timeout=8)
+        ok = r.status_code < 500
+    except Exception:
+        ok = False
+    _ENGINE_REACHABLE_CACHE[name] = ok
+    return ok
+
+
+def _duckduckgo_reachable() -> bool:
+    return _engine_reachable("duckduckgo", "https://html.duckduckgo.com/html/?q=test")
+
+
 def _yahoo_reachable() -> bool:
     """One cheap probe to confirm Yahoo search isn't currently blocking this IP
     outright, before spinning up the concurrent per-title search workers. Each
@@ -100,15 +141,7 @@ def _yahoo_reachable() -> bool:
     triggers logged over a week of runs, most from this exact redundant pattern
     rather than genuinely intermittent failures).
     """
-    try:
-        r = requests.get(
-            "https://search.yahoo.com/search?p=test",
-            headers={"User-Agent": get_random_user_agent()},
-            timeout=8,
-        )
-        return r.status_code < 500
-    except Exception:
-        return False
+    return _engine_reachable("yahoo", "https://search.yahoo.com/search?p=test")
 
 USER_AGENTS = [
     # Chrome on Windows/Mac/Linux
@@ -1561,11 +1594,11 @@ def search_for_job_url(query):
     elif has_serpapi:
         urls = search_serpapi(query)
         
-    if not urls:
+    if not urls and _yahoo_reachable():
         urls = search_yahoo(query)
-    if not urls:
+    if not urls and _duckduckgo_reachable():
         urls = search_duckduckgo(query)
-        
+
     return urls or []
 
 def filter_and_score_urls(urls, clean_company, company_tokens):
@@ -1787,10 +1820,19 @@ def scrape_linkedin(url):
         soup = BeautifulSoup(html, 'html.parser')
         title_elem = soup.find('h1', class_=re.compile('topcard__title|job-search-card__title|title')) or soup.find('h1')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
-        if "login" in fetch_url.lower() or not title or title == "Sign Up" or title == "Unknown Title":
+        if (
+            "login" in fetch_url.lower()
+            or not title
+            or title in ("Sign Up", "Unknown Title", "Error", "Page Not Found", "403 Forbidden")
+        ):
             return None
         company_elem = soup.find('a', class_=re.compile('topcard__org-name-link|company-name')) or soup.find('span', class_=re.compile('topcard__flavor'))
         company = company_elem.get_text().strip() if company_elem else "Unknown"
+        if company == "Unknown":
+            # A real LinkedIn posting always has an org-name element; a missing
+            # one paired with a parsed title means we're on a block/error page
+            # that slipped past the title check above, not a genuine job.
+            return None
         loc_elem = soup.find('span', class_=re.compile('topcard__flavor--bullet')) or soup.find('span', class_=re.compile('topcard__flavor--bullet-location'))
         location = loc_elem.get_text().strip() if loc_elem else "Remote"
         jd_div = soup.find('div', class_=re.compile('description__text|show-more-less-html__markup|description'))
@@ -2273,11 +2315,6 @@ def expand_target_titles_with_gemini(target_titles, api_key=None):
         "CI/CD Engineer": ["Release Engineer", "Build Engineer", "DevOps CI/CD"],
         "System Engineer": ["Systems Engineer", "Linux Systems Engineer", "Operations Engineer"],
         "Systems Engineer": ["System Engineer", "Linux Systems Engineer", "Operations Engineer"],
-        "Data Platform Engineer": ["Data Infrastructure Engineer", "Data Engineer", "Data Ops"],
-        "Machine Learning Engineer (MLOps)": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Engineer"],
-        "Machine Learning Engineer": ["MLOps Engineer", "ML Infrastructure Engineer", "Machine Learning Infrastructure"],
-        "AI Platform Engineer (AIOps)": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform Engineer"],
-        "AI Platform Engineer": ["AI Infrastructure Engineer", "AIOps Engineer", "AI Platform"],
     }
     
     prompt = f"""
@@ -2431,7 +2468,7 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
             using_api = False
             log(f"Searching Yahoo: {query}")
             urls = search_yahoo(query)
-            if not urls and not SEARCH_STATE["aborted"]:
+            if not urls and not SEARCH_STATE["aborted"] and _duckduckgo_reachable():
                 log(f"Yahoo search returned 0 results for '{query}'. Falling back to DuckDuckGo...")
                 urls = search_duckduckgo(query)
         
@@ -2640,12 +2677,8 @@ def is_target_job(job_title, target_titles):
     # 2. Acronym expansion check (aligned with ROLE LABEL strings in Job_classifier_prompt.txt)
     acronyms = {
         "sre": "site reliability",
-        "ml": "machine learning",
-        "mlops": "machine learning",
-        "aiops": "ai platform",
         "cicd": "continuous integration",
         "iac": "infrastructure",
-        "ai": "ai platform",
     }
     words = re.findall(r'\b[a-z]+\b', jt)
     for ac, expanded in acronyms.items():
@@ -3567,9 +3600,6 @@ def main(dry_run=False):
                 "Site Reliability Engineer (SRE)",
                 "Continuous Integration (CI/CD)",
                 "System Engineer",
-                "Data Platform Engineer",
-                "Machine Learning Engineer (MLOps)",
-                "AI Platform Engineer (AIOps)",
             ]
 
     search_cfg = config_data.get("search") or {}

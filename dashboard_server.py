@@ -572,11 +572,10 @@ def override_job_on_disk(updated_job, email=None):
         red_flags = []
         
     allowed_categories = {
-        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering", 
-        "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps", 
-        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)", 
-        "System Engineer", "Cloud Network Engineer", "Data Platform Engineer", 
-        "Machine Learning Engineer (MLOps)", "AI Platform Engineer (AIOps)"
+        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
+        "Cloud Infrastructure Engineer", "Cloud Security Engineer", "DevSecOps",
+        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
+        "System Engineer", "Cloud Network Engineer"
     }
     label = updated_job.get("strongest_label", target_job.get("strongest_label", "DevOps Engineer") if target_job else "DevOps Engineer")
     if decision == "APPLY" and label not in allowed_categories:
