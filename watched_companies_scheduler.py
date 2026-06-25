@@ -118,6 +118,38 @@ def _resolved_company_scraper_it_prefs(user_id, payload_prefs):
     return merged
 
 
+def _fire_instant_alerts_for_opt_friendly_company(row: dict, user_id: str, email: str, since) -> None:
+    """Send an immediate per-job webhook alert for jobs this scrape just found,
+    instead of waiting for the next daily digest.
+
+    Only called for watched_companies rows with is_opt_friendly=true (the
+    307-company fast-poll list verified by scripts/probe_opt_friendly_ats.py)
+    - the whole point of fast-polling these specifically is that a user
+    shouldn't have to wait until the next digest to hear about a new OPT-
+    friendly posting.
+    """
+    import dashboard_server as ds
+
+    try:
+        from supabase_client import get_supabase_client
+
+        sb = get_supabase_client()
+        res = (
+            sb.table("jobs")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("company_name", row.get("company_name") or "")
+            .gte("scraped_at", since.isoformat())
+            .eq("apply_decision", "APPLY")
+            .execute()
+        )
+        new_jobs = res.data or []
+        for job in new_jobs:
+            ds.send_webhook_alert(job, email=email)
+    except Exception as e:
+        print(f"watched_companies: instant OPT-friendly alert failed for {row.get('company_name')}: {e}")
+
+
 def _watched_company_scrape_thread(row: dict):
     """Run company_scraper/main.py for a watched row; update last_jobs_found; clear inflight."""
     import dashboard_server as ds
@@ -134,6 +166,7 @@ def _watched_company_scrape_thread(row: dict):
         env["MAAS_USER_ID"] = uid
         env["MAAS_USER_EMAIL"] = email
         script = os.path.join(ds.WORKSPACE_DIR, "company_scraper", "main.py")
+        scrape_started_at = datetime.now(timezone.utc)
         p = subprocess.run(
             [sys.executable, script, b64],
             cwd=ds.WORKSPACE_DIR,
@@ -154,6 +187,9 @@ def _watched_company_scrape_thread(row: dict):
                 ).execute()
             except Exception as ex:
                 print(f"watched_companies: last_jobs_found update failed {row_id}: {ex}")
+
+        if row.get("is_opt_friendly"):
+            _fire_instant_alerts_for_opt_friendly_company(row, uid, email, scrape_started_at)
     except Exception as e:
         print(f"watched_companies scrape thread error {row_id}: {e}")
     finally:
@@ -162,9 +198,19 @@ def _watched_company_scrape_thread(row: dict):
 
 
 def watched_companies_scheduler_loop():
-    """Hourly: scrape due active watched companies (service role)."""
+    """Scrape due active watched companies (service role).
+
+    Tick interval dropped from hourly to 60s (2026-06-25) so companies with a
+    poll_interval_minutes set (OPT-friendly fast-poll companies, typically
+    5-10 min) actually get checked at that cadence instead of being capped at
+    once/hour regardless of what was configured. The per-row "is this due"
+    check still defaults to scrape_frequency's daily/weekly text logic when
+    poll_interval_minutes isn't set, so existing daily/weekly watched
+    companies are unaffected - they just get checked more frequently (cheap,
+    a single SELECT) without becoming due any sooner than before.
+    """
     while True:
-        time.sleep(3600)
+        time.sleep(60)
         try:
             from supabase_client import get_supabase_client
 
@@ -176,14 +222,19 @@ def watched_companies_scheduler_loop():
                 row_id = str(company.get("id") or "")
                 if not row_id:
                     continue
-                freq = (company.get("scrape_frequency") or "daily").lower()
-                if freq not in ("daily", "weekly"):
-                    freq = "daily"
                 last = company.get("last_scraped_at")
                 last_dt = _watched_parse_last_scraped_ts(last)
+                poll_minutes = company.get("poll_interval_minutes")
                 if last_dt is None:
                     due = True
+                elif poll_minutes:
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    due = (now - last_dt).total_seconds() >= (int(poll_minutes) * 60)
                 else:
+                    freq = (company.get("scrape_frequency") or "daily").lower()
+                    if freq not in ("daily", "weekly"):
+                        freq = "daily"
                     if last_dt.tzinfo is None:
                         last_dt = last_dt.replace(tzinfo=timezone.utc)
                     delta = (now - last_dt).total_seconds()
