@@ -62,29 +62,48 @@ def _save_progress(progress: dict) -> None:
     tmp.replace(OUTPUT_PATH)
 
 
-def _verify_company_on_page(company_name: str, url: str) -> bool:
-    """Check the resolved board's own page text for the company's name, to catch
-    slug-collision false positives (a generic slug guess resolving to some other
-    company's real, unrelated ATS board).
+import re as _re
+from urllib.parse import urlparse as _urlparse
 
-    Real bug (2026-06-24): the first version used any(kw in text for kw in
-    keywords), but the slug guess IS one of those keywords (e.g. "brooks" for
-    "Brooks County School System") - so the resolved URL's own hostname always
-    trivially "matched" regardless of whether it was actually the same company
-    ("careers.brooks.com" naturally contains the text "brooks" everywhere on
-    the page even though it's an unrelated company, not Brooks County School
-    System). Confirmed live: this produced a false HIT for Brooks County
-    School System -> careers.brooks.com. Fixed by requiring at least 2 distinct
-    keyword matches when 2+ are available, since a coincidental brand-name
-    collision on one generic word is common but matching two unrelated words
-    (e.g. both "brooks" AND "county") from the same company is not.
+_TITLE_TAG_RE = _re.compile(r"<title[^>]*>(.*?)</title>", _re.IGNORECASE | _re.DOTALL)
+
+
+def _verify_company_on_page(company_name: str, url: str, ats: str | None = None) -> bool:
+    """Verify a resolved ATS URL genuinely belongs to ``company_name``.
+
+    Real bug (2026-06-25), found in two layers:
+    1. Checking the FULL page body text for keyword overlap (even with
+       boilerplate words stripped) is still too permissive - full-page text
+       scanning matches on noise. Fixed by checking only the <title> tag:
+       Greenhouse/Lever boards consistently render it as "Jobs at {Company}"
+       / "{Company} Jobs" / just "{Company}" - confirmed live,
+       boards.greenhouse.io/air's title is literally "Jobs at Air" (not "Air
+       Filters Inc") and /apex's is "Jobs at Apex Eye" (not "Apex Systems
+       LLC").
+    2. clean_company_name() (h1b_sponsors.py) is designed for loose fuzzy
+       *matching* and strips words like "Systems"/"Technologies"/"Solutions"
+       as if they were legal suffixes - which destroys the actual
+       distinguishing part of a name like "Apex Systems" (cleans down to
+       just "apex", a single generic word that trivially matches any board
+       whose company happens to also start with "Apex"). Switched to
+       company_normalizer's lighter suffix stripper, which only removes true
+       legal-entity suffixes (Inc/LLC/Corp/Ltd/...) and keeps real
+       distinguishing words intact.
     """
-    cleaned = clean_company_name(company_name).strip()
+    from company_normalizer import _strip_legal_suffix
+
+    cleaned = _strip_legal_suffix(company_name).strip().lower()
     keywords = [w for w in cleaned.split() if len(w) >= 3] or [company_name.lower()]
+    if not keywords:
+        return False
+
     try:
         r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
-        text = (r.text or "").lower()
-        matches = sum(1 for kw in keywords if kw in text)
+        m = _TITLE_TAG_RE.search(r.text or "")
+        title_text = (m.group(1) if m else "").lower()
+        if not title_text:
+            return False
+        matches = sum(1 for kw in keywords if kw in title_text)
         required = min(2, len(keywords))
         return matches >= required
     except Exception:
@@ -104,7 +123,7 @@ def _probe_one(company_name: str) -> dict:
     ats = detect_ats(url)
     verified = False
     if ats in ("greenhouse", "lever", "workday", "icims"):
-        verified = _verify_company_on_page(company_name, url)
+        verified = _verify_company_on_page(company_name, url, ats)
 
     return {"company_name": company_name, "url": url, "ats": ats, "verified": verified}
 
