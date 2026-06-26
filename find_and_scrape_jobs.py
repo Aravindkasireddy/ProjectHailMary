@@ -1820,6 +1820,14 @@ def scrape_linkedin(url):
         soup = BeautifulSoup(html, 'html.parser')
         title_elem = soup.find('h1', class_=re.compile('topcard__title|job-search-card__title|title')) or soup.find('h1')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
+        # LinkedIn's own SEO/search-aggregator landing pages (e.g. "54,000+
+        # Migration Specialist Jobs in United States") render an <h1> in this
+        # exact "<count>+ ... Jobs in <location>" shape - confirmed live,
+        # these were being scraped and stored as if they were real individual
+        # postings (company always "Unknown" on these). Reject before the
+        # title check below even runs.
+        if re.match(r'^[\d,]+\+?\s+.*\bjobs\s+in\b', title, re.I):
+            return None
         if (
             "login" in fetch_url.lower()
             or not title
@@ -1832,6 +1840,20 @@ def scrape_linkedin(url):
             # A real LinkedIn posting always has an org-name element; a missing
             # one paired with a parsed title means we're on a block/error page
             # that slipped past the title check above, not a genuine job.
+            return None
+
+        # Skip LinkedIn Easy Apply postings (user instruction, 2026-06-24). The
+        # earlier fix only checked this in fetch_linkedin_guest_jobs()'s search-
+        # result card loop, but scrape_linkedin() is also called directly on any
+        # LinkedIn URL surfaced via the bulk Yahoo-search discovery path
+        # (search_and_scrape_for_keyword -> scrape_single_url dispatches on
+        # domain) - that path never goes through the card loop at all, so Easy
+        # Apply postings reached there were never filtered. Checking the apply
+        # button specifically (not the whole page) to avoid a false match from
+        # an unrelated "recommended jobs" sidebar widget elsewhere on the page.
+        apply_btn = soup.find(class_=re.compile('jobs-apply-button'))
+        apply_btn_text = apply_btn.get_text(" ", strip=True).lower() if apply_btn else ""
+        if "easy apply" in apply_btn_text:
             return None
         loc_elem = soup.find('span', class_=re.compile('topcard__flavor--bullet')) or soup.find('span', class_=re.compile('topcard__flavor--bullet-location'))
         location = loc_elem.get_text().strip() if loc_elem else "Remote"
