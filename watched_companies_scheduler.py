@@ -18,6 +18,16 @@ from datetime import datetime, timezone
 _watched_scrape_inflight = set()
 _watched_scrape_inflight_lock = threading.Lock()
 
+# Real incident (2026-06-25): the scheduler loop used to spawn a new thread
+# for every due row with no cap at all. Registering 307 OPT-friendly
+# companies (all with no last_scraped_at yet, so all instantly "due" on the
+# very first tick) spawned ~300 concurrent company_scraper subprocesses on a
+# 2-vCPU production VM, overloading it so badly even SSH stopped responding
+# and the box needed a hard reset. Cap how many scrapes can run at once;
+# anything due beyond the cap waits for a slot on a later tick (60s later)
+# instead of all firing in the same instant.
+MAX_CONCURRENT_WATCHED_SCRAPES = 3
+
 
 def _watched_hint_from_url(url: str) -> str:
     from company_scraper.detector import brand_label_from_careers_url
@@ -197,6 +207,63 @@ def _watched_company_scrape_thread(row: dict):
             _watched_scrape_inflight.discard(row_id)
 
 
+def _is_company_due(company: dict, now) -> bool:
+    last = company.get("last_scraped_at")
+    last_dt = _watched_parse_last_scraped_ts(last)
+    poll_minutes = company.get("poll_interval_minutes")
+    if last_dt is None:
+        return True
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    if poll_minutes:
+        return (now - last_dt).total_seconds() >= (int(poll_minutes) * 60)
+    freq = (company.get("scrape_frequency") or "daily").lower()
+    if freq not in ("daily", "weekly"):
+        freq = "daily"
+    delta = (now - last_dt).total_seconds()
+    return delta >= (86400 if freq == "daily" else 604800)
+
+
+def _run_scheduler_tick(supabase, start_thread=None) -> int:
+    """Run one tick of the watched-companies scheduler. Returns how many
+    scrapes were actually started (kept separate from the infinite loop so
+    it's unit-testable, in particular the concurrency cap).
+    """
+    if start_thread is None:
+        start_thread = lambda company: threading.Thread(
+            target=_watched_company_scrape_thread, args=(dict(company),), daemon=True
+        ).start()
+
+    started = 0
+    res = supabase.table("watched_companies").select("*").eq("is_active", True).execute()
+    rows = res.data or []
+    now = datetime.now(timezone.utc)
+    for company in rows:
+        row_id = str(company.get("id") or "")
+        if not row_id or not _is_company_due(company, now):
+            continue
+        with _watched_scrape_inflight_lock:
+            if row_id in _watched_scrape_inflight:
+                continue
+            if len(_watched_scrape_inflight) >= MAX_CONCURRENT_WATCHED_SCRAPES:
+                # At capacity this tick - leave last_scraped_at untouched so
+                # this row is picked up again (still due) on a later tick.
+                continue
+            _watched_scrape_inflight.add(row_id)
+        try:
+            supabase.table("watched_companies").update(
+                {"last_scraped_at": now.isoformat()}
+            ).eq("id", row_id).execute()
+        except Exception as ex:
+            with _watched_scrape_inflight_lock:
+                _watched_scrape_inflight.discard(row_id)
+            print(f"watched_companies scheduler: bump last_scraped_at failed {row_id}: {ex}")
+            continue
+        start_thread(company)
+        started += 1
+    return started
+
+
 def watched_companies_scheduler_loop():
     """Scrape due active watched companies (service role).
 
@@ -214,49 +281,6 @@ def watched_companies_scheduler_loop():
         try:
             from supabase_client import get_supabase_client
 
-            supabase = get_supabase_client()
-            res = supabase.table("watched_companies").select("*").eq("is_active", True).execute()
-            rows = res.data or []
-            now = datetime.now(timezone.utc)
-            for company in rows:
-                row_id = str(company.get("id") or "")
-                if not row_id:
-                    continue
-                last = company.get("last_scraped_at")
-                last_dt = _watched_parse_last_scraped_ts(last)
-                poll_minutes = company.get("poll_interval_minutes")
-                if last_dt is None:
-                    due = True
-                elif poll_minutes:
-                    if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    due = (now - last_dt).total_seconds() >= (int(poll_minutes) * 60)
-                else:
-                    freq = (company.get("scrape_frequency") or "daily").lower()
-                    if freq not in ("daily", "weekly"):
-                        freq = "daily"
-                    if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    delta = (now - last_dt).total_seconds()
-                    due = delta >= (86400 if freq == "daily" else 604800)
-                if not due:
-                    continue
-                with _watched_scrape_inflight_lock:
-                    if row_id in _watched_scrape_inflight:
-                        continue
-                    _watched_scrape_inflight.add(row_id)
-                try:
-                    now_iso = now.isoformat()
-                    supabase.table("watched_companies").update({"last_scraped_at": now_iso}).eq(
-                        "id", row_id
-                    ).execute()
-                except Exception as ex:
-                    with _watched_scrape_inflight_lock:
-                        _watched_scrape_inflight.discard(row_id)
-                    print(f"watched_companies scheduler: bump last_scraped_at failed {row_id}: {ex}")
-                    continue
-                threading.Thread(
-                    target=_watched_company_scrape_thread, args=(dict(company),), daemon=True
-                ).start()
+            _run_scheduler_tick(get_supabase_client())
         except Exception as e:
             print(f"Watched companies scheduler error: {e}")
