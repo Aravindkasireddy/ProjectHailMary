@@ -705,6 +705,7 @@ def scrape_url_with_gemini_fallback(url, api_key=None):
 
 
 from jobsearch_paths import workspace_root
+import career_url_cache
 
 WORKSPACE = workspace_root()
 load_dotenv(dotenv_path=str(WORKSPACE / ".env"))
@@ -2012,26 +2013,68 @@ def resolve_career_link(job_title, company_name, jd_text, html=None):
         # Step 2: Fallback to targeted search
         clean_company = clean_company_name(company_name)
         company_tokens = get_company_tokens(company_name)
-        
+
+        # Career URL cache (Optimization Sprint #1, 2026-06-27): Step 2/3
+        # below resolve a company-wide careers/ATS-board URL, which is the
+        # same regardless of job title - and telemetry showed heavy
+        # per-company repetition with zero caching (see career_url_cache.py
+        # module docstring for the full rationale). Checked AFTER Step 1
+        # (free, JD/HTML-local, unaffected by caching) and BEFORE Step 2/3
+        # (the only steps actually measured as slow: career_url_resolution
+        # averaged 1532ms/call). On a cache miss or disabled cache, execution
+        # falls straight through into the exact same Step 2/3 code that ran
+        # before this sprint - no behavior change on miss.
+        _t_cache = time.perf_counter()
+        cached_entry = career_url_cache.get(str(WORKSPACE), clean_company)
+        if cached_entry:
+            now = time.time()
+            _record_connector_substep(
+                "career_url_cache_lookup", time.perf_counter() - _t_cache,
+                connector="linkedin", company=company_name, success=True,
+                cache_hit=True,
+                cache_age_s=round(now - cached_entry.get("timestamp", now), 3),
+                ttl_remaining_s=round(cached_entry.get("expiration_time", now) - now, 3),
+                cache_source=cached_entry.get("source"),
+            )
+            return cached_entry["career_url"]
+        else:
+            _record_connector_substep(
+                "career_url_cache_lookup", time.perf_counter() - _t_cache,
+                connector="linkedin", company=company_name, success=False, cache_hit=False,
+            )
+
         query = f'"{company_name}" "{job_title}" (site:greenhouse.io OR site:lever.co OR site:ashbyhq.com OR site:myworkdayjobs.com OR site:workdayjobs.com OR site:smartrecruiters.com OR site:workable.com OR site:careers OR site:jobs)'
         search_urls = search_for_job_url(query)
-        
+
         candidate_urls = filter_and_score_urls(search_urls, clean_company, company_tokens)
-        
+
         if not candidate_urls:
             query_broad = f'"{company_name}" "{job_title}" career OR jobs'
             search_urls_broad = search_for_job_url(query_broad)
             candidate_urls = filter_and_score_urls(search_urls_broad, clean_company, company_tokens)
-            
+
         if candidate_urls:
             candidate_urls.sort(key=lambda x: x[0], reverse=True)
-            return candidate_urls[0][1]
-            
+            resolved = candidate_urls[0][1]
+            _t_write = time.perf_counter()
+            career_url_cache.set_entry(str(WORKSPACE), clean_company, resolved, source="search")
+            _record_connector_substep(
+                "career_url_cache_write", time.perf_counter() - _t_write,
+                connector="linkedin", company=company_name, success=True, cache_source="search",
+            )
+            return resolved
+
         # Step 3: Fallback to LLM-based resolution if search yields no valid company links
         _t_llm = time.perf_counter()
         llm_url = resolve_career_link_with_llm(job_title, company_name)
         _record_connector_substep("llm_fallback", time.perf_counter() - _t_llm, company=company_name, success=bool(llm_url))
         if llm_url:
+            _t_write = time.perf_counter()
+            career_url_cache.set_entry(str(WORKSPACE), clean_company, llm_url, source="llm")
+            _record_connector_substep(
+                "career_url_cache_write", time.perf_counter() - _t_write,
+                connector="linkedin", company=company_name, success=True, cache_source="llm",
+            )
             return llm_url
 
     except Exception as e:
@@ -2169,6 +2212,20 @@ def scrape_linkedin(url):
             _record_connector_substep("live_url_validation", time.perf_counter() - _t_validate, connector="linkedin", company=company, success=is_live)
             if not is_live:
                 log(f"Discarding unverified resolved career URL (not live): {resolved_url}")
+                # A failed liveness check means any cached entry for this
+                # company is now known-bad - invalidate it so it's never
+                # served again, rather than letting the cache keep handing
+                # out a dead URL until TTL expiry. This doesn't change this
+                # job's outcome (resolved_url is discarded either way below);
+                # it only affects whether future jobs at this company hit
+                # the cache.
+                invalidated = career_url_cache.invalidate(str(WORKSPACE), clean_company_name(company))
+                if invalidated:
+                    _record_connector_substep(
+                        "career_url_cache_invalidate", 0.0,
+                        connector="linkedin", company=company, success=True,
+                        cache_invalidation_reason="failed_liveness_check",
+                    )
                 resolved_url = None
         final_url = resolved_url if resolved_url else fetch_url
         

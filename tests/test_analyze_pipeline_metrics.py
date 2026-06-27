@@ -10,6 +10,7 @@ from analyze_pipeline_metrics import (
     aggregate_averages,
     breakdown_by,
     build_report,
+    career_url_cache_report,
     connector_waterfall,
     error_analysis,
     overall_summary,
@@ -235,3 +236,100 @@ def test_aggregate_averages_avg_bytes_and_requests_from_http_ops():
     avgs = aggregate_averages(ops)
     assert avgs["avg_bytes_downloaded"] == 2000
     assert avgs["avg_requests_per_job"] == 2
+
+
+def _cache_op(name, duration_ms, company=None, metadata=None):
+    return {
+        "event": "operation",
+        "operation_name": name,
+        "stage": "discovery",
+        "duration_ms": duration_ms,
+        "success": True,
+        "company": company,
+        "ats_source": "linkedin",
+        "metadata": metadata or {},
+    }
+
+
+def test_career_url_cache_report_computes_hit_and_miss_rate():
+    ops = [
+        _cache_op("career_url_cache_lookup", 1, company="Netflix", metadata={"cache_hit": True}),
+        _cache_op("career_url_cache_lookup", 1, company="Netflix", metadata={"cache_hit": True}),
+        _cache_op("career_url_cache_lookup", 1, company="Acme", metadata={"cache_hit": False}),
+    ]
+    report = career_url_cache_report(ops)
+    assert report["total_lookups"] == 3
+    assert report["hit_count"] == 2
+    assert report["miss_count"] == 1
+    assert report["hit_rate"] == pytest.approx(2 / 3, abs=1e-3)
+    assert report["miss_rate"] == pytest.approx(1 / 3, abs=1e-3)
+
+
+def test_career_url_cache_report_returns_none_rates_when_no_lookups():
+    report = career_url_cache_report([])
+    assert report["hit_rate"] is None
+    assert report["miss_rate"] is None
+    assert report["total_lookups"] == 0
+
+
+def test_career_url_cache_report_avg_lookup_and_write_times():
+    ops = [
+        _cache_op("career_url_cache_lookup", 2, metadata={"cache_hit": True}),
+        _cache_op("career_url_cache_lookup", 4, metadata={"cache_hit": True}),
+        _cache_op("career_url_cache_write", 10, metadata={"cache_source": "search"}),
+    ]
+    report = career_url_cache_report(ops)
+    assert report["avg_lookup_time_ms"] == 3
+    assert report["avg_write_time_ms"] == 10
+    assert report["write_count"] == 1
+
+
+def test_career_url_cache_report_yahoo_searches_avoided_equals_hit_count():
+    ops = [
+        _cache_op("career_url_cache_lookup", 1, metadata={"cache_hit": True}),
+        _cache_op("career_url_cache_lookup", 1, metadata={"cache_hit": True}),
+        _cache_op("career_url_cache_lookup", 1, metadata={"cache_hit": False}),
+    ]
+    report = career_url_cache_report(ops)
+    assert report["estimated_yahoo_searches_avoided"] == 2
+
+
+def test_career_url_cache_report_avg_cache_age_only_from_hits():
+    ops = [
+        _cache_op("career_url_cache_lookup", 1, metadata={"cache_hit": True, "cache_age_s": 100.0, "ttl_remaining_s": 500.0}),
+        _cache_op("career_url_cache_lookup", 1, metadata={"cache_hit": True, "cache_age_s": 200.0, "ttl_remaining_s": 400.0}),
+        _cache_op("career_url_cache_lookup", 1, metadata={"cache_hit": False}),
+    ]
+    report = career_url_cache_report(ops)
+    assert report["avg_cache_age_s_on_hit"] == 150.0
+    assert report["avg_ttl_remaining_s_on_hit"] == 450.0
+
+
+def test_career_url_cache_report_top_cached_and_miss_companies():
+    ops = [
+        _cache_op("career_url_cache_write", 1, company="Netflix"),
+        _cache_op("career_url_cache_write", 1, company="Netflix"),
+        _cache_op("career_url_cache_write", 1, company="Hyperproof"),
+        _cache_op("career_url_cache_lookup", 1, company="Acme", metadata={"cache_hit": False}),
+    ]
+    report = career_url_cache_report(ops)
+    assert report["top_cached_companies"][0] == ("Netflix", 2)
+    assert report["top_cache_miss_companies"][0] == ("Acme", 1)
+
+
+def test_career_url_cache_report_invalidation_reasons():
+    ops = [
+        _cache_op("career_url_cache_invalidate", 0, company="Acme", metadata={"cache_invalidation_reason": "failed_liveness_check"}),
+        _cache_op("career_url_cache_invalidate", 0, company="Beta", metadata={"cache_invalidation_reason": "failed_liveness_check"}),
+    ]
+    report = career_url_cache_report(ops)
+    assert report["invalidation_count"] == 2
+    assert report["invalidation_reasons"] == {"failed_liveness_check": 2}
+
+
+def test_career_url_cache_report_does_not_report_unmeasurable_fields():
+    report = career_url_cache_report([])
+    # Explicitly forbidden by the task brief: don't fabricate a counterfactual
+    # for LLM calls or DuckDuckGo searches avoided.
+    assert "estimated_llm_calls_avoided" not in report
+    assert "estimated_duckduckgo_searches_avoided" not in report

@@ -232,6 +232,77 @@ def aggregate_averages(ops: list[dict]) -> dict:
     }
 
 
+def career_url_cache_report(ops: list[dict]) -> dict:
+    """Career URL Cache metrics (Optimization Sprint #1, 2026-06-27).
+
+    Only reports quantities derivable directly from the cache's own emitted
+    events (career_url_cache_lookup / career_url_cache_write /
+    career_url_cache_invalidate) - never from speculative counterfactuals.
+
+    Deliberately NOT computed here, and why:
+    - "Average Saved Time": yahoo_search/duckduckgo_search are also called
+      from the unrelated bulk-discovery search phase (search_and_scrape_for_
+      keyword), not just from the career-resolution path this cache
+      shortcuts - so a single-run composite of "search+LLM time avoided"
+      would mix in unrelated traffic. The honest way to measure saved time
+      is a direct before/after comparison of career_url_resolution latency
+      with the cache cold vs warm, which is what the benchmark script
+      (scripts/benchmark_career_url_cache.py) does instead.
+    - "Estimated LLM Calls Avoided" / "Estimated DuckDuckGo Searches
+      Avoided": both are reached only conditionally (LLM fallback only after
+      search fails; DuckDuckGo only after Yahoo fails), so whether a given
+      avoided lookup would have reached either is an unknowable
+      counterfactual - reporting a number here would be exactly the kind of
+      estimate this task explicitly forbids.
+    - "Estimated Yahoo Searches Avoided" IS reported below, because Yahoo is
+      unconditionally the first call inside search_for_job_url() - every
+      cache hit deterministically avoids exactly one Yahoo search, by
+      construction of the code, not by estimation.
+    """
+    lookups = [o for o in ops if o.get("operation_name") == "career_url_cache_lookup"]
+    writes = [o for o in ops if o.get("operation_name") == "career_url_cache_write"]
+    invalidations = [o for o in ops if o.get("operation_name") == "career_url_cache_invalidate"]
+
+    hits = [o for o in lookups if (o.get("metadata") or {}).get("cache_hit") is True]
+    misses = [o for o in lookups if (o.get("metadata") or {}).get("cache_hit") is False]
+
+    def _avg(items, key_fn):
+        vals = [v for v in (key_fn(o) for o in items) if v is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    def _top_companies(items, n=10):
+        counts: dict[str, int] = defaultdict(int)
+        for o in items:
+            c = o.get("company")
+            if c:
+                counts[c] += 1
+        return sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:n]
+
+    total_lookups = len(lookups)
+    invalidation_reasons: dict[str, int] = defaultdict(int)
+    for o in invalidations:
+        reason = (o.get("metadata") or {}).get("cache_invalidation_reason") or "unspecified"
+        invalidation_reasons[reason] += 1
+
+    return {
+        "total_lookups": total_lookups,
+        "hit_count": len(hits),
+        "miss_count": len(misses),
+        "hit_rate": round(len(hits) / total_lookups, 3) if total_lookups else None,
+        "miss_rate": round(len(misses) / total_lookups, 3) if total_lookups else None,
+        "avg_lookup_time_ms": _avg(lookups, lambda o: o.get("duration_ms")),
+        "avg_write_time_ms": _avg(writes, lambda o: o.get("duration_ms")),
+        "write_count": len(writes),
+        "estimated_yahoo_searches_avoided": len(hits),  # deterministic, not an estimate - see docstring
+        "avg_cache_age_s_on_hit": _avg(hits, lambda o: (o.get("metadata") or {}).get("cache_age_s")),
+        "avg_ttl_remaining_s_on_hit": _avg(hits, lambda o: (o.get("metadata") or {}).get("ttl_remaining_s")),
+        "invalidation_count": len(invalidations),
+        "invalidation_reasons": dict(invalidation_reasons),
+        "top_cached_companies": _top_companies(writes),
+        "top_cache_miss_companies": _top_companies(misses),
+    }
+
+
 def error_analysis(ops: list[dict]) -> list[tuple[str, int]]:
     reasons: dict[str, int] = defaultdict(int)
     for o in ops:
@@ -307,6 +378,7 @@ def build_report(events: list[dict], min_samples: int) -> dict:
         "connector_waterfall": connector_waterfall(ops),
         "throughput": throughput(ops),
         "aggregate_averages": aggregate_averages(ops),
+        "career_url_cache_report": career_url_cache_report(ops),
         "error_analysis": error_analysis(ops),
         "recommendations": recommendations(ops, min_samples),
     }
@@ -368,6 +440,21 @@ def print_report(report: dict) -> None:
     print(f"  total_cost_usd_at_list_price={a['total_cost_usd_at_list_price']}")
     print("  (avg time per connector: see 'Breakdown by ATS/Connector' above; avg time per company: see 'Top Companies' above)")
     print("  Note: any 'None' above means that field has not yet been recorded by enough real events - not estimated.")
+
+    c = report["career_url_cache_report"]
+    print("\n--- Career URL Cache (Optimization Sprint #1) ---")
+    print(f"  total_lookups={c['total_lookups']}  hits={c['hit_count']}  misses={c['miss_count']}")
+    print(f"  hit_rate={c['hit_rate']}  miss_rate={c['miss_rate']}")
+    print(f"  avg_lookup_time_ms={c['avg_lookup_time_ms']}  avg_write_time_ms={c['avg_write_time_ms']} (n={c['write_count']})")
+    print(f"  estimated_yahoo_searches_avoided={c['estimated_yahoo_searches_avoided']}  (deterministic - see docstring, not a guess)")
+    print(f"  avg_cache_age_s_on_hit={c['avg_cache_age_s_on_hit']}  avg_ttl_remaining_s_on_hit={c['avg_ttl_remaining_s_on_hit']}")
+    print(f"  invalidation_count={c['invalidation_count']}  reasons={c['invalidation_reasons']}")
+    if c["top_cached_companies"]:
+        print("  Top cached companies:", ", ".join(f"{name}({n})" for name, n in c["top_cached_companies"]))
+    if c["top_cache_miss_companies"]:
+        print("  Top cache-miss companies:", ", ".join(f"{name}({n})" for name, n in c["top_cache_miss_companies"]))
+    print("  Note: LLM-calls-avoided and DuckDuckGo-searches-avoided are intentionally omitted -")
+    print("  both are reached conditionally, so the avoided count is an unknowable counterfactual, not a measurement.")
 
     print("\n--- Error Analysis (top failure reasons) ---")
     for reason, count in report["error_analysis"][:10]:
