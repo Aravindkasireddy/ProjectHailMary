@@ -743,9 +743,45 @@ def clean_text(html_content):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return "\n".join(lines)
 
+def _log_playwright_timing(url, elapsed_s, attempt, success):
+    """Best-effort telemetry (Phase 10 of the 2026-06-27 perf audit). Records
+    per-call Playwright timing so future optimization attempts can be
+    measured against real numbers instead of estimates.
+
+    Real incident from this same audit: an earlier version of this change
+    also tried to reuse a single shared browser instance across calls to
+    avoid the per-call Chromium cold-start. That was reverted - confirmed
+    live (logs/scrape.log) it caused "Cannot switch to a different thread"
+    failures on 219 of 262 calls (83.6%), because Playwright's sync API
+    binds a browser to whichever thread launched it, and this function is
+    called from multiple different ThreadPoolExecutor worker threads
+    (PLAYWRIGHT_LOCK serializes access but does not change which thread is
+    calling). Per-call sync_playwright()/browser.launch() below is
+    intentional, not yet-unoptimized - any future attempt at browser reuse
+    must keep the browser pinned to one thread (e.g. a dedicated worker
+    thread + queue), not a shared global like the first attempt.
+    """
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "playwright_fetch",
+            {
+                "url": url,
+                "duration_ms": int(elapsed_s * 1000),
+                "attempt": attempt,
+                "success": success,
+            },
+        )
+    except Exception:
+        pass
+
+
 def fetch_with_playwright(url):
     last_err = None
     for attempt in range(1, 4):
+        t0 = time.perf_counter()
         try:
             # Randomized pre-navigation delay (1-3s)
             time.sleep(random.uniform(1.0, 3.0))
@@ -855,10 +891,12 @@ def fetch_with_playwright(url):
                 
                 html = page.content()
                 browser.close()
+                _log_playwright_timing(url, time.perf_counter() - t0, attempt, success=True)
                 return html
         except Exception as e:
             last_err = e
             log(f"Playwright attempt {attempt} failed for {url}: {e}")
+            _log_playwright_timing(url, time.perf_counter() - t0, attempt, success=False)
             time.sleep(min(2 ** attempt, 8))
             
     print(f"Playwright error for {url}: {last_err}", flush=True)
