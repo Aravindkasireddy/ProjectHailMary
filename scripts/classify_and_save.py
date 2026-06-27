@@ -767,7 +767,20 @@ def classify_job_dynamically(job):
         label_scores["DevOps Engineer"] += 1
     if any(k in desc for k in ["slo", "sli", "error budget", "sre", "reliability", "observability"]):
         label_scores["Site Reliability Engineer (SRE)"] += 2
-    if any(k in desc for k in ["internal platform", "developer platform", "kubernetes", "platform engineer"]):
+    # Platform Engineering description signals (aligned 2026-06-27 with the
+    # Job_classifier_prompt.txt PLATFORM ENGINEERING RULE's MAAS definition:
+    # Kubernetes lifecycle ownership + IDP + self-service workflows). Named
+    # IDP products and explicit cluster-lifecycle/self-service language are
+    # stronger evidence of platform ownership than a bare "kubernetes"
+    # mention, so they're weighted higher - simple keyword matching, no NLP,
+    # purely additive to this one label so it can't regress other roles.
+    if any(k in desc for k in ["backstage", "morpheus", "harness idp", "internal developer platform"]):
+        label_scores["Platform Engineering"] += 3
+    if any(k in desc for k in ["golden path", "self-service", "self service platform", "developer platform", "platform engineer"]):
+        label_scores["Platform Engineering"] += 2
+    if any(k in desc for k in ["cluster lifecycle", "node pool", "node group", "multi-tenant kubernetes", "cluster upgrade", "cluster autoscaling"]):
+        label_scores["Platform Engineering"] += 2
+    if "kubernetes" in desc:
         label_scores["Platform Engineering"] += 1
     if any(k in desc for k in ["ci/cd", "pipeline", "jenkins", "github actions", "gitlab", "circleci"]):
         label_scores["Continuous Integration (CI/CD)"] += 1

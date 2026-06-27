@@ -456,6 +456,8 @@ THRESHOLD
 
 ## PLATFORM ENGINEERING RULE
 
+MAAS definition (aligned 2026-06-27): a Platform Engineer is a DevOps specialist whose PRIMARY scope is (1) deployments and containerization of applications, (2) Kubernetes lifecycle management (cluster creation, upgrades, autoscaling, node pools, multi-tenancy), (3) building/operating an Internal Developer Platform (IDP), and (4) self-service workflows for other engineering teams (golden paths, standardized templates, GitOps). DevOps Engineer remains the broad default for cross-functional CI/CD + IaC + deployment automation + observability ownership; Platform Engineering is chosen only when the Kubernetes-platform + IDP + self-service scope is clearly the dominant focus, not merely present.
+
 Choose Platform Engineering when container platforms, Kubernetes platforms, and internal developer platforms dominate the role.
 
 The role must demonstrate ownership of platform design, cluster lifecycle, and reusable platform capabilities, not just usage of Kubernetes.
@@ -465,13 +467,14 @@ SIGNALS
 --------------------------------------------------
 
 Core Signals (Strong Indicators):
+- deployment and containerization ownership for applications (not just running a `docker build`/`kubectl apply` as one task among many)
 - Kubernetes platform ownership
 - EKS / AKS / GKE / OpenShift
 - Helm (charts, templating, release management)
 - service mesh (Istio, Linkerd, Consul)
 - cluster lifecycle management (create, upgrade, scale, decommission)
 - container orchestration platforms
-- multi-tenant Kubernetes platforms
+- multi-tenant Kubernetes platforms (node pools, RBAC/policy boundaries between tenant teams)
 - internal developer platforms (IDP)
 - golden paths / standardized deployment patterns
 - self-service platform capabilities
@@ -479,10 +482,10 @@ Core Signals (Strong Indicators):
 Expanded Signals (Moderate Indicators):
 - build and operate Kubernetes clusters
 - cluster upgrades and version management
-- cluster scaling (node groups, autoscaling)
+- cluster scaling (node groups/node pools, autoscaling)
 - multi-cluster management (federation, global control planes)
 - platform standardization across teams
-- developer platform tooling (Backstage, portals, CLIs)
+- developer platform tooling and named IDP products: Backstage, Morpheus, Harness IDP, or a custom internal developer portal
 - workload isolation and namespace design
 - platform security policies (OPA, Kyverno, Pod Security)
 - GitOps-based platform operations (ArgoCD, Flux)
@@ -498,7 +501,7 @@ Implicit Signals (Ownership Indicators):
 STRONG DIFFERENTIATORS
 --------------------------------------------------
 
-- building internal developer platforms (IDP)
+- building internal developer platforms (IDP) — Backstage, Morpheus, Harness IDP, or a custom portal
 - designing golden paths for application deployment
 - managing multi-cluster or global Kubernetes platforms
 - implementing service mesh at platform level
@@ -550,6 +553,9 @@ if multi_cluster or service_mesh:
 if idp or golden_paths or self_service_platform:
     platform_score += 2
 
+if named_idp_product (backstage, morpheus, harness idp, custom developer portal):
+    platform_score += 2
+
 if gitops or platform_standardization:
     platform_score += 1
 
@@ -560,6 +566,21 @@ THRESHOLD
 - platform_score >= 5 → classify as Platform Engineering
 - platform_score 3–4 → evaluate competing roles
 - platform_score < 3 → do not classify as Platform Engineering
+
+--------------------------------------------------
+WORKED EXAMPLES (Platform Engineering vs DevOps Engineer)
+--------------------------------------------------
+
+Classify as Platform Engineering:
+- "Platform Engineer" owning Kubernetes cluster lifecycle (create/upgrade/scale node pools) and building a Backstage-based internal developer portal for other teams.
+- "DevOps Platform Engineer" whose JD centers on multi-tenant Kubernetes platform design, RBAC/policy boundaries between tenant teams, and golden-path deployment templates.
+- "Platform Reliability Engineer" who designs and operates the shared Kubernetes platform other teams deploy onto, with GitOps-based self-service workflows.
+- "Internal Developer Platform Engineer" building/maintaining Morpheus or Harness IDP self-service tooling and standardized deployment templates.
+
+Classify as DevOps Engineer (stay default, do NOT promote to Platform Engineering):
+- "DevOps Engineer" whose responsibilities are CI/CD pipelines for a specific product/service, deployment automation for that service, and basic Kubernetes usage (deploying their own team's workloads, not owning cluster lifecycle or serving other teams).
+- "Senior DevOps Engineer" who mentions Kubernetes only as one of several tools (alongside Jenkins, Terraform, monitoring) with no cluster-ownership or IDP/self-service language.
+- A role that uses Kubernetes purely to run `kubectl apply`/manage deployments for one application, with no mention of cluster lifecycle, multi-tenancy, IDP, or serving other engineering teams.
 ---
 
 ## CLOUD AUTOMATION ENGINEER RULE

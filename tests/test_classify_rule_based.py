@@ -106,3 +106,50 @@ def test_automotive_engineering_titles_from_company_scraper_are_out_of_scope():
         result = classify_job_dynamically(job)
         assert result["strongest_label"] == "OutOfScope", title
         assert result["apply_decision"] == "DO_NOT_APPLY", title
+
+
+def test_platform_engineering_description_signals_beat_competing_devops_title():
+    # MAAS definition aligned 2026-06-27: Platform Engineering = Kubernetes
+    # cluster lifecycle ownership + IDP + self-service workflows, distinct
+    # from the DevOps Engineer default. A title that doesn't say "platform"
+    # at all should still be pushed to Platform Engineering when the JD
+    # clearly describes that scope.
+    job = {
+        "job_title": "Senior Engineer",
+        "job_description": (
+            "Own our Kubernetes cluster lifecycle including node pool autoscaling "
+            "and multi-tenant kubernetes design. Build and maintain our Backstage-based "
+            "internal developer platform with golden path templates for self-service deployments."
+        ),
+        "red_flags": [],
+    }
+    result = classify_job_dynamically(job)
+    assert result["strongest_label"] == "Platform Engineering"
+    assert result["apply_decision"] == "APPLY"
+
+
+def test_devops_with_incidental_kubernetes_mention_stays_devops():
+    # Bare "kubernetes" usage (deploying one app, no cluster-lifecycle/IDP
+    # language) should not be enough to override a clear DevOps title.
+    job = {
+        "job_title": "DevOps Engineer",
+        "job_description": (
+            "Own CI/CD pipelines using Jenkins and GitHub Actions, deploy our app to "
+            "Kubernetes using kubectl, manage Terraform infra, and monitor production with Datadog."
+        ),
+        "red_flags": [],
+    }
+    result = classify_job_dynamically(job)
+    assert result["strongest_label"] == "DevOps Engineer"
+    assert result["apply_decision"] == "APPLY"
+
+
+def test_named_idp_products_recognized_in_description():
+    for tool in ("morpheus", "harness idp"):
+        job = {
+            "job_title": "Engineer",
+            "job_description": f"You will build and operate our internal developer platform using {tool}.",
+            "red_flags": [],
+        }
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] == "Platform Engineering", tool

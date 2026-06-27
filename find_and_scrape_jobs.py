@@ -3093,14 +3093,33 @@ _EXCLUDED_JOB_TITLE_RES = [
 ]
 
 
+def _stem_engineering(text):
+    """Normalize "engineering" -> "engineer" so a target title like "Platform
+    Engineering" matches the far more common real-world job title form
+    "Platform Engineer" (e.g. "Platform Engineer - Infrastructure", "DevOps
+    Platform Engineer", "Internal Developer Platform Engineer").
+
+    Real bug, found 2026-06-27: is_target_job("Platform Engineer - Infra",
+    ["Platform Engineering", ...]) returned False - the all-tokens check
+    requires "engineering" to appear as a substring of the title, and
+    "engineering" is not a substring of "engineer" (different suffix), so
+    every "Platform Engineer"-titled job was silently dropped at the
+    discovery stage before ever reaching the classifier. Only "Platform
+    Engineering" in config.json's target_titles ends in "-ing", so this
+    normalization is effectively scoped to that one entry and doesn't change
+    matching for any other target title.
+    """
+    return re.sub(r"\bengineering\b", "engineer", text)
+
+
 def is_target_job(job_title, target_titles):
-    jt = job_title.lower()
+    jt = _stem_engineering(job_title.lower())
     if job_title and any(rx.search(job_title) for rx in _EXCLUDED_JOB_TITLE_RES):
         return False
 
     # 1. Strict substring and all-tokens checks
     for t in target_titles:
-        t_lower = t.lower()
+        t_lower = _stem_engineering(t.lower())
         if t_lower in jt:
             return True
         parts = t_lower.split()
@@ -3126,9 +3145,9 @@ def is_target_job(job_title, target_titles):
         
     jt_clean = re.sub(r'[^a-z0-9\s]', '', jt)
     jt_tokens = set(jt_clean.split())
-    
+
     for t in target_titles:
-        t_clean = re.sub(r'[^a-z0-9\s]', '', t.lower())
+        t_clean = re.sub(r'[^a-z0-9\s]', '', _stem_engineering(t.lower()))
         t_tokens = set(t_clean.split())
         if not t_tokens:
             continue
