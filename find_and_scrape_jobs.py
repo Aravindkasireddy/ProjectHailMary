@@ -658,9 +658,11 @@ def scrape_url_with_gemini_fallback(url, api_key=None):
         active_key = get_active_gemini_key()
         if not active_key:
             break
-            
+
+        _t_llm = time.perf_counter()
         try:
             res = extract_job_with_gemini(url, html, active_key)
+            _record_connector_substep("llm_extraction", time.perf_counter() - _t_llm, connector="generic", success=bool(res), model="gemini")
             if res:
                 return res
             else:
@@ -676,10 +678,12 @@ def scrape_url_with_gemini_fallback(url, api_key=None):
     # Try OpenAI gpt-4o-mini fallback
     if os.environ.get("OPENAI_API_KEY"):
         log(f"Using OpenAI fallback parser for: {url}")
+        _t_llm = time.perf_counter()
         res = extract_job_with_openai(url, html)
+        _record_connector_substep("llm_extraction", time.perf_counter() - _t_llm, connector="generic", success=bool(res), model="gpt-4o-mini")
         if res:
             return res
-            
+
     return None
 
 
@@ -1124,8 +1128,11 @@ def scrape_greenhouse(url):
         response = http_get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return None
+        # Timer starts after http_get returns - http_request has its own
+        # separate telemetry, this should only measure parsing/extraction.
+        _t_parse = time.perf_counter()
         soup = BeautifulSoup(response.text, 'html.parser')
-        
+
         # Extract title
         title_elem = soup.find('h1')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
@@ -1148,6 +1155,7 @@ def scrape_greenhouse(url):
             
         jd_div = soup.find(id='content') or soup.find(class_='job-post') or soup.find(class_='job__description')
         jd_text = clean_text(str(jd_div)) if jd_div else clean_text(response.text)
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="greenhouse", company=company)
         return {
             "job_title": title,
             "company_name": company,
@@ -1166,8 +1174,9 @@ def scrape_lever(url):
         response = http_get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return None
+        _t_parse = time.perf_counter()
         soup = BeautifulSoup(response.text, 'html.parser')
-        
+
         title_elem = soup.find('h2') or soup.find('h1')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
         
@@ -1187,6 +1196,7 @@ def scrape_lever(url):
             
         jd_div = soup.find(class_='posting-sections') or soup.find(class_='job-post')
         jd_text = clean_text(str(jd_div)) if jd_div else clean_text(response.text)
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="lever", company=company)
         return {
             "job_title": title,
             "company_name": company,
@@ -1207,6 +1217,7 @@ def scrape_workday(url):
     }
     
     # 1. Attempt REST API scraping (faster, cleaner, handles client-side dynamic rendering)
+    _t_json = time.perf_counter()
     try:
         parsed = urlparse(url)
         tenant = parsed.netloc.split('.')[0]
@@ -1234,7 +1245,8 @@ def scrape_workday(url):
                         req_id = job_info.get("jobReqId") or job_info.get("id") or "Unknown"
                         description = clean_text(job_info.get("jobDescription", ""))
                         location = job_info.get("location", "Remote")
-                        
+
+                        _record_connector_substep("json_parsing", time.perf_counter() - _t_json, connector="workday", company=company)
                         return {
                             "job_title": title,
                             "company_name": company,
@@ -1257,6 +1269,7 @@ def scrape_workday(url):
         print(f"Workday REST API scraping attempt failed for {url}: {api_err}")
 
     # 2. HTML / JSON-LD Fallback (for older/custom Workday setups)
+    _t_html = time.perf_counter()
     try:
         html_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         response = http_get(url, headers=html_headers, timeout=10)
@@ -1281,6 +1294,7 @@ def scrape_workday(url):
                 address = location_data.get("address", {}) if isinstance(location_data, dict) else {}
                 locality = address.get("addressLocality", "Remote") if isinstance(address, dict) else "Remote"
                 country = address.get("addressCountry", "US") if isinstance(address, dict) else "US"
+                _record_connector_substep("html_parsing", time.perf_counter() - _t_html, connector="workday", company=company, source="json_ld")
                 return {
                     "job_title": title,
                     "company_name": company,
@@ -1291,13 +1305,14 @@ def scrape_workday(url):
                 }
             except Exception:
                 pass
-                
+
         title_elem = soup.find('title')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
         url_match = re.search(r'_([a-zA-Z0-9\-]+)$', url)
         req_id = url_match.group(1) if url_match else "Unknown"
         body = soup.find('body')
         jd_text = clean_text(str(body)) if body else ""
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_html, connector="workday", company=company, source="raw_html")
         return {
             "job_title": title,
             "company_name": company,
@@ -1317,7 +1332,8 @@ def scrape_ashby(url):
         # Handle redirects or inactive job postings
         if response.status_code != 200:
             return None
-            
+
+        _t_parse = time.perf_counter()
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # Check if it redirected away from the job ID path segment
@@ -1362,7 +1378,8 @@ def scrape_ashby(url):
                         loc_str = country
                 if not loc_str:
                     loc_str = "Remote"
-                    
+
+                _record_connector_substep("json_parsing", time.perf_counter() - _t_parse, connector="ashby", company=company, source="json_ld")
                 return {
                     "job_title": title,
                     "company_name": company,
@@ -1384,7 +1401,8 @@ def scrape_ashby(url):
         company = path_parts[0].capitalize() if path_parts else "Unknown"
         req_id = path_parts[-1] if path_parts else "Unknown"
         description = clean_text(str(soup.find('body')))
-        
+
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="ashby", company=company, source="raw_html")
         return {
             "job_title": title_text,
             "company_name": company,
@@ -1835,6 +1853,32 @@ Conform exactly to this JSON schema:
             print(f"OpenAI career link resolution failed: {e}")
     return None
 
+def _record_connector_substep(operation_name, elapsed_s, connector=None, company=None, success=True, **metadata):
+    """Sub-step telemetry inside the connector_extract waterfall (2026-06-27
+    instrumentation task: subdivide connector_extract, which the analyzer
+    confirmed is ~60% of total pipeline time, into measurable steps). Pure
+    observability - never changes control flow, retries, or concurrency.
+    """
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "operation",
+            {
+                "operation_name": operation_name,
+                "stage": "discovery",
+                "ats_source": connector,
+                "company": company,
+                "duration_ms": int(elapsed_s * 1000),
+                "success": success,
+                "metadata": metadata,
+            },
+        )
+    except Exception:
+        pass
+
+
 def resolve_career_link(job_title, company_name, jd_text, html=None):
     try:
         # Step 1: Scan description & HTML for direct ATS links
@@ -1866,10 +1910,12 @@ def resolve_career_link(job_title, company_name, jd_text, html=None):
             return candidate_urls[0][1]
             
         # Step 3: Fallback to LLM-based resolution if search yields no valid company links
+        _t_llm = time.perf_counter()
         llm_url = resolve_career_link_with_llm(job_title, company_name)
+        _record_connector_substep("llm_fallback", time.perf_counter() - _t_llm, company=company_name, success=bool(llm_url))
         if llm_url:
             return llm_url
-            
+
     except Exception as e:
         print(f"Error resolving career link for {company_name} - {job_title}: {e}")
     return None
@@ -1932,6 +1978,14 @@ def scrape_linkedin(url):
         html = fetch_with_playwright(fetch_url)
         if not html:
             return None
+        # Real measurement bug caught while reviewing the analyzer's output
+        # (2026-06-27): an earlier version started this timer BEFORE
+        # fetch_with_playwright() above, so "html_parsing" was actually
+        # measuring playwright_fetch_time + parsing_time combined - that's
+        # why it showed an implausible ~4.8s average for what should be a
+        # millisecond-scale BeautifulSoup parse. Started here instead, after
+        # the fetch returns, so it only measures parsing/field-extraction.
+        _t_parse = time.perf_counter()
         soup = BeautifulSoup(html, 'html.parser')
         title_elem = soup.find('h1', class_=re.compile('topcard__title|job-search-card__title|title')) or soup.find('h1')
         title = title_elem.get_text().strip() if title_elem else "Unknown Title"
@@ -1984,11 +2038,20 @@ def scrape_linkedin(url):
             id_match = re.search(r"(\d+)", str(req_id))
             if id_match:
                 req_id = id_match.group(1)
-            
+
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="linkedin", company=company)
+
+        _t_resolve = time.perf_counter()
         resolved_url = resolve_career_link(title, company, jd_text, html)
-        if resolved_url and not _resolved_career_url_is_live(resolved_url):
-            log(f"Discarding unverified resolved career URL (not live): {resolved_url}")
-            resolved_url = None
+        _record_connector_substep("career_url_resolution", time.perf_counter() - _t_resolve, connector="linkedin", company=company, success=bool(resolved_url))
+
+        if resolved_url:
+            _t_validate = time.perf_counter()
+            is_live = _resolved_career_url_is_live(resolved_url)
+            _record_connector_substep("live_url_validation", time.perf_counter() - _t_validate, connector="linkedin", company=company, success=is_live)
+            if not is_live:
+                log(f"Discarding unverified resolved career URL (not live): {resolved_url}")
+                resolved_url = None
         final_url = resolved_url if resolved_url else fetch_url
         
         return {

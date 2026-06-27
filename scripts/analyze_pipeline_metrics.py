@@ -107,6 +107,79 @@ def slowest_operations(ops: list[dict], n: int = 20) -> list[tuple[str, dict]]:
     return breakdown_by(ops, "operation_name")[:n]
 
 
+# Sub-operations that live inside connector_extract's waterfall, per
+# connector (ats_source). Order matters for display - roughly the order
+# each step happens for a LinkedIn job, which is the worst case; other
+# connectors only populate a subset of these (e.g. Greenhouse never does
+# career_url_resolution/llm_fallback, since it's already a direct ATS URL).
+_WATERFALL_SUBOPS = (
+    "company_discovery",
+    "ats_detection",
+    "http_request",
+    "browser_launch",
+    "browser_context_create",
+    "page_navigation",
+    "wait_for_selector",
+    "html_parsing",
+    "json_parsing",
+    "career_url_resolution",
+    "yahoo_search",
+    "duckduckgo_search",
+    "llm_fallback",
+    "llm_extraction",
+    "live_url_validation",
+    "connector_extract",
+)
+
+
+def connector_waterfall(ops: list[dict]) -> dict[str, list[dict]]:
+    """For each connector (ats_source), break down cumulative time by
+    sub-operation, in waterfall order - this is connector_extract's 60% of
+    total time, subdivided into the steps that actually make it up.
+    """
+    by_connector: dict[str, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
+    for o in ops:
+        connector = o.get("ats_source")
+        if not connector:
+            continue
+        by_connector[connector][o.get("operation_name", "unknown")].append(o.get("duration_ms", 0))
+
+    waterfalls: dict[str, list[dict]] = {}
+    for connector, op_durations in by_connector.items():
+        rows = []
+        for op_name in _WATERFALL_SUBOPS:
+            if op_name not in op_durations:
+                continue
+            durations = op_durations[op_name]
+            rows.append({
+                "operation": op_name,
+                "count": len(durations),
+                "total_ms": sum(durations),
+                "avg_ms": round(sum(durations) / len(durations), 1),
+                "p50_ms": round(percentile(durations, 50), 1),
+                "p90_ms": round(percentile(durations, 90), 1),
+                "p95_ms": round(percentile(durations, 95), 1),
+                "p99_ms": round(percentile(durations, 99), 1),
+            })
+        # Anything not in the known waterfall order (future sub-ops) still
+        # gets reported, just appended after the known ones.
+        for op_name, durations in op_durations.items():
+            if op_name in _WATERFALL_SUBOPS:
+                continue
+            rows.append({
+                "operation": op_name,
+                "count": len(durations),
+                "total_ms": sum(durations),
+                "avg_ms": round(sum(durations) / len(durations), 1),
+                "p50_ms": round(percentile(durations, 50), 1),
+                "p90_ms": round(percentile(durations, 90), 1),
+                "p95_ms": round(percentile(durations, 95), 1),
+                "p99_ms": round(percentile(durations, 99), 1),
+            })
+        waterfalls[connector] = rows
+    return waterfalls
+
+
 def throughput(ops: list[dict]) -> dict:
     total_jobs = sum(o.get("jobs_processed") or 0 for o in ops)
     total_s = sum(o.get("duration_ms", 0) for o in ops) / 1000.0
@@ -191,6 +264,7 @@ def build_report(events: list[dict], min_samples: int) -> dict:
         "breakdown_by_ats": breakdown_by(ops, "ats_source"),
         "breakdown_by_company": breakdown_by(ops, "company")[:20],
         "top_20_slowest_operations": slowest_operations(ops, 20),
+        "connector_waterfall": connector_waterfall(ops),
         "throughput": throughput(ops),
         "error_analysis": error_analysis(ops),
         "recommendations": recommendations(ops, min_samples),
@@ -226,6 +300,16 @@ def print_report(report: dict) -> None:
     print("\n--- Top 20 Slowest Operations (cumulative wall-clock) ---")
     for name, d in report["top_20_slowest_operations"]:
         print(f"  {name:30} total={d['total_s']:>8}s  count={d['count']:>5}  avg={d['avg_ms']:>8}ms")
+
+    print("\n--- Connector Waterfall (per-connector sub-operation breakdown) ---")
+    for connector, rows in report["connector_waterfall"].items():
+        print(f"\n  [{connector}]")
+        for r in rows:
+            print(
+                f"    {r['operation']:25} avg={r['avg_ms']:>8}ms  "
+                f"p50={r['p50_ms']:>8}ms  p90={r['p90_ms']:>8}ms  p95={r['p95_ms']:>8}ms  p99={r['p99_ms']:>8}ms  "
+                f"count={r['count']:>4}  total={round(r['total_ms']/1000.0, 1):>7}s"
+            )
 
     t = report["throughput"]
     print("\n--- Throughput ---")

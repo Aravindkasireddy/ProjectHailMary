@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from analyze_pipeline_metrics import (
     breakdown_by,
     build_report,
+    connector_waterfall,
     error_analysis,
     overall_summary,
     percentile,
@@ -124,3 +125,48 @@ def test_build_report_separates_legacy_events_from_operations():
     report = build_report(events, min_samples=20)
     assert report["total_operation_events"] == 1
     assert report["legacy_pipeline_step_events"] == 1
+
+
+def test_connector_waterfall_groups_by_connector_in_waterfall_order():
+    ops = [
+        _op("career_url_resolution", "discovery", 2200, ats_source="linkedin"),
+        _op("yahoo_search", "discovery", 900, ats_source="linkedin"),
+        _op("llm_fallback", "discovery", 3200, ats_source="linkedin"),
+        _op("html_parsing", "discovery", 120, ats_source="greenhouse"),
+    ]
+    waterfalls = connector_waterfall(ops)
+    assert set(waterfalls.keys()) == {"linkedin", "greenhouse"}
+
+    linkedin_ops = [r["operation"] for r in waterfalls["linkedin"]]
+    # career_url_resolution comes before yahoo_search/llm_fallback in the
+    # defined waterfall order, regardless of insertion order above.
+    assert linkedin_ops.index("career_url_resolution") < linkedin_ops.index("yahoo_search")
+    assert linkedin_ops.index("yahoo_search") < linkedin_ops.index("llm_fallback")
+
+    gh_ops = {r["operation"]: r for r in waterfalls["greenhouse"]}
+    assert gh_ops["html_parsing"]["count"] == 1
+    assert gh_ops["html_parsing"]["avg_ms"] == 120
+
+
+def test_connector_waterfall_includes_percentiles():
+    ops = [_op("html_parsing", "discovery", d, ats_source="greenhouse") for d in (100, 200, 300, 400, 500)]
+    waterfalls = connector_waterfall(ops)
+    row = waterfalls["greenhouse"][0]
+    assert row["p50_ms"] == 300
+    assert row["count"] == 5
+
+
+def test_connector_waterfall_skips_ops_with_no_connector():
+    ops = [_op("json_load", "filter", 100, ats_source=None)]
+    waterfalls = connector_waterfall(ops)
+    assert waterfalls == {}
+
+
+def test_connector_waterfall_includes_unknown_ops_after_known_ones():
+    ops = [
+        _op("html_parsing", "discovery", 100, ats_source="greenhouse"),
+        _op("some_future_op", "discovery", 50, ats_source="greenhouse"),
+    ]
+    waterfalls = connector_waterfall(ops)
+    names = [r["operation"] for r in waterfalls["greenhouse"]]
+    assert names == ["html_parsing", "some_future_op"]
