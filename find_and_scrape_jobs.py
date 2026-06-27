@@ -481,6 +481,7 @@ def search_serpapi(query):
 def search_duckduckgo(query):
     if SEARCH_STATE["aborted"]:
         return []
+    t0 = time.perf_counter()
     headers = {
         "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
@@ -514,11 +515,32 @@ def search_duckduckgo(query):
     except Exception as e:
         log(f"DuckDuckGo search error for '{query}': {e}")
         SEARCH_STATE["consecutive_failures"] += 1
-        
+
+    _record_search_op("duckduckgo_search", time.perf_counter() - t0, query, len(links))
     if SEARCH_STATE["consecutive_failures"] >= 5:
         log("Aborting search discovery stage early: reached 5 consecutive connection/DNS/server failures.")
         SEARCH_STATE["aborted"] = True
     return links
+
+
+def _record_search_op(operation_name, elapsed_s, query, result_count):
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "operation",
+            {
+                "operation_name": operation_name,
+                "stage": "discovery",
+                "duration_ms": int(elapsed_s * 1000),
+                "success": result_count > 0,
+                "jobs_processed": result_count,
+                "metadata": {"query": query},
+            },
+        )
+    except Exception:
+        pass
 
 def extract_job_with_gemini(url, html, api_key):
     if not api_key:
@@ -699,37 +721,64 @@ log = _setup_run_logging().info
 
 def http_get(url, headers=None, timeout=10, attempts=3):
     """GET with automatic exponential backoff on connection errors and 429/50x codes, plus proxy and User-Agent rotation on each attempt."""
+    t0 = time.perf_counter()
+    used_attempts = 0
+    final_status = None
     last_err = None
     last_response = None
-    for attempt in range(1, attempts + 1):
-        h = (headers or {}).copy()
-        if "User-Agent" not in h:
-            h["User-Agent"] = get_random_user_agent()
-        
-        proxy_str = get_random_proxy()
-        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
-        if proxy_str:
-            log(f"Routing http_get attempt {attempt}/{attempts} through proxy: {proxy_str}")
-        
-        try:
-            r = requests.get(url, headers=h, proxies=proxies, timeout=timeout)
-            last_response = r
-            if r.status_code in [200, 201, 204, 301, 302]:
-                return r
-            log(f"http_get attempt {attempt}/{attempts} returned status code {r.status_code} for URL: {url}")
-            last_err = f"Status code {r.status_code}"
-        except Exception as e:
-            log(f"http_get attempt {attempt}/{attempts} failed for URL: {url}: {e}")
-            last_err = e
-            
-        if attempt < attempts:
-            time.sleep(1.0 * (2 ** (attempt - 1)))
-            
-    if last_response is not None:
-        return last_response
-    if isinstance(last_err, Exception):
-        raise last_err
-    raise RuntimeError(f"All http_get attempts failed for {url}: {last_err}")
+    try:
+        for attempt in range(1, attempts + 1):
+            used_attempts = attempt
+            h = (headers or {}).copy()
+            if "User-Agent" not in h:
+                h["User-Agent"] = get_random_user_agent()
+
+            proxy_str = get_random_proxy()
+            proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+            if proxy_str:
+                log(f"Routing http_get attempt {attempt}/{attempts} through proxy: {proxy_str}")
+
+            try:
+                r = requests.get(url, headers=h, proxies=proxies, timeout=timeout)
+                last_response = r
+                final_status = r.status_code
+                if r.status_code in [200, 201, 204, 301, 302]:
+                    return r
+                log(f"http_get attempt {attempt}/{attempts} returned status code {r.status_code} for URL: {url}")
+                last_err = f"Status code {r.status_code}"
+            except Exception as e:
+                log(f"http_get attempt {attempt}/{attempts} failed for URL: {url}: {e}")
+                last_err = e
+
+            if attempt < attempts:
+                time.sleep(1.0 * (2 ** (attempt - 1)))
+
+        if last_response is not None:
+            return last_response
+        if isinstance(last_err, Exception):
+            raise last_err
+        raise RuntimeError(f"All http_get attempts failed for {url}: {last_err}")
+    finally:
+        _record_http_get(url, time.perf_counter() - t0, used_attempts, final_status, success=final_status in (200, 201, 204, 301, 302))
+
+
+def _record_http_get(url, elapsed_s, attempts_used, status_code, success):
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "operation",
+            {
+                "operation_name": "http_request",
+                "stage": "discovery",
+                "duration_ms": int(elapsed_s * 1000),
+                "success": bool(success),
+                "metadata": {"url": url, "attempts_used": attempts_used, "status_code": status_code, "retry": attempts_used > 1},
+            },
+        )
+    except Exception:
+        pass
 
 
 def clean_text(html_content):
@@ -778,6 +827,25 @@ def _log_playwright_timing(url, elapsed_s, attempt, success):
         pass
 
 
+def _record_substep(operation_name, elapsed_s, success=True, metadata=None):
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "operation",
+            {
+                "operation_name": operation_name,
+                "stage": "discovery",
+                "duration_ms": int(elapsed_s * 1000),
+                "success": success,
+                "metadata": metadata or {},
+            },
+        )
+    except Exception:
+        pass
+
+
 def fetch_with_playwright(url):
     last_err = None
     for attempt in range(1, 4):
@@ -807,6 +875,7 @@ def fetch_with_playwright(url):
                     log(f"Routing Playwright attempt {attempt} through proxy: {proxy_str}")
                 
                 # Try Chromium first, fallback to WebKit
+                _t_launch = time.perf_counter()
                 browser = None
                 browser_type = "chromium"
                 try:
@@ -819,6 +888,7 @@ def fetch_with_playwright(url):
                         launch_kwargs_fallback["proxy"] = proxy_obj
                     browser = p.webkit.launch(**launch_kwargs_fallback)
                     browser_type = "webkit"
+                _record_substep("browser_launch", time.perf_counter() - _t_launch, metadata={"browser_type": browser_type})
 
                 # Rotate viewport sizes
                 viewports = [
@@ -833,6 +903,7 @@ def fetch_with_playwright(url):
                 locales = ["en-US", "en-GB", "en-CA"]
                 locale = random.choice(locales)
                 
+                _t_context = time.perf_counter()
                 context = browser.new_context(
                     user_agent=get_random_user_agent(),
                     viewport=viewport,
@@ -841,16 +912,19 @@ def fetch_with_playwright(url):
                     geolocation={"latitude": 37.7749, "longitude": -122.4194},
                     permissions=["geolocation"]
                 )
-                
+
                 page = context.new_page()
-                
+
                 # Apply stealth mode if library is available (stealth_sync is designed for chromium)
                 if stealth_sync and browser_type == "chromium":
                     stealth_sync(page)
-                
+                _record_substep("browser_context_create", time.perf_counter() - _t_context)
+
                 # Navigate with a generous timeout
+                _t_nav = time.perf_counter()
                 page.goto(url, wait_until="commit", timeout=30000)
-                
+                _record_substep("page_navigation", time.perf_counter() - _t_nav)
+
                 # 1. Cloudflare / Bot Verification Wait Loop
                 for cf_attempt in range(5):
                     title = page.title().lower()
@@ -884,11 +958,14 @@ def fetch_with_playwright(url):
                         'main'
                     ]
                     # Wait for any of these selectors to be visible
+                    _t_sel = time.perf_counter()
                     page.wait_for_selector(", ".join(selectors), timeout=6000)
+                    _record_substep("wait_for_selector", time.perf_counter() - _t_sel, success=True)
                 except Exception:
+                    _record_substep("wait_for_selector", time.perf_counter() - _t_sel, success=False)
                     # Fallback sleep to let SPA routers finish loading
                     time.sleep(random.uniform(2.5, 4.0))
-                
+
                 html = page.content()
                 browser.close()
                 _log_playwright_timing(url, time.perf_counter() - t0, attempt, success=True)
@@ -1965,6 +2042,7 @@ def scrape_yc(url):
 def search_yahoo(query):
     if SEARCH_STATE["aborted"]:
         return []
+    t0 = time.perf_counter()
     headers = {
         "User-Agent": get_random_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
@@ -1995,7 +2073,8 @@ def search_yahoo(query):
     except Exception as e:
         log(f"Yahoo search error for '{query}': {e}")
         SEARCH_STATE["consecutive_failures"] += 1
-        
+
+    _record_search_op("yahoo_search", time.perf_counter() - t0, query, len(links))
     if SEARCH_STATE["consecutive_failures"] >= 5:
         log("Aborting search discovery stage early: reached 5 consecutive connection/DNS/server failures.")
         SEARCH_STATE["aborted"] = True
@@ -2445,11 +2524,33 @@ Conform exactly to this structure:
             return {title: STATIC_SYNONYM_FALLBACK.get(title, []) for title in target_titles}
 
 
+_DOMAIN_TO_ATS_SOURCE = (
+    ("greenhouse.io", "greenhouse"),
+    ("lever.co", "lever"),
+    ("myworkdayjobs.com", "workday"),
+    ("ashbyhq.com", "ashby"),
+    ("workable.com", "workable"),
+    ("smartrecruiters.com", "smartrecruiters"),
+    ("weworkremotely.com", "weworkremotely"),
+    ("remote.co", "remote_co"),
+    ("linkedin.com", "linkedin"),
+    ("workatastartup.com", "ycombinator"),
+)
+
+
 def scrape_single_url(href, api_key=None):
     # Introduce randomized rate throttling delay (1.5 to 4.0 seconds)
     time.sleep(random.uniform(1.5, 4.0))
     domain = urlparse(href).netloc.lower()
+    ats_source = next((name for host, name in _DOMAIN_TO_ATS_SOURCE if host in domain), "generic")
     job_data = None
+    retried_via_fallback = False
+
+    # Manual timing (not record_operation's exception-based success) because
+    # the existing try/except below intentionally swallows scraper errors and
+    # falls through to the Gemini fallback - "success" here means "did
+    # extraction actually produce a job", not "did the block avoid raising".
+    t0 = time.perf_counter()
     try:
         if 'greenhouse.io' in domain:
             job_data = scrape_greenhouse(href)
@@ -2475,22 +2576,49 @@ def scrape_single_url(href, api_key=None):
             job_data = scrape_url_with_gemini_fallback(href)
     except Exception as e:
         print(f"Scraper error for {href}: {e}", flush=True)
+    finally:
+        _record_connector_extraction(ats_source, time.perf_counter() - t0, bool(job_data), retried=False)
 
     if job_data and job_data.get("inactive"):
         return None
 
     if not job_data or len(job_data.get("job_description", "")) < 200:
+        retried_via_fallback = True
+        t0 = time.perf_counter()
         try:
             job_data = scrape_url_with_gemini_fallback(href)
         except Exception as e:
             print(f"Gemini fallback scraper failed for {href}: {e}", flush=True)
-                
+        finally:
+            _record_connector_extraction("generic", time.perf_counter() - t0, bool(job_data), retried=retried_via_fallback)
+
     if job_data:
         desc = job_data.get("job_description", "")
         if desc:
             job_data["description_hash"] = compute_description_hash(desc)
-            
+
     return job_data
+
+
+def _record_connector_extraction(ats_source, elapsed_s, extracted, retried):
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "operation",
+            {
+                "operation_name": "connector_extract",
+                "stage": "discovery",
+                "ats_source": ats_source,
+                "duration_ms": int(elapsed_s * 1000),
+                "success": extracted,
+                "jobs_processed": 1 if extracted else 0,
+                "metadata": {"retry": retried},
+            },
+        )
+    except Exception:
+        pass
 
 def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_urls):
     """
@@ -3641,6 +3769,7 @@ def discover_new_slugs(discovered_urls, target_companies_cfg):
 
 
 def main(dry_run=False):
+    _RUN_START_ISO = datetime.now(timezone.utc).isoformat()
     target_titles = []
     config_data = {}
     if CONFIG_PATH.exists():
@@ -3838,9 +3967,18 @@ def main(dry_run=False):
     except Exception as e:
         log(f"Error filtering jobs against H-1B sponsors database: {e}")
 
+    _t_save = time.perf_counter()
     SCRAPED_OUTPUT.write_text(json.dumps(out_list, indent=2), encoding="utf-8")
+    _record_substep("save_to_json", time.perf_counter() - _t_save, metadata={"jobs_written": len(out_list)})
 
     log(f"Completed search and scrape. New/changed rows this run: {len(scraped_jobs)}. Total in {SCRAPED_OUTPUT.name}: {len(out_list)}")
+
+    try:
+        from pipeline_metrics import generate_run_summary
+
+        generate_run_summary(str(WORKSPACE), _RUN_START_ISO)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

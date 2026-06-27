@@ -909,10 +909,48 @@ def classify_job_dynamically(job):
         "benefits": benefits
     }
 
+def _record_classification_call(operation_name, model_name, elapsed_s, prompt_len_chars, success):
+    """Per-job classification timing (Gemini/OpenAI/rule-based). Token count
+    isn't captured here - the Gemini SDK response object would need to be
+    threaded through classify_job_with_gemini()'s several return points to
+    get usage_metadata, which risks the kind of invasive internal change
+    this task explicitly avoids. Character-length prompt size is used as
+    the available proxy instead.
+    """
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(WORKSPACE),
+            "operation",
+            {
+                "operation_name": operation_name,
+                "stage": "classify",
+                "duration_ms": int(elapsed_s * 1000),
+                "success": success,
+                "metadata": {"model": model_name, "prompt_length_chars": prompt_len_chars},
+            },
+        )
+    except Exception:
+        pass
+
+
 def main():
+    from datetime import datetime, timezone
+
+    from pipeline_metrics import append_pipeline_metric, generate_run_summary
+
+    _run_start_iso = datetime.now(timezone.utc).isoformat()
+
+    _t0 = time.perf_counter()
     with open(str(resolve_path(WORKSPACE / "active_candidate_jobs.json")), "r") as f:
         jobs = json.load(f)
-        
+    append_pipeline_metric(str(WORKSPACE), "operation", {
+        "operation_name": "json_load", "stage": "classify",
+        "duration_ms": int((time.perf_counter() - _t0) * 1000),
+        "success": True, "jobs_processed": len(jobs),
+    })
+
     approved_hashes, failed_hashes = load_known_hashes(WORKSPACE)
 
     approved_jobs = []
@@ -957,23 +995,40 @@ def main():
                         job[key] = matched[key]
             
         if not cls:
+            prompt_len_chars = len(job.get("job_title", "") or "") + len(job.get("job_description", "") or "")
+
             # Try LLM-driven classification if active Gemini key exists
             active_gemini_key = get_active_gemini_key()
             if active_gemini_key:
                 print(f"  Classifying '{job.get('job_title')}' dynamically using Gemini API...", flush=True)
                 time.sleep(4)
+                _t0 = time.perf_counter()
                 cls = classify_job_with_gemini(job)
-                
+                _record_classification_call(
+                    "gemini_classify", "gemini-2.5-flash", time.perf_counter() - _t0,
+                    prompt_len_chars, success=bool(cls),
+                )
+
             # Try OpenAI fallback if Gemini failed or is not available
             if not cls and os.getenv("OPENAI_API_KEY"):
                 print(f"  Classifying '{job.get('job_title')}' dynamically using OpenAI API (gpt-4o-mini)...", flush=True)
                 time.sleep(1)
+                _t0 = time.perf_counter()
                 cls = classify_job_with_openai(job)
-                
+                _record_classification_call(
+                    "openai_classify", "gpt-4o-mini", time.perf_counter() - _t0,
+                    prompt_len_chars, success=bool(cls),
+                )
+
             if not cls:
                 # Fall back to dynamic rule-based classifier
                 print(f"  Classifying '{job.get('job_title')}' dynamically using keyword rules...", flush=True)
+                _t0 = time.perf_counter()
                 cls = classify_job_dynamically(job)
+                _record_classification_call(
+                    "rule_based_classify", "none", time.perf_counter() - _t0,
+                    prompt_len_chars, success=bool(cls),
+                )
             
         job["apply_decision"] = cls["apply_decision"]
         job["strongest_label"] = cls["strongest_label"]
@@ -1026,14 +1081,23 @@ def main():
     ]
     
     # Write to approved_jobs.json
+    _t0 = time.perf_counter()
     output_path = str(resolve_path(WORKSPACE / "approved_jobs.json"))
     with open(output_path, "w") as f:
         json.dump(approved_jobs, f, indent=2)
-        
+    append_pipeline_metric(str(WORKSPACE), "operation", {
+        "operation_name": "save_to_json", "stage": "classify",
+        "duration_ms": int((time.perf_counter() - _t0) * 1000),
+        "success": True, "jobs_processed": len(approved_jobs),
+        "metadata": {"jobs_in": len(jobs), "jobs_approved": len(approved_jobs)},
+    })
+
     print(f"Successfully classified {len(jobs)} candidates.")
     print(f"Saved {len(approved_jobs)} approved jobs to {output_path}:")
     for j in approved_jobs:
         print(f"  - [{j['company_name']}] {j['job_title']} ({j['strongest_label']}) - Req ID: {j['requirement_id']}")
+
+    generate_run_summary(str(WORKSPACE), _run_start_iso)
 
 if __name__ == '__main__':
     main()

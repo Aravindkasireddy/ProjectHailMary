@@ -1,6 +1,7 @@
 # supabase_client.py
 import os
 import json
+import time
 import jwt
 from datetime import datetime
 from typing import Union
@@ -344,6 +345,25 @@ def _attach_sponsorship_fields(records: list) -> None:
             print(f"Sponsorship classification failed for {r.get('job_url')}: {e}")
 
 
+def _record_supabase_upsert(elapsed_s, batch_size, success):
+    try:
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(workspace_root()),
+            "operation",
+            {
+                "operation_name": "supabase_upsert",
+                "stage": "classify",
+                "duration_ms": int(elapsed_s * 1000),
+                "success": success,
+                "jobs_processed": batch_size,
+            },
+        )
+    except Exception:
+        pass
+
+
 def upload_user_jobs(user_id: str, email: str):
     """
     Reads local scoped job files and SQLite reports, merges them, and uploads them to Supabase jobs table.
@@ -531,6 +551,8 @@ def upload_user_jobs(user_id: str, email: str):
                     # For safety, let's just proceed.
                     pass
             
+            _t_upsert = time.perf_counter()
+            _upsert_ok = True
             try:
                 supabase.table("jobs").upsert(batch, on_conflict="user_id,job_url").execute()
             except Exception as e:
@@ -543,7 +565,10 @@ def upload_user_jobs(user_id: str, email: str):
                     stripped = [{k: v for k, v in r.items() if k not in new_columns} for r in batch]
                     supabase.table("jobs").upsert(stripped, on_conflict="user_id,job_url").execute()
                 else:
+                    _upsert_ok = False
                     raise
+            finally:
+                _record_supabase_upsert(time.perf_counter() - _t_upsert, len(batch), _upsert_ok)
 
         print(f"Successfully uploaded {len(records_to_upload)} jobs to Supabase for user {email}.")
         return True

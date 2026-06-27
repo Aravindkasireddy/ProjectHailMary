@@ -73,11 +73,15 @@ def _candidate_urls(company_name: str) -> List[str]:
 
 
 def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> Optional[str]:
+    import time
+
     err = errors if errors is not None else []
     name = (company_name or "").strip()
     if not name:
         err.append("empty company name")
         return None
+
+    _t0 = time.perf_counter()
 
     # Registry-first: skip live discovery entirely if we already know this
     # company's ATS from a previous discovery run (e.g. the 9985-company
@@ -88,6 +92,7 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
 
         cached = resolve_company_ats(name)
         if cached and cached.get("careers_url"):
+            _record_discovery_op(name, time.perf_counter() - _t0, success=True, cache_hit=True, ats_source=cached.get("ats_type"))
             return cached["careers_url"]
     except Exception:
         pass
@@ -124,20 +129,46 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
 
     if not found_url:
         err.append(f"could not discover careers URL for {name!r}")
+        _record_discovery_op(name, time.perf_counter() - _t0, success=False, cache_hit=False)
         return None
 
+    ats_detected = None
     try:
         from company_registry import upsert_company
         from company_scraper.detector import detect_ats
 
+        ats_detected = detect_ats(found_url)
         upsert_company(
             name,
             careers_url=found_url,
-            ats_type=detect_ats(found_url),
+            ats_type=ats_detected,
             verified=True,
             source="live_discovery",
         )
     except Exception:
         pass
 
+    _record_discovery_op(name, time.perf_counter() - _t0, success=True, cache_hit=False, ats_source=ats_detected)
     return found_url
+
+
+def _record_discovery_op(company_name, elapsed_s, success, cache_hit, ats_source=None):
+    try:
+        from jobsearch_paths import workspace_root
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(workspace_root()),
+            "operation",
+            {
+                "operation_name": "company_discovery",
+                "stage": "discovery",
+                "company": company_name,
+                "ats_source": ats_source,
+                "duration_ms": int(elapsed_s * 1000),
+                "success": success,
+                "metadata": {"cache_hit": cache_hit},
+            },
+        )
+    except Exception:
+        pass

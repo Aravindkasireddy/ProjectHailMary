@@ -1062,18 +1062,32 @@ async def process_single_job(semaphore, client, browser, job, i, total_jobs):
         return "skip", None
 
 async def main():
+    from datetime import datetime, timezone
+
+    from pipeline_metrics import append_pipeline_metric, generate_run_summary
+
+    _run_start_iso = datetime.now(timezone.utc).isoformat()
+
+    _t0 = time.perf_counter()
     input_path = str(resolve_path(WORKSPACE / "scraped_jobs.json"))
     with open(input_path, 'r') as f:
         jobs = json.load(f)
-        
+    append_pipeline_metric(str(WORKSPACE), "operation", {
+        "operation_name": "json_load", "stage": "filter",
+        "duration_ms": int((time.perf_counter() - _t0) * 1000),
+        "success": True, "jobs_processed": len(jobs),
+    })
+
     print(f"Loaded {len(jobs)} scraped jobs. Validating active status and checking red flags...", flush=True)
-    
+
     approved_hashes, failed_hashes = load_known_hashes(WORKSPACE)
-    
+
     passed_jobs = []
     failed_jobs = []
     miss_jobs = []
-    
+    rejection_reasons = {}
+
+    _t_hits = time.perf_counter()
     # 1. Process Cache Hits first
     for i, job in enumerate(jobs):
         url = job.get("job_url", "")
@@ -1101,22 +1115,33 @@ async def main():
                     print(f"[{i+1}/{len(jobs)}] Cache HIT (Approved but now failed red flags: {r_flags}) for {company} - {url}. Moving to failed.", flush=True)
                     job["red_flags"] = r_flags
                     failed_jobs.append(job)
+                    for rf in r_flags:
+                        rejection_reasons[rf] = rejection_reasons.get(rf, 0) + 1
                     continue
             elif h in failed_hashes:
                 print(f"[{i+1}/{len(jobs)}] Cache HIT (Failed) for {company} - {url}. Skipping filter.", flush=True)
                 matched = failed_hashes[h]
                 job["red_flags"] = matched.get("red_flags", ["Previously rejected"])
+                rejection_reasons["cached_previously_rejected"] = rejection_reasons.get("cached_previously_rejected", 0) + 1
                 failed_jobs.append(job)
                 continue
         
         miss_jobs.append((job, i))
-        
+
+    append_pipeline_metric(str(WORKSPACE), "operation", {
+        "operation_name": "duplicate_detection_cache_hits", "stage": "filter",
+        "duration_ms": int((time.perf_counter() - _t_hits) * 1000),
+        "success": True, "jobs_processed": len(jobs) - len(miss_jobs),
+        "metadata": {"cache_hits": len(jobs) - len(miss_jobs), "cache_misses": len(miss_jobs)},
+    })
+
     # 2. Process Cache Misses in Parallel using asyncio
+    _t_miss = time.perf_counter()
     if miss_jobs:
         print(f"Starting parallel validation for {len(miss_jobs)} cache misses with concurrency limit 5...", flush=True)
-        
+
         semaphore = asyncio.Semaphore(5)
-        
+
         async with async_playwright() as p:
             browser = await p.webkit.launch(headless=True)
             async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -1124,17 +1149,26 @@ async def main():
                     process_single_job(semaphore, client, browser, job, idx, len(jobs))
                     for job, idx in miss_jobs
                 ]
-                
+
                 results = await asyncio.gather(*tasks)
-                
+
             await browser.close()
-                
+
         for status, result in results:
             if status == "pass":
                 passed_jobs.append(result)
             elif status == "fail":
                 failed_jobs.append(result)
-                
+                if isinstance(result, dict):
+                    for rf in result.get("red_flags") or []:
+                        rejection_reasons[rf] = rejection_reasons.get(rf, 0) + 1
+
+    append_pipeline_metric(str(WORKSPACE), "operation", {
+        "operation_name": "url_validation_and_regex_filtering", "stage": "filter",
+        "duration_ms": int((time.perf_counter() - _t_miss) * 1000),
+        "success": True, "jobs_processed": len(miss_jobs),
+    })
+
     print(f"\nProcessing complete.\nPassed jobs: {len(passed_jobs)}\nFailed jobs: {len(failed_jobs)}", flush=True)
 
     enrich_job_list(passed_jobs)
@@ -1143,11 +1177,23 @@ async def main():
         if isinstance(j, dict):
             j.update(extract_salary_fields(j))
     
+    _t_save = time.perf_counter()
     with open(str(resolve_path(WORKSPACE / "active_candidate_jobs.json")), "w") as f:
         json.dump(passed_jobs, f, indent=2)
-        
+
     with open(str(resolve_path(WORKSPACE / "failed_candidate_jobs.json")), "w") as f:
         json.dump(failed_jobs, f, indent=2)
+    append_pipeline_metric(str(WORKSPACE), "operation", {
+        "operation_name": "save_to_json", "stage": "filter",
+        "duration_ms": int((time.perf_counter() - _t_save) * 1000),
+        "success": True, "jobs_processed": len(passed_jobs) + len(failed_jobs),
+        "metadata": {
+            "jobs_in": len(jobs), "jobs_out": len(passed_jobs), "jobs_rejected": len(failed_jobs),
+            "rejection_reason_counts": rejection_reasons,
+        },
+    })
+
+    generate_run_summary(str(WORKSPACE), _run_start_iso)
 
 if __name__ == '__main__':
     asyncio.run(main())

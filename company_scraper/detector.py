@@ -191,13 +191,42 @@ def detect_ats(url: str) -> AtsKind:
         return "workday"
     if "icims.com" in host:
         return "icims"
+    import time
+
+    _t0 = time.perf_counter()
+    result = "generic"
+    ok = False
     try:
         r = request_with_retry("GET", url, timeout=15, max_attempts=2)
         text = (r.text or "").lower()
+        ok = True
         if "myworkdayjobs.com" in text or "workdaycdn" in text or ("wdio" in text and "workday" in text):
-            return "workday"
-        if "icims" in text or "icims.com" in text:
-            return "icims"
+            result = "workday"
+        elif "icims" in text or "icims.com" in text:
+            result = "icims"
     except Exception:
         pass
-    return "generic"
+    finally:
+        _record_ats_detection_fallback(url, time.perf_counter() - _t0, ok, result)
+    return result
+
+
+def _record_ats_detection_fallback(url, elapsed_s, success, result):
+    try:
+        from jobsearch_paths import workspace_root
+        from pipeline_metrics import append_pipeline_metric
+
+        append_pipeline_metric(
+            str(workspace_root()),
+            "operation",
+            {
+                "operation_name": "ats_detection",
+                "stage": "discovery",
+                "ats_source": result,
+                "duration_ms": int(elapsed_s * 1000),
+                "success": success,
+                "metadata": {"url": url},
+            },
+        )
+    except Exception:
+        pass
