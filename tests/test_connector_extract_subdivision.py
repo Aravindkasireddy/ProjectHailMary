@@ -23,7 +23,9 @@ def test_record_connector_substep_writes_expected_fields(tmp_path, monkeypatch):
     assert rec["company"] == "Acme"
     assert rec["success"] is True
     assert rec["duration_ms"] == 500
-    assert rec["metadata"] == {"source": "raw_html"}
+    assert rec["metadata"]["source"] == "raw_html"
+    assert rec["metadata"]["status"] == "success"
+    assert isinstance(rec["metadata"]["thread_id"], int)
 
 
 def test_record_connector_substep_never_raises(monkeypatch):

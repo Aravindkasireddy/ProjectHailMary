@@ -192,6 +192,46 @@ def throughput(ops: list[dict]) -> dict:
     }
 
 
+def aggregate_averages(ops: list[dict]) -> dict:
+    """Cross-cutting averages requested explicitly: per-job time split by
+    outcome, retries, cache hit rate, bytes downloaded, requests/job, cost/job,
+    time per connector, time per company. Only computed from fields that are
+    actually present on real events - returns None for any average where the
+    underlying field was never recorded (no estimating).
+    """
+    connector_jobs = [o for o in ops if o.get("operation_name") == "connector_extract"]
+    success_jobs = [o for o in connector_jobs if o.get("success")]
+    failed_jobs = [o for o in connector_jobs if not o.get("success")]
+
+    def _avg(items, key_fn):
+        vals = [v for v in (key_fn(o) for o in items) if v is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    http_ops = [o for o in ops if o.get("operation_name") == "http_request"]
+    llm_ops = [o for o in ops if (o.get("metadata") or {}).get("llm_used")]
+    cache_ops = [o for o in ops if (o.get("metadata") or {}).get("cache_hit") is not None]
+
+    return {
+        "avg_time_per_successful_job_ms": _avg(success_jobs, lambda o: o.get("duration_ms")),
+        "avg_time_per_rejected_job_ms": _avg(failed_jobs, lambda o: o.get("duration_ms")),
+        "successful_job_count": len(success_jobs),
+        "rejected_job_count": len(failed_jobs),
+        "avg_retries": _avg(ops, lambda o: (o.get("metadata") or {}).get("retry_count")),
+        "avg_cache_hit_rate": (
+            round(sum(1 for o in cache_ops if (o.get("metadata") or {}).get("cache_hit")) / len(cache_ops), 3)
+            if cache_ops else None
+        ),
+        "avg_bytes_downloaded": _avg(http_ops, lambda o: (o.get("metadata") or {}).get("bytes_downloaded")),
+        "avg_requests_per_job": _avg(http_ops, lambda o: (o.get("metadata") or {}).get("request_count")),
+        "avg_cost_usd_per_llm_call_at_list_price": _avg(llm_ops, lambda o: (o.get("metadata") or {}).get("estimated_cost_usd_at_list_price")),
+        "total_cost_usd_at_list_price": round(
+            sum((o.get("metadata") or {}).get("estimated_cost_usd_at_list_price") or 0 for o in llm_ops), 4
+        ) if llm_ops else None,
+        "llm_call_count": len(llm_ops),
+        "http_request_count": len(http_ops),
+    }
+
+
 def error_analysis(ops: list[dict]) -> list[tuple[str, int]]:
     reasons: dict[str, int] = defaultdict(int)
     for o in ops:
@@ -266,6 +306,7 @@ def build_report(events: list[dict], min_samples: int) -> dict:
         "top_20_slowest_operations": slowest_operations(ops, 20),
         "connector_waterfall": connector_waterfall(ops),
         "throughput": throughput(ops),
+        "aggregate_averages": aggregate_averages(ops),
         "error_analysis": error_analysis(ops),
         "recommendations": recommendations(ops, min_samples),
     }
@@ -314,6 +355,19 @@ def print_report(report: dict) -> None:
     t = report["throughput"]
     print("\n--- Throughput ---")
     print(f"  jobs/hour={t['jobs_per_hour']}  jobs/sec={t['jobs_per_sec']}  avg_seconds/job={t['avg_seconds_per_job']}")
+
+    a = report["aggregate_averages"]
+    print("\n--- Aggregate Averages ---")
+    print(f"  avg_time_per_successful_job_ms={a['avg_time_per_successful_job_ms']}  (n={a['successful_job_count']})")
+    print(f"  avg_time_per_rejected_job_ms={a['avg_time_per_rejected_job_ms']}  (n={a['rejected_job_count']})")
+    print(f"  avg_retries={a['avg_retries']}")
+    print(f"  avg_cache_hit_rate={a['avg_cache_hit_rate']}")
+    print(f"  avg_bytes_downloaded={a['avg_bytes_downloaded']}")
+    print(f"  avg_requests_per_job={a['avg_requests_per_job']}  (http_request_count={a['http_request_count']})")
+    print(f"  avg_cost_usd_per_llm_call_at_list_price={a['avg_cost_usd_per_llm_call_at_list_price']}  (llm_call_count={a['llm_call_count']})")
+    print(f"  total_cost_usd_at_list_price={a['total_cost_usd_at_list_price']}")
+    print("  (avg time per connector: see 'Breakdown by ATS/Connector' above; avg time per company: see 'Top Companies' above)")
+    print("  Note: any 'None' above means that field has not yet been recorded by enough real events - not estimated.")
 
     print("\n--- Error Analysis (top failure reasons) ---")
     for reason, count in report["error_analysis"][:10]:

@@ -580,7 +580,15 @@ Conform exactly to this JSON schema:
   "location_work_type": "string"
 }}
 """
+        _t_llm = time.perf_counter()
         response = model.generate_content(prompt)
+        usage = getattr(response, "usage_metadata", None)
+        _record_llm_call(
+            "llm_extraction_gemini", "gemini-2.5-flash", time.perf_counter() - _t_llm, success=True,
+            prompt_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+            completion_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
+            total_tokens=getattr(usage, "total_token_count", None) if usage else None,
+        )
         text = response.text.strip()
         if text.startswith("```"):
             lines = text.split("\n")
@@ -590,7 +598,7 @@ Conform exactly to this JSON schema:
                 lines = lines[:-1]
             text = "\n".join(lines).strip()
         data = json.loads(text)
-        
+
         if data.get("job_title") and data.get("job_description"):
             data["job_url"] = url
             return data
@@ -633,10 +641,18 @@ Conform exactly to this JSON schema:
   "location_work_type": "string"
 }}
 """
+        _t_llm = time.perf_counter()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
+        )
+        usage = getattr(response, "usage", None)
+        _record_llm_call(
+            "llm_extraction_openai", "gpt-4o-mini", time.perf_counter() - _t_llm, success=True,
+            prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+            completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+            total_tokens=getattr(usage, "total_tokens", None) if usage else None,
         )
         text = response.choices[0].message.content.strip()
         data = json.loads(text)
@@ -662,7 +678,7 @@ def scrape_url_with_gemini_fallback(url, api_key=None):
         _t_llm = time.perf_counter()
         try:
             res = extract_job_with_gemini(url, html, active_key)
-            _record_connector_substep("llm_extraction", time.perf_counter() - _t_llm, connector="generic", success=bool(res), model="gemini")
+            _record_connector_substep("llm_extraction_total", time.perf_counter() - _t_llm, connector="generic", success=bool(res), model="gemini")
             if res:
                 return res
             else:
@@ -680,7 +696,7 @@ def scrape_url_with_gemini_fallback(url, api_key=None):
         log(f"Using OpenAI fallback parser for: {url}")
         _t_llm = time.perf_counter()
         res = extract_job_with_openai(url, html)
-        _record_connector_substep("llm_extraction", time.perf_counter() - _t_llm, connector="generic", success=bool(res), model="gpt-4o-mini")
+        _record_connector_substep("llm_extraction_total", time.perf_counter() - _t_llm, connector="generic", success=bool(res), model="gpt-4o-mini")
         if res:
             return res
 
@@ -728,6 +744,7 @@ def http_get(url, headers=None, timeout=10, attempts=3):
     t0 = time.perf_counter()
     used_attempts = 0
     final_status = None
+    final_bytes = None
     last_err = None
     last_response = None
     try:
@@ -746,6 +763,10 @@ def http_get(url, headers=None, timeout=10, attempts=3):
                 r = requests.get(url, headers=h, proxies=proxies, timeout=timeout)
                 last_response = r
                 final_status = r.status_code
+                try:
+                    final_bytes = len(r.content)
+                except Exception:
+                    final_bytes = None
                 if r.status_code in [200, 201, 204, 301, 302]:
                     return r
                 log(f"http_get attempt {attempt}/{attempts} returned status code {r.status_code} for URL: {url}")
@@ -763,10 +784,10 @@ def http_get(url, headers=None, timeout=10, attempts=3):
             raise last_err
         raise RuntimeError(f"All http_get attempts failed for {url}: {last_err}")
     finally:
-        _record_http_get(url, time.perf_counter() - t0, used_attempts, final_status, success=final_status in (200, 201, 204, 301, 302))
+        _record_http_get(url, time.perf_counter() - t0, used_attempts, final_status, final_bytes, success=final_status in (200, 201, 204, 301, 302))
 
 
-def _record_http_get(url, elapsed_s, attempts_used, status_code, success):
+def _record_http_get(url, elapsed_s, attempts_used, status_code, bytes_downloaded, success):
     try:
         from pipeline_metrics import append_pipeline_metric
 
@@ -778,7 +799,16 @@ def _record_http_get(url, elapsed_s, attempts_used, status_code, success):
                 "stage": "discovery",
                 "duration_ms": int(elapsed_s * 1000),
                 "success": bool(success),
-                "metadata": {"url": url, "attempts_used": attempts_used, "status_code": status_code, "retry": attempts_used > 1},
+                "metadata": {
+                    "url": url,
+                    "thread_id": threading.get_ident(),
+                    "status": "success" if success else "failed",
+                    "request_count": attempts_used,
+                    "retry_count": max(0, attempts_used - 1),
+                    "response_code": status_code,
+                    "bytes_downloaded": bytes_downloaded,
+                    "retry": attempts_used > 1,
+                },
             },
         )
     except Exception:
@@ -835,6 +865,19 @@ def _record_substep(operation_name, elapsed_s, success=True, metadata=None):
     try:
         from pipeline_metrics import append_pipeline_metric
 
+        meta = dict(metadata or {})
+        meta["thread_id"] = threading.get_ident()
+        meta["status"] = "success" if success else "failed"
+        if operation_name in ("browser_launch", "browser_context_create", "page_navigation", "wait_for_selector"):
+            # Documents current reality, not a goal: the browser-reuse
+            # optimization attempted earlier was reverted (confirmed live to
+            # break 83.6% of calls - Playwright's sync API binds a browser to
+            # the thread that launched it, and this function is called from
+            # multiple ThreadPoolExecutor worker threads). Every call here
+            # launches a fresh browser; this field would only ever read
+            # True if that constraint is solved with a thread-pinned design.
+            meta["browser_reused"] = False
+
         append_pipeline_metric(
             str(WORKSPACE),
             "operation",
@@ -843,7 +886,7 @@ def _record_substep(operation_name, elapsed_s, success=True, metadata=None):
                 "stage": "discovery",
                 "duration_ms": int(elapsed_s * 1000),
                 "success": success,
-                "metadata": metadata or {},
+                "metadata": meta,
             },
         )
     except Exception:
@@ -1155,7 +1198,7 @@ def scrape_greenhouse(url):
             
         jd_div = soup.find(id='content') or soup.find(class_='job-post') or soup.find(class_='job__description')
         jd_text = clean_text(str(jd_div)) if jd_div else clean_text(response.text)
-        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="greenhouse", company=company)
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="greenhouse", company=company, html_size=len(response.text))
         return {
             "job_title": title,
             "company_name": company,
@@ -1196,7 +1239,7 @@ def scrape_lever(url):
             
         jd_div = soup.find(class_='posting-sections') or soup.find(class_='job-post')
         jd_text = clean_text(str(jd_div)) if jd_div else clean_text(response.text)
-        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="lever", company=company)
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="lever", company=company, html_size=len(response.text))
         return {
             "job_title": title,
             "company_name": company,
@@ -1294,7 +1337,7 @@ def scrape_workday(url):
                 address = location_data.get("address", {}) if isinstance(location_data, dict) else {}
                 locality = address.get("addressLocality", "Remote") if isinstance(address, dict) else "Remote"
                 country = address.get("addressCountry", "US") if isinstance(address, dict) else "US"
-                _record_connector_substep("html_parsing", time.perf_counter() - _t_html, connector="workday", company=company, source="json_ld")
+                _record_connector_substep("html_parsing", time.perf_counter() - _t_html, connector="workday", company=company, source="json_ld", html_size=len(response.text))
                 return {
                     "job_title": title,
                     "company_name": company,
@@ -1312,7 +1355,7 @@ def scrape_workday(url):
         req_id = url_match.group(1) if url_match else "Unknown"
         body = soup.find('body')
         jd_text = clean_text(str(body)) if body else ""
-        _record_connector_substep("html_parsing", time.perf_counter() - _t_html, connector="workday", company=company, source="raw_html")
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_html, connector="workday", company=company, source="raw_html", html_size=len(response.text))
         return {
             "job_title": title,
             "company_name": company,
@@ -1402,7 +1445,7 @@ def scrape_ashby(url):
         req_id = path_parts[-1] if path_parts else "Unknown"
         description = clean_text(str(soup.find('body')))
 
-        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="ashby", company=company, source="raw_html")
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="ashby", company=company, source="raw_html", html_size=len(response.text))
         return {
             "job_title": title_text,
             "company_name": company,
@@ -1800,7 +1843,10 @@ Conform exactly to this JSON schema:
   "careers_url": "string"
 }}
 """
+            _t_llm = time.perf_counter()
             response = model.generate_content(prompt)
+            usage = getattr(response, "usage_metadata", None)
+            url_for_log = None
             text = response.text.strip()
             if text.startswith("```"):
                 lines = text.split("\n")
@@ -1811,6 +1857,14 @@ Conform exactly to this JSON schema:
                 text = "\n".join(lines).strip()
             data = json.loads(text)
             url = data.get("careers_url")
+            url_for_log = url
+            _record_llm_call(
+                "llm_career_resolution_gemini", "gemini-2.5-flash", time.perf_counter() - _t_llm,
+                success=bool(url_for_log), company=company_name,
+                prompt_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+                completion_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
+                total_tokens=getattr(usage, "total_token_count", None) if usage else None,
+            )
             if url and url.startswith("http"):
                 log(f"Resolved company career link via Gemini fallback: {url}")
                 return url
@@ -1839,13 +1893,22 @@ Conform exactly to this JSON schema:
   "careers_url": "string"
 }}
 """
+            _t_llm = time.perf_counter()
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"}
             )
+            usage = getattr(response, "usage", None)
             data = json.loads(response.choices[0].message.content.strip())
             url = data.get("careers_url")
+            _record_llm_call(
+                "llm_career_resolution_openai", "gpt-4o-mini", time.perf_counter() - _t_llm,
+                success=bool(url), company=company_name,
+                prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+                completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+                total_tokens=getattr(usage, "total_tokens", None) if usage else None,
+            )
             if url and url.startswith("http"):
                 log(f"Resolved company career link via OpenAI fallback: {url}")
                 return url
@@ -1853,7 +1916,26 @@ Conform exactly to this JSON schema:
             print(f"OpenAI career link resolution failed: {e}")
     return None
 
-def _record_connector_substep(operation_name, elapsed_s, connector=None, company=None, success=True, **metadata):
+# Published list-price rates (USD per 1M tokens), used only to compute a
+# metered-rate-EQUIVALENT cost from REAL measured token counts below - this
+# is not the actual bill, since this project's GEMINI_API_KEY is a free-tier
+# key (confirmed elsewhere in this project: free tier is quota-limited, not
+# billed). Labelled "estimated_cost_usd_at_list_price" everywhere it's
+# emitted so it's never confused with an actual charged amount.
+_LLM_RATES_PER_1M_TOKENS = {
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+}
+
+
+def _llm_cost_estimate(model_name, prompt_tokens, completion_tokens):
+    rates = _LLM_RATES_PER_1M_TOKENS.get(model_name)
+    if not rates or prompt_tokens is None or completion_tokens is None:
+        return None
+    return round((prompt_tokens * rates["input"] + completion_tokens * rates["output"]) / 1_000_000, 6)
+
+
+def _record_connector_substep(operation_name, elapsed_s, connector=None, company=None, success=True, job_id=None, retry_count=None, cache_hit=None, **metadata):
     """Sub-step telemetry inside the connector_extract waterfall (2026-06-27
     instrumentation task: subdivide connector_extract, which the analyzer
     confirmed is ~60% of total pipeline time, into measurable steps). Pure
@@ -1861,6 +1943,14 @@ def _record_connector_substep(operation_name, elapsed_s, connector=None, company
     """
     try:
         from pipeline_metrics import append_pipeline_metric
+
+        meta = dict(metadata)
+        meta["thread_id"] = threading.get_ident()
+        meta["status"] = "success" if success else "failed"
+        if retry_count is not None:
+            meta["retry_count"] = retry_count
+        if cache_hit is not None:
+            meta["cache_hit"] = cache_hit
 
         append_pipeline_metric(
             str(WORKSPACE),
@@ -1870,13 +1960,41 @@ def _record_connector_substep(operation_name, elapsed_s, connector=None, company
                 "stage": "discovery",
                 "ats_source": connector,
                 "company": company,
+                "job_id": job_id,
                 "duration_ms": int(elapsed_s * 1000),
                 "success": success,
-                "metadata": metadata,
+                "metadata": meta,
             },
         )
     except Exception:
         pass
+
+
+def _record_llm_call(operation_name, model_name, elapsed_s, success, connector=None, company=None,
+                      prompt_tokens=None, completion_tokens=None, total_tokens=None, response_code=None):
+    """LLM-specific telemetry: real token counts read off the SDK response
+    object already in hand (google-generativeai's response.usage_metadata,
+    openai's response.usage) - not estimated. estimated_cost_usd_at_list_price
+    is computed from those REAL counts against published list pricing; see
+    _LLM_RATES_PER_1M_TOKENS above for why this isn't the actual bill.
+    """
+    cost = _llm_cost_estimate(model_name, prompt_tokens, completion_tokens)
+    _record_connector_substep(
+        operation_name,
+        elapsed_s,
+        connector=connector,
+        company=company,
+        success=success,
+        llm_used=True,
+        model=model_name,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        tokens=total_tokens if total_tokens is not None else (
+            (prompt_tokens or 0) + (completion_tokens or 0) if prompt_tokens is not None or completion_tokens is not None else None
+        ),
+        estimated_cost_usd_at_list_price=cost,
+        response_code=response_code,
+    )
 
 
 def resolve_career_link(job_title, company_name, jd_text, html=None):
@@ -2039,7 +2157,7 @@ def scrape_linkedin(url):
             if id_match:
                 req_id = id_match.group(1)
 
-        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="linkedin", company=company)
+        _record_connector_substep("html_parsing", time.perf_counter() - _t_parse, connector="linkedin", company=company, html_size=len(html))
 
         _t_resolve = time.perf_counter()
         resolved_url = resolve_career_link(title, company, jd_text, html)

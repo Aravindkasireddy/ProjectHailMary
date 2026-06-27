@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from analyze_pipeline_metrics import (
+    aggregate_averages,
     breakdown_by,
     build_report,
     connector_waterfall,
@@ -170,3 +171,67 @@ def test_connector_waterfall_includes_unknown_ops_after_known_ones():
     waterfalls = connector_waterfall(ops)
     names = [r["operation"] for r in waterfalls["greenhouse"]]
     assert names == ["html_parsing", "some_future_op"]
+
+
+def _op_meta(name, stage, duration_ms, success=True, ats_source=None, metadata=None):
+    return {
+        "event": "operation",
+        "operation_name": name,
+        "stage": stage,
+        "duration_ms": duration_ms,
+        "success": success,
+        "ats_source": ats_source,
+        "metadata": metadata or {},
+    }
+
+
+def test_aggregate_averages_splits_success_and_rejected_jobs():
+    ops = [
+        _op_meta("connector_extract", "discovery", 1000, success=True, ats_source="linkedin"),
+        _op_meta("connector_extract", "discovery", 2000, success=True, ats_source="linkedin"),
+        _op_meta("connector_extract", "discovery", 500, success=False, ats_source="linkedin"),
+    ]
+    avgs = aggregate_averages(ops)
+    assert avgs["avg_time_per_successful_job_ms"] == 1500.0
+    assert avgs["avg_time_per_rejected_job_ms"] == 500.0
+    assert avgs["successful_job_count"] == 2
+    assert avgs["rejected_job_count"] == 1
+
+
+def test_aggregate_averages_returns_none_when_no_rejected_jobs():
+    ops = [_op_meta("connector_extract", "discovery", 1000, success=True)]
+    avgs = aggregate_averages(ops)
+    assert avgs["avg_time_per_rejected_job_ms"] is None
+    assert avgs["rejected_job_count"] == 0
+
+
+def test_aggregate_averages_computes_cache_hit_rate():
+    ops = [
+        _op_meta("company_discovery", "discovery", 10, metadata={"cache_hit": True}),
+        _op_meta("company_discovery", "discovery", 10, metadata={"cache_hit": False}),
+        _op_meta("company_discovery", "discovery", 10, metadata={"cache_hit": True}),
+        _op_meta("html_parsing", "discovery", 10, metadata={}),  # no cache_hit field - excluded
+    ]
+    avgs = aggregate_averages(ops)
+    assert avgs["avg_cache_hit_rate"] == pytest.approx(2 / 3, abs=1e-3)
+
+
+def test_aggregate_averages_computes_real_cost_from_llm_metadata():
+    ops = [
+        _op_meta("llm_extraction_gemini", "discovery", 1000, metadata={"llm_used": True, "estimated_cost_usd_at_list_price": 0.001}),
+        _op_meta("llm_extraction_gemini", "discovery", 1000, metadata={"llm_used": True, "estimated_cost_usd_at_list_price": 0.002}),
+    ]
+    avgs = aggregate_averages(ops)
+    assert avgs["llm_call_count"] == 2
+    assert avgs["avg_cost_usd_per_llm_call_at_list_price"] == pytest.approx(0.0015, abs=5e-4)
+    assert avgs["total_cost_usd_at_list_price"] == pytest.approx(0.003, abs=1e-6)
+
+
+def test_aggregate_averages_avg_bytes_and_requests_from_http_ops():
+    ops = [
+        _op_meta("http_request", "discovery", 100, metadata={"bytes_downloaded": 1000, "request_count": 1}),
+        _op_meta("http_request", "discovery", 100, metadata={"bytes_downloaded": 3000, "request_count": 3}),
+    ]
+    avgs = aggregate_averages(ops)
+    assert avgs["avg_bytes_downloaded"] == 2000
+    assert avgs["avg_requests_per_job"] == 2
