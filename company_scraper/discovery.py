@@ -79,31 +79,65 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
         err.append("empty company name")
         return None
 
+    # Registry-first: skip live discovery entirely if we already know this
+    # company's ATS from a previous discovery run (e.g. the 9985-company
+    # OPT-friendly probe). See company_registry.py for why this matters -
+    # without it, the same discovery cost gets paid again on every call.
+    try:
+        from company_registry import resolve_company_ats
+
+        cached = resolve_company_ats(name)
+        if cached and cached.get("careers_url"):
+            return cached["careers_url"]
+    except Exception:
+        pass
+
+    found_url = None
     for u in _candidate_urls(name):
         if head_ok(u):
-            return u.rstrip("/")
+            found_url = u.rstrip("/")
+            break
 
-    q = (
-        f'"{name}" jobs careers '
-        f"(site:greenhouse.io OR site:lever.co OR site:myworkdayjobs.com OR site:icims.com)"
-    )
-    for link in _yahoo_links(q):
-        low = link.lower()
-        if any(
-            x in low
-            for x in (
-                "greenhouse.io",
-                "lever.co",
-                "myworkdayjobs.com",
-                "workdayjobs.com",
-                "icims.com",
-                "careers.",
-                "/careers",
-                "/jobs",
-            )
-        ):
-            if head_ok(link):
-                return link.rstrip("/")
+    if not found_url:
+        q = (
+            f'"{name}" jobs careers '
+            f"(site:greenhouse.io OR site:lever.co OR site:myworkdayjobs.com OR site:icims.com)"
+        )
+        for link in _yahoo_links(q):
+            low = link.lower()
+            if any(
+                x in low
+                for x in (
+                    "greenhouse.io",
+                    "lever.co",
+                    "myworkdayjobs.com",
+                    "workdayjobs.com",
+                    "icims.com",
+                    "careers.",
+                    "/careers",
+                    "/jobs",
+                )
+            ):
+                if head_ok(link):
+                    found_url = link.rstrip("/")
+                    break
 
-    err.append(f"could not discover careers URL for {name!r}")
-    return None
+    if not found_url:
+        err.append(f"could not discover careers URL for {name!r}")
+        return None
+
+    try:
+        from company_registry import upsert_company
+        from company_scraper.detector import detect_ats
+
+        upsert_company(
+            name,
+            careers_url=found_url,
+            ats_type=detect_ats(found_url),
+            verified=True,
+            source="live_discovery",
+        )
+    except Exception:
+        pass
+
+    return found_url
