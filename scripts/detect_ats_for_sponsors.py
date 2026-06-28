@@ -62,6 +62,18 @@ def main():
     ap.add_argument("--sleep", type=float, default=1.0, help="Seconds to sleep between detect_ats() calls")
     ap.add_argument("--skip-excel", action="store_true", help="Don't write back to the Excel file")
     ap.add_argument("--skip-supabase", action="store_true", help="Don't upsert into Supabase")
+    ap.add_argument(
+        "--sponsor-statuses",
+        default="Strong Active Sponsor,Active but Selective",
+        help="Comma-separated Sponsor Status values to include (empty string = no filter)",
+    )
+    ap.add_argument(
+        "--skip-already-detected",
+        action="store_true",
+        default=True,
+        help="Skip rows that already have an ats_platform value from a prior run (default: on)",
+    )
+    ap.add_argument("--no-skip-already-detected", dest="skip_already_detected", action="store_false")
     args = ap.parse_args()
 
     df = pd.read_excel(EXCEL_PATH)
@@ -71,9 +83,20 @@ def main():
         df["ats_platform_detected_at"] = pd.NA
 
     candidates = df[df["career_portal"].notna()]
+    sponsor_statuses = [s.strip() for s in args.sponsor_statuses.split(",") if s.strip()]
+    if sponsor_statuses:
+        candidates = candidates[candidates["Sponsor Status"].isin(sponsor_statuses)]
+    if args.skip_already_detected:
+        already = candidates["ats_platform"].notna().sum()
+        candidates = candidates[candidates["ats_platform"].isna()]
+        if already:
+            log.info("Skipping %d rows that already have an ats_platform value from a prior run.", already)
     if args.limit:
         candidates = candidates.head(args.limit)
-    log.info("Detecting ATS for %d companies (of %d total rows with a career_portal URL).", len(candidates), df["career_portal"].notna().sum())
+    log.info(
+        "Detecting ATS for %d companies (sponsor_statuses=%s, of %d total rows matching that filter with a career_portal URL).",
+        len(candidates), sponsor_statuses or "ANY", df["career_portal"].notna().sum(),
+    )
 
     supabase = None if args.skip_supabase else get_supabase_client()
 
