@@ -57,3 +57,13 @@ def test_stem_engineering_only_affects_engineering_suffix():
     assert f._stem_engineering("platform engineering") == "platform engineer"
     assert f._stem_engineering("devops engineer") == "devops engineer"
     assert f._stem_engineering("software engineering manager") == "software engineer manager"
+
+
+def test_ci_cd_slash_title_now_matches():
+    # Real bug, 2026-06-30: "CI/CD Engineer" failed to match the target
+    # title "Continuous Integration (CI/CD)" because the "/" split the
+    # acronym into two separate \b[a-z]+\b tokens ("ci", "cd"), so the
+    # fused acronym "cicd" never appeared in the word list the acronym
+    # check searched.
+    for title in ("CI/CD Engineer", "CI/CD Pipeline Engineer", "Senior CI/CD Engineer", "CICD Engineer"):
+        assert f.is_target_job(title, TARGET_TITLES), title

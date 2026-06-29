@@ -846,16 +846,37 @@ def classify_job_dynamically(job):
         "material flow", "adas", "automotive manufacturing", "vehicle assembly",
         "production line", "assembly plant", ", paint", " paint ",
     )
+    # Same false-positive pattern, different industry (generalized 2026-06-30
+    # after auditing real Supabase data for the same domain-blindness):
+    # aerospace/defense hardware engineering at SpaceX/Anduril/Vast. Confirmed
+    # live: "Site Reliability Engineer - Tactical Recon" matched "site
+    # reliability" -> SRE; "Chief Engineer, Advanced Air Platforms (Fury)"
+    # matched "platform" -> Platform Engineering. None of these are genuine
+    # MAAS roles - they're tactical/airframe/launch-vehicle hardware
+    # engineering that happens to reuse IT-sounding job-title words.
+    _aerospace_defense_keywords = (
+        "tactical", "warfighter", "air platforms", "airframe", "avionics",
+        "spacecraft", "propulsion", "launch vehicle", "fluid systems test",
+        "cryogenic", "munitions", "missile", "radar systems",
+        "weapons system", "fire control", "flight test",
+    )
     _cloud_software_evidence_keywords = (
         "kubernetes", "docker", "terraform", "ci/cd", "cicd", "jenkins",
         "github actions", "gitlab ci", "aws", "azure", "gcp", "google cloud",
         "cloud platform", "cloud infrastructure", "cloud-native",
-        "software engineer", "software development", "devops", "sre",
-        "site reliability",
+        "software engineer", "software development",
     )
     _amw = "Automotive/manufacturing engineering role — outside MAAS consultant pipeline"
+    _adw = "Aerospace/defense hardware engineering role — outside MAAS consultant pipeline"
     text_for_domain_check = f"{title} {desc}"
     is_automotive_mfg = any(k in text_for_domain_check for k in _automotive_mfg_keywords)
+    is_aerospace_defense = any(k in text_for_domain_check for k in _aerospace_defense_keywords)
+    # "devops"/"sre"/"site reliability" are deliberately NOT in the cloud-
+    # evidence exception list: those exact words are what cause the
+    # ambiguity in the first place (a title can say "Site Reliability
+    # Engineer" and still be a tactical/defense role) - real specific
+    # tooling/platform names are what actually distinguishes a genuine
+    # cloud/software role from a hardware-engineering one reusing IT words.
     has_cloud_evidence = any(k in text_for_domain_check for k in _cloud_software_evidence_keywords)
 
     if "cloud network engineer" in title:
@@ -871,6 +892,11 @@ def classify_job_dynamically(job):
     elif is_automotive_mfg and not has_cloud_evidence:
         if _amw not in red_flags:
             red_flags.append(_amw)
+        top_label = "OutOfScope"
+        top_score = 0
+    elif is_aerospace_defense and not has_cloud_evidence:
+        if _adw not in red_flags:
+            red_flags.append(_adw)
         top_label = "OutOfScope"
         top_score = 0
     elif any(p in title for p in _retired_title_patterns):

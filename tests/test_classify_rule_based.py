@@ -201,3 +201,39 @@ def test_genuine_maas_titles_unaffected_by_automotive_check():
         result = classify_job_dynamically(job)
         assert result["strongest_label"] != "OutOfScope", title
         assert result["apply_decision"] == "APPLY", title
+
+
+def test_aerospace_defense_titles_are_out_of_scope():
+    # Generalized 2026-06-30: same domain-blindness as the automotive check,
+    # different industry. Confirmed live against real SpaceX/Anduril/Vast
+    # data: "Site Reliability Engineer - Tactical Recon" matched "site
+    # reliability" -> SRE; "Chief Engineer, Advanced Air Platforms" matched
+    # "platform" -> Platform Engineering. Neither is a genuine MAAS role.
+    for title, desc in (
+        ("Senior Site Reliability Engineer - Tactical Recon", ""),
+        ("Chief Engineer, Advanced Air Platforms (Fury)", ""),
+        ("Senior RF Systems Engineer", "Design avionics and radar systems for spacecraft propulsion testing."),
+    ):
+        job = {"job_title": title, "job_description": desc, "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] == "OutOfScope", title
+        assert result["apply_decision"] == "DO_NOT_APPLY", title
+
+
+def test_aerospace_keyword_does_not_block_role_with_real_cloud_evidence():
+    job = {
+        "job_title": "Cloud Infrastructure Engineer - Avionics Platform",
+        "job_description": "Own AWS and Kubernetes infrastructure for our avionics software stack, using Terraform and CI/CD pipelines.",
+        "red_flags": [],
+    }
+    result = classify_job_dynamically(job)
+    assert result["strongest_label"] != "OutOfScope"
+    assert result["apply_decision"] == "APPLY"
+
+
+def test_genuine_sre_and_platform_titles_unaffected_by_aerospace_check():
+    for title in ("Senior Site Reliability Engineer", "Platform Engineer", "Senior Platform Engineer"):
+        job = {"job_title": title, "job_description": "", "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] != "OutOfScope", title
+        assert result["apply_decision"] == "APPLY", title

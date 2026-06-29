@@ -3153,8 +3153,16 @@ def is_target_job(job_title, target_titles):
         "iac": "infrastructure",
     }
     words = re.findall(r'\b[a-z]+\b', jt)
+    # Real bug, found 2026-06-30: is_target_job("CI/CD Engineer", [...,
+    # "Continuous Integration (CI/CD)"]) returned False. The "/" in "ci/cd"
+    # splits it into two separate \b[a-z]+\b tokens ("ci", "cd"), so the
+    # fused acronym "cicd" never appeared in `words` even though the title
+    # plainly says CI/CD. Also check the punctuation-stripped token set
+    # (same stripping the Jaccard fallback below already does), where
+    # "ci/cd" collapses to the single token "cicd" as intended.
+    jt_acronym_tokens = set(re.sub(r'[^a-z0-9\s]', '', jt).split())
     for ac, expanded in acronyms.items():
-        if ac in words:
+        if ac in words or ac in jt_acronym_tokens:
             if any(ac in t.lower() or expanded in t.lower() for t in target_titles):
                 return True
                 
