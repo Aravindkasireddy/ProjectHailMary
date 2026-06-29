@@ -3041,30 +3041,50 @@ def is_us_location(location_str):
         "belgium", "brussels", "switzerland", "geneva", "greece", "athens"
     }
     
-    has_negative = any(ni in loc_lower for ni in negative_indicators)
-    if has_negative:
-        return False
-        
-    has_positive = any(pi in loc_lower for pi in us_indicators)
-    if has_positive:
-        return True
-        
-    has_city = any(city in loc_lower for city in us_cities)
-    has_state_full = any(state in loc_lower for state in us_states_full)
-    
-    if has_city or has_state_full:
-        return True
-        
-    # Check individual words for states
+    # Real incident (2026-06-29): these were plain substring checks (`term in
+    # loc_lower`), not word-boundary-aware - short terms matched inside
+    # unrelated words. "uk" matched inside "Milwaukee"/"Tukwila" (both real
+    # US cities, wrongly rejected); "la" matched inside "England" (wrongly
+    # accepted as US via the has_city check below, since "la" is also the
+    # Los Angeles abbreviation). Confirmed live with exactly those examples.
+    # Switched every term in this function to \bterm\b regex matching -
+    # works identically for multi-word phrases (the \b only anchors the
+    # start/end, spaces in the middle are untouched) and eliminates the
+    # whole class of accidental-substring bugs for short single-word terms.
+    def _term_present(term, text):
+        return re.search(r'\b' + re.escape(term) + r'\b', text) is not None
+
+    # Check for explicit US evidence BEFORE the negative-indicator veto.
+    # Real bug (2026-06-29): several negative_indicators entries are foreign
+    # capital names that collide with real US town names - "vienna"
+    # (Austria) vs Vienna, VA; same risk exists for "paris"/"berlin"/
+    # "athens"/"cairo"/"rome"/"milan"/"dublin". Checking the negative list
+    # first meant "Vienna, VA, United States" was rejected even though
+    # "United States" is right there in the same string. Explicit US
+    # evidence (a real indicator phrase, state name, or state abbreviation)
+    # now always wins over an ambiguous city-name collision.
+    has_positive = any(_term_present(pi, loc_lower) for pi in us_indicators)
+    has_city = any(_term_present(city, loc_lower) for city in us_cities)
+    has_state_full = any(_term_present(state, loc_lower) for state in us_states_full)
+    has_state_abbr = False
     for w in words:
         if w in us_states_abbr:
             # Avoid matching common words like "in", "or", "me", "la", "co" as states unless prefixed by a comma or space comma
             if w in {"in", "or", "me", "la", "co", "ma"}:
                 if re.search(r'\b,\s*' + w + r'\b', loc_lower):
-                    return True
+                    has_state_abbr = True
+                    break
             else:
-                return True
-                
+                has_state_abbr = True
+                break
+
+    if has_positive or has_city or has_state_full or has_state_abbr:
+        return True
+
+    has_negative = any(_term_present(ni, loc_lower) for ni in negative_indicators)
+    if has_negative:
+        return False
+
     # If no negative indicators and it has remote/hybrid/onsite, and no other foreign words
     non_generic_non_us = []
     for w in words:

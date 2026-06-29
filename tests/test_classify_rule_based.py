@@ -153,3 +153,51 @@ def test_named_idp_products_recognized_in_description():
         }
         result = classify_job_dynamically(job)
         assert result["strongest_label"] == "Platform Engineering", tool
+
+
+def test_automotive_manufacturing_titles_are_out_of_scope():
+    # Real incident (2026-06-29): a watched-company scrape of Lucid Motors
+    # (an automotive manufacturer) auto-approved 17 manufacturing/automotive
+    # engineering roles as MAAS DevOps/Cloud/SRE labels purely because
+    # generic words in the titles ("automation", "integration", "system")
+    # happened to match this classifier's keyword rules, with zero domain
+    # context. None of these are genuine MAAS-relevant roles.
+    for title in (
+        "Sr. Automation Engineer, Powertrain",
+        "Sr. Maintenance Engineer, Stamping Automation",
+        "Sr. ADAS Systems Integration Engineer",
+        "Sr. Plant Floor Systems Engineer",
+        "Staff System Engineer – ADAS/AD Safety",
+        "Sr. Automation Engineer, Paint",
+        "Staff Engineer – Reliability & Test Methods, Drive Unit",
+    ):
+        job = {"job_title": title, "job_description": "", "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] == "OutOfScope", title
+        assert result["apply_decision"] == "DO_NOT_APPLY", title
+
+
+def test_automotive_keyword_does_not_block_role_with_real_cloud_evidence():
+    # The automotive/manufacturing block only fires when there's NO cloud/
+    # software evidence - a genuinely dual-domain role (e.g. cloud infra
+    # for a vehicle's software stack, naming real tooling) should still
+    # classify normally.
+    job = {
+        "job_title": "Cloud Infrastructure Engineer - ADAS Platform",
+        "job_description": "Own AWS and Kubernetes infrastructure for our ADAS software stack, using Terraform and CI/CD pipelines.",
+        "red_flags": [],
+    }
+    result = classify_job_dynamically(job)
+    assert result["strongest_label"] != "OutOfScope"
+    assert result["apply_decision"] == "APPLY"
+
+
+def test_genuine_maas_titles_unaffected_by_automotive_check():
+    for title in (
+        "DevOps Engineer", "Senior Platform Engineer", "Site Reliability Engineer",
+        "Cloud Automation Engineer", "CI/CD Pipeline Engineer", "System Engineer",
+    ):
+        job = {"job_title": title, "job_description": "", "red_flags": []}
+        result = classify_job_dynamically(job)
+        assert result["strongest_label"] != "OutOfScope", title
+        assert result["apply_decision"] == "APPLY", title

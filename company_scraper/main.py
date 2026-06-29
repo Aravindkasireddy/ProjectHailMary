@@ -421,6 +421,25 @@ def run(input_str: str, scrape_run_id=None, it_prefs: dict[str, Any] | None = No
     summary["it_jobs_found"] = len(it_jobs)
     tr(f"IT filter pass: {len(it_jobs)} of {len(jobs)} rows (tiered score + your prefs).")
 
+    # Real incident (2026-06-29): this watched-company/company-targeted scrape
+    # path had NO location filtering at all - unlike the main bulk pipeline
+    # (find_and_scrape_jobs.py -> scrape_and_filter_candidates.py), which
+    # already enforces is_us_location() before a job is ever saved. Confirmed
+    # live: company-scraped jobs from GitLab, Twilio, Tenstorrent, and others
+    # landed in the Approved feed with locations like "Bangalore, India",
+    # "Wakefield, England, United Kingdom", "Brazil (Remote)" - this MAAS
+    # pipeline targets US-based roles only. Reusing find_and_scrape_jobs.
+    # is_us_location() rather than reimplementing the same US-detection
+    # logic a third time.
+    try:
+        import find_and_scrape_jobs as _fasj
+
+        before_loc_filter = len(it_jobs)
+        it_jobs = [j for j in it_jobs if _fasj.is_us_location(j.get("location_work_type") or "")]
+        tr(f"US-location filter: {len(it_jobs)} of {before_loc_filter} rows (non-US/ambiguous locations dropped).")
+    except Exception as e:
+        log.warning("US-location filter unavailable, skipping: %s", e)
+
     # Real incident (2026-06-23): company-scraped jobs were never classified at
     # all before reaching Supabase - publisher.py just defaulted every row to
     # strongest_label="DevOps Engineer", apply_decision="APPLY", confidence=100

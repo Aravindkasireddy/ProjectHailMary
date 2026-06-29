@@ -820,6 +820,44 @@ def classify_job_dynamically(job):
         # even though the role family itself was supposed to be retired.
         "database engineer", "dba engineer", "database administrator",
     )
+    # Automotive/manufacturing engineering false positives (found 2026-06-29,
+    # real incident): classify_job_dynamically() is purely keyword-substring
+    # matching with no domain context, so generic words in automotive/plant
+    # job titles score into MAAS labels purely by coincidence - "Sr.
+    # Automation Engineer, Powertrain" matched "automation" -> Cloud
+    # Automation Engineer; "Sr. ADAS Systems Integration Engineer" matched
+    # "integration" -> Continuous Integration (CI/CD); "Plant Floor Systems
+    # Engineer" matched "system" -> System Engineer. This is the path
+    # company_scraper/main.py always uses for watched-company jobs (free,
+    # local, no LLM call) - confirmed live against a real Lucid Motors
+    # company-scraper batch: 17 automotive/manufacturing roles auto-approved
+    # this way, 0 of them genuine MAAS roles. Only forces OutOfScope when NO
+    # cloud/software evidence is present, so a genuinely dual-domain role
+    # (e.g. real cloud infrastructure for a vehicle's software stack,
+    # naming Kubernetes/AWS/Terraform/CI tooling explicitly) is not blocked.
+    _automotive_mfg_keywords = (
+        "powertrain", "stamping", "body in white", "paint shop", "paint line",
+        "plant floor", "assembly line", "general assembly", "drive unit",
+        "vehicle dynamics", "chassis", "battery pack", "tooling engineer",
+        "manufacturing engineer", "manufacturing engineering",
+        "process engineer", "process engineering", "facilities engineer",
+        "robotics engineer", "controls engineer", "equipment engineer",
+        "stamping equipment", "maintenance engineer", "maintenance robotics",
+        "material flow", "adas", "automotive manufacturing", "vehicle assembly",
+        "production line", "assembly plant", ", paint", " paint ",
+    )
+    _cloud_software_evidence_keywords = (
+        "kubernetes", "docker", "terraform", "ci/cd", "cicd", "jenkins",
+        "github actions", "gitlab ci", "aws", "azure", "gcp", "google cloud",
+        "cloud platform", "cloud infrastructure", "cloud-native",
+        "software engineer", "software development", "devops", "sre",
+        "site reliability",
+    )
+    _amw = "Automotive/manufacturing engineering role — outside MAAS consultant pipeline"
+    text_for_domain_check = f"{title} {desc}"
+    is_automotive_mfg = any(k in text_for_domain_check for k in _automotive_mfg_keywords)
+    has_cloud_evidence = any(k in text_for_domain_check for k in _cloud_software_evidence_keywords)
+
     if "cloud network engineer" in title:
         if _nw not in red_flags:
             red_flags.append(_nw)
@@ -828,6 +866,11 @@ def classify_job_dynamically(job):
     elif "cloud security engineer" in title:
         if _sw not in red_flags:
             red_flags.append(_sw)
+        top_label = "OutOfScope"
+        top_score = 0
+    elif is_automotive_mfg and not has_cloud_evidence:
+        if _amw not in red_flags:
+            red_flags.append(_amw)
         top_label = "OutOfScope"
         top_score = 0
     elif any(p in title for p in _retired_title_patterns):
