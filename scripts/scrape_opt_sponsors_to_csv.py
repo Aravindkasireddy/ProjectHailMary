@@ -152,6 +152,7 @@ def load_filtered_employers(
     top_states: list[str] | None,
     limit: int | None,
     source: str = "excel",
+    skip_dead_links: bool = True,
 ) -> pd.DataFrame:
     df = pd.read_excel(EXCEL_PATH)
     df = df.dropna(subset=["Employer Name", "career_portal"])
@@ -160,6 +161,18 @@ def load_filtered_employers(
         df = df[df["Top State"].isin(top_states)]
     if "ats_platform" not in df.columns:
         df["ats_platform"] = pd.NA
+
+    # Skip companies already confirmed dead by scripts/verify_career_portal_links.py
+    # (career_portal_verified == False - 50% dead rate found in a real spot
+    # check, see CLAUDE.md). Rows that haven't been checked yet (NaN) are
+    # left alone - "unverified" is not the same as "known dead".
+    if skip_dead_links and "career_portal_verified" in df.columns:
+        before = len(df)
+        dead_mask = df["career_portal_verified"] == False  # noqa: E712 - explicit False, not falsy/NaN
+        skipped = int(dead_mask.sum())
+        df = df[~dead_mask]
+        if skipped:
+            log.info("Skipping %d of %d employers with a confirmed-dead career_portal link.", skipped, before)
 
     if source == "supabase":
         names = df["Employer Name"].astype(str).str.strip().tolist()
@@ -226,6 +239,12 @@ def main():
              "spreadsheet - no Supabase dependency. 'supabase' bulk-fetches the live h1b_sponsors "
              "table instead (useful if Supabase has been re-detected more recently than this Excel snapshot).",
     )
+    ap.add_argument(
+        "--skip-dead-links", action="store_true", default=True,
+        help="Skip employers whose career_portal was confirmed dead by "
+             "scripts/verify_career_portal_links.py (career_portal_verified == False). Default: on.",
+    )
+    ap.add_argument("--no-skip-dead-links", dest="skip_dead_links", action="store_false")
     args = ap.parse_args()
 
     sponsor_statuses = [s.strip() for s in args.sponsor_statuses.split(",") if s.strip()]
@@ -234,7 +253,9 @@ def main():
     target_titles = load_target_titles()
     log.info("Target role families (from config.json): %s", target_titles)
 
-    employers = load_filtered_employers(sponsor_statuses, top_states, args.limit, source=args.source)
+    employers = load_filtered_employers(
+        sponsor_statuses, top_states, args.limit, source=args.source, skip_dead_links=args.skip_dead_links
+    )
     log.info(
         "Loaded %d employers (sponsor_statuses=%s, top_states=%s, source=%s) with a career_portal URL.",
         len(employers), sponsor_statuses, top_states, args.source,

@@ -8,6 +8,7 @@ specialized connector raises (never crashes the run).
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -117,3 +118,26 @@ def test_unknown_ats_platform_value_falls_through_to_generic(monkeypatch):
 
     assert calls["generic"] == 1
     assert ats_used == "smartrecruiters"
+
+
+def test_load_filtered_employers_skips_confirmed_dead_links(tmp_path, monkeypatch):
+    excel_path = tmp_path / "sponsors.xlsx"
+    df = pd.DataFrame([
+        {"Employer Name": "Alive Co", "career_portal": "https://alive.example.com/careers",
+         "Sponsor Status": "Strong Active Sponsor", "Top State": "CA",
+         "career_portal_verified": True},
+        {"Employer Name": "Dead Co", "career_portal": "https://dead.example.com/careers",
+         "Sponsor Status": "Strong Active Sponsor", "Top State": "TX",
+         "career_portal_verified": False},
+        {"Employer Name": "Unchecked Co", "career_portal": "https://unchecked.example.com/careers",
+         "Sponsor Status": "Strong Active Sponsor", "Top State": "NY",
+         "career_portal_verified": pd.NA},
+    ])
+    df.to_excel(excel_path, index=False)
+    monkeypatch.setattr(m, "EXCEL_PATH", excel_path)
+
+    with_skip = m.load_filtered_employers(["Strong Active Sponsor"], None, None, skip_dead_links=True)
+    assert set(with_skip["Employer Name"]) == {"Alive Co", "Unchecked Co"}
+
+    without_skip = m.load_filtered_employers(["Strong Active Sponsor"], None, None, skip_dead_links=False)
+    assert set(without_skip["Employer Name"]) == {"Alive Co", "Dead Co", "Unchecked Co"}
