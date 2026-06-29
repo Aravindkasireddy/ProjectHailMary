@@ -10,6 +10,52 @@ from bs4 import BeautifulSoup
 
 from company_scraper.http_utils import get_session, head_ok, request_with_retry
 
+# Domains where a 200 response is inherently trustworthy as "a real careers
+# page" - these are real ATS platforms, not something an unrelated party
+# can squat. Slug-guessed raw domains (careers.{slug}.com, {slug}.com/careers,
+# etc.) have no such guarantee and need the content check below.
+_TRUSTED_ATS_DOMAINS = ("greenhouse.io", "lever.co", "myworkdayjobs.com", "workdayjobs.com", "icims.com", "ashbyhq.com")
+
+# Real incident (2026-06-29): head_ok() alone accepted
+# "americanairlinesinc.com/careers" and "tsmcarizonacorporation.com/careers"
+# as "found" candidates during a live discovery run - both resolved to the
+# same IP and returned a 114-byte body that was just
+# `<script>window.onload=function(){window.location.href="/lander"}</script>`,
+# a classic parked-domain redirect stub with zero real content. Confirmed
+# live with curl/host. Guards below reject that pattern before find_careers_url()
+# trusts a guessed raw domain.
+_PARKING_PAGE_PHRASES = (
+    "domain is parked", "buy this domain", "this domain may be for sale",
+    "domain for sale", "parkingcrew", "sedoparking", "courtesy of dan.com",
+    "checkout dan.com", "godaddy.com/domains",
+)
+_CAREERS_PAGE_SIGNAL_WORDS = (
+    "career", "job", "hiring", "apply", "position", "opportunit", "openings", "vacanc", "join our team",
+)
+
+
+def _is_genuine_careers_page(url: str) -> bool:
+    """Reject parked/squatted domains that return a fake 200 for any path.
+    Only meaningful for slug-guessed raw-domain candidates - callers should
+    skip this check entirely for a recognized ATS domain (see
+    _TRUSTED_ATS_DOMAINS), which can't be squatted the same way.
+    """
+    try:
+        r = request_with_retry("GET", url, session=get_session(), timeout=8, max_attempts=2)
+        if r.status_code >= 400:
+            return False
+        text = r.text or ""
+        low = text.lower()
+        if any(p in low for p in _PARKING_PAGE_PHRASES):
+            return False
+        # A genuine careers page has real content; the parking-page stub
+        # found live above was 114 bytes with nothing but a JS redirect.
+        if len(text.strip()) < 300:
+            return False
+        return any(k in low for k in _CAREERS_PAGE_SIGNAL_WORDS)
+    except Exception:
+        return False
+
 
 def _yahoo_links(query: str) -> List[str]:
     url = f"https://search.yahoo.com/search?p={quote_plus(query)}"
@@ -100,8 +146,10 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
     found_url = None
     for u in _candidate_urls(name):
         if head_ok(u):
-            found_url = u.rstrip("/")
-            break
+            host = urlparse(u).netloc.lower()
+            if any(d in host for d in _TRUSTED_ATS_DOMAINS) or _is_genuine_careers_page(u):
+                found_url = u.rstrip("/")
+                break
 
     if not found_url:
         q = (
@@ -124,8 +172,10 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
                 )
             ):
                 if head_ok(link):
-                    found_url = link.rstrip("/")
-                    break
+                    host = urlparse(link).netloc.lower()
+                    if any(d in host for d in _TRUSTED_ATS_DOMAINS) or _is_genuine_careers_page(link):
+                        found_url = link.rstrip("/")
+                        break
 
     if not found_url:
         err.append(f"could not discover careers URL for {name!r}")
