@@ -2211,6 +2211,36 @@ export default function Dashboard() {
       {/* Main Layout Grid */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6 flex flex-col">
 
+        {/* Bold, standalone search - the first thing in the content area so
+            it's unmissable, not just another field inside the filter
+            toolbar. "/" focuses it from anywhere (ignored while typing). */}
+        {activeTab !== 'settings' && (
+          <div className="rounded-2xl border-2 border-violet-700/60 bg-gradient-to-r from-violet-950/30 via-slate-900/60 to-slate-900/30 p-4 shadow-lg shadow-violet-950/30">
+            <label htmlFor="job-search-input" className="flex items-center gap-2 text-xs font-bold text-violet-300 uppercase tracking-wider mb-2">
+              <Search className="w-4 h-4" />
+              Search Jobs
+            </label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-violet-400">
+                <Search className="w-5 h-5" />
+              </span>
+              <input
+                id="job-search-input"
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search by job title, company, or requirement id..."
+                aria-label="Search jobs by title, company, or requirement ID"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-950 border-2 border-violet-800/50 rounded-xl pl-12 pr-20 py-3.5 text-base text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/30 transition-all shadow-inner"
+              />
+              <span className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400">
+                <span className="text-xs font-bold border border-slate-600 rounded-md px-2 py-1 bg-slate-800/80">/</span>
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="rounded-2xl border border-violet-800/40 bg-gradient-to-r from-violet-950/40 to-slate-900/40 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <p className="text-sm text-slate-200">
             <span className="font-semibold text-violet-200">Company scraper</span>
@@ -2419,35 +2449,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Search bar - prominent, always visible (except Settings, which
-              has no job list to search), with a "/" keyboard shortcut so
-              it's easy to find and reach without hunting through the
-              filter row below. */}
-          {activeTab !== 'settings' && (
-            <div className="border-t border-slate-800/40 pt-3">
-              <label htmlFor="job-search-input" className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                Search
-              </label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Search className="w-4 h-4" />
-                </span>
-                <input
-                  id="job-search-input"
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder="Search by job title, company, or requirement id..."
-                  aria-label="Search jobs by title, company, or requirement ID"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-16 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner"
-                />
-                <span className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
-                  <span className="text-[10px] font-semibold border border-slate-700 rounded px-1.5 py-0.5">/</span>
-                </span>
-              </div>
-            </div>
-          )}
 
           {/* Saved Filter Presets */}
           {activeTab === 'approved' && (
