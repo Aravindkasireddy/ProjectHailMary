@@ -33,12 +33,32 @@ _CAREERS_PAGE_SIGNAL_WORDS = (
     "career", "job", "hiring", "apply", "position", "opportunit", "openings", "vacanc", "join our team",
 )
 
+# Real incident (2026-06-29), found in the same live discovery run as the
+# parking-page bug above: "UNITED WHOLESALE MORTGAGE LLC"'s slug-guessed
+# candidate careers.united.com resolved to a genuine, fully real careers
+# page - but it's United Airlines' careers page, not United Wholesale
+# Mortgage's. The content-sanity check above can't catch this (the page
+# really is a careers page), so a separate check is needed: does the page
+# actually mention THIS company. Common, generic first words of a company
+# name ("united", "american", "national", "global", etc.) are exactly the
+# words most likely to coincidentally match an unrelated company's real
+# domain, so a match on one of those alone isn't sufficient evidence -
+# require a more distinctive token instead, falling back to the generic
+# one only if the company name has nothing more specific to offer.
+_GENERIC_COLLISION_RISK_WORDS = {
+    "united", "american", "national", "global", "first", "general", "allied",
+    "premier", "advanced", "capital", "western", "eastern", "southern",
+    "central", "pacific", "standard", "international", "consolidated",
+}
 
-def _is_genuine_careers_page(url: str) -> bool:
-    """Reject parked/squatted domains that return a fake 200 for any path.
-    Only meaningful for slug-guessed raw-domain candidates - callers should
-    skip this check entirely for a recognized ATS domain (see
-    _TRUSTED_ATS_DOMAINS), which can't be squatted the same way.
+
+def _is_genuine_careers_page(url: str, company_name: str = "") -> bool:
+    """Reject parked/squatted domains that return a fake 200 for any path,
+    and reject a real-but-wrong-company careers page (a slug guess can land
+    on an unrelated company's genuine site). Only meaningful for slug-guessed
+    raw-domain candidates - callers should skip this check entirely for a
+    recognized ATS domain (see _TRUSTED_ATS_DOMAINS), which can't be
+    squatted or coincidentally matched the same way.
     """
     try:
         r = request_with_retry("GET", url, session=get_session(), timeout=8, max_attempts=2)
@@ -52,7 +72,17 @@ def _is_genuine_careers_page(url: str) -> bool:
         # found live above was 114 bytes with nothing but a JS redirect.
         if len(text.strip()) < 300:
             return False
-        return any(k in low for k in _CAREERS_PAGE_SIGNAL_WORDS)
+        if not any(k in low for k in _CAREERS_PAGE_SIGNAL_WORDS):
+            return False
+        if company_name:
+            import find_and_scrape_jobs as fasj
+
+            tokens = fasj.get_company_tokens(company_name)
+            distinctive = [t for t in tokens if t not in _GENERIC_COLLISION_RISK_WORDS]
+            check_tokens = distinctive or tokens
+            if check_tokens and not any(t in low for t in check_tokens):
+                return False
+        return True
     except Exception:
         return False
 
@@ -147,7 +177,7 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
     for u in _candidate_urls(name):
         if head_ok(u):
             host = urlparse(u).netloc.lower()
-            if any(d in host for d in _TRUSTED_ATS_DOMAINS) or _is_genuine_careers_page(u):
+            if any(d in host for d in _TRUSTED_ATS_DOMAINS) or _is_genuine_careers_page(u, name):
                 found_url = u.rstrip("/")
                 break
 
@@ -173,7 +203,7 @@ def find_careers_url(company_name: str, errors: Optional[List[str]] = None) -> O
             ):
                 if head_ok(link):
                     host = urlparse(link).netloc.lower()
-                    if any(d in host for d in _TRUSTED_ATS_DOMAINS) or _is_genuine_careers_page(link):
+                    if any(d in host for d in _TRUSTED_ATS_DOMAINS) or _is_genuine_careers_page(link, name):
                         found_url = link.rstrip("/")
                         break
 

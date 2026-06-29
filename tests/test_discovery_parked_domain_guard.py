@@ -100,3 +100,54 @@ def test_find_careers_url_trusts_recognized_ats_domain_without_content_check(mon
 
     url = find_careers_url("Acme")
     assert url == "https://boards.greenhouse.io/acme"
+
+
+def test_rejects_real_careers_page_for_a_different_company(monkeypatch):
+    # Real incident (2026-06-29): "UNITED WHOLESALE MORTGAGE LLC"'s
+    # slug-guessed candidate careers.united.com resolved to a genuine,
+    # fully real careers page - United Airlines', not United Wholesale
+    # Mortgage's. The page itself is a real careers page (passes the
+    # parked-domain/content checks), so this needs the separate
+    # company-name verification, not the parking-page guard.
+    html = (
+        "<html><body><h1>Careers at United Airlines</h1>"
+        "<p>We are hiring pilots, flight attendants, and ground crew. "
+        "Apply now to join our team and explore current job opportunities at United Airlines.</p>"
+        "</body></html>"
+    ) * 2
+    monkeypatch.setattr(
+        "company_scraper.discovery.request_with_retry",
+        lambda *a, **k: _FakeResponse(200, html),
+    )
+    assert _is_genuine_careers_page("https://careers.united.com", "UNITED WHOLESALE MORTGAGE LLC") is False
+
+
+def test_accepts_genuine_match_even_with_generic_first_word(monkeypatch):
+    # The generic-word guard should only kick in when NO distinctive token
+    # is present - a page that genuinely mentions the company's distinctive
+    # tokens (not just the generic first word) should still pass.
+    html = (
+        "<html><body><h1>Careers at United Wholesale Mortgage</h1>"
+        "<p>We are hiring loan officers and mortgage processors. "
+        "Apply now to join our team and explore current job opportunities at United Wholesale Mortgage.</p>"
+        "</body></html>"
+    ) * 2
+    monkeypatch.setattr(
+        "company_scraper.discovery.request_with_retry",
+        lambda *a, **k: _FakeResponse(200, html),
+    )
+    assert _is_genuine_careers_page("https://careers.united.com", "UNITED WHOLESALE MORTGAGE LLC") is True
+
+
+def test_no_company_name_skips_the_company_match_check(monkeypatch):
+    # Backward-compatible default: callers that don't pass a company name
+    # (company_name="") should only get the parked-domain/content checks.
+    html = (
+        "<html><body><h1>Careers</h1><p>We are hiring. Apply now to join our team "
+        "and explore current job opportunities.</p></body></html>"
+    ) * 3
+    monkeypatch.setattr(
+        "company_scraper.discovery.request_with_retry",
+        lambda *a, **k: _FakeResponse(200, html),
+    )
+    assert _is_genuine_careers_page("https://careers.example.com") is True
