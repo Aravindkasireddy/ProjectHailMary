@@ -261,6 +261,7 @@ export default function Dashboard() {
   // ~250ms after the user pauses, not on every keystroke.
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearchTerm(searchTerm), 250);
     return () => clearTimeout(t);
@@ -1031,6 +1032,34 @@ export default function Dashboard() {
     return () => window.removeEventListener('keydown', onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- closeModal is a plain function recreated each render with an equivalent closure; adding it would only churn the dep array, not change behavior.
   }, [isModalOpen]);
+
+  // Focus the modal on open (keyboard/screen-reader users land inside it,
+  // not stuck on whatever was focused on the page behind it).
+  useEffect(() => {
+    if (isModalOpen) {
+      modalRef.current?.focus();
+    }
+  }, [isModalOpen]);
+
+  // Trap Tab/Shift+Tab inside the modal while it's open - without this, a
+  // keyboard user could Tab straight out into the backdrop/page content
+  // behind it, which is hidden but still in the DOM.
+  const handleModalKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab' || !modalRef.current) return;
+    const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   // Open inspection / override modal
   const openModal = (job: Job, skipHistoryPush = false) => {
@@ -3288,7 +3317,15 @@ export default function Dashboard() {
       {/* Inspect & Override Modal */}
       {isModalOpen && selectedJob && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-4xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={authRole === 'admin' ? 'Inspect Candidate & Apply Manual Override' : 'Inspect Candidate'}
+            tabIndex={-1}
+            onKeyDown={handleModalKeyDown}
+            className="bg-slate-900 border border-slate-800 w-full max-w-4xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 focus:outline-none"
+          >
 
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
@@ -3510,6 +3547,7 @@ export default function Dashboard() {
                         disabled={historyIndex <= 0}
                         className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
                         title="Undo"
+                        aria-label="Undo"
                       >
                         <Undo className="w-4 h-4" />
                       </button>
@@ -3519,6 +3557,7 @@ export default function Dashboard() {
                         disabled={historyIndex >= descHistory.length - 1}
                         className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 rounded transition-colors"
                         title="Redo"
+                        aria-label="Redo"
                       >
                         <Redo className="w-4 h-4" />
                       </button>
@@ -3529,6 +3568,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('bold')}
                         className="p-1.5 text-slate-400 hover:text-white font-bold rounded transition-colors"
                         title="Bold"
+                        aria-label="Bold"
                       >
                         <Bold className="w-4 h-4" />
                       </button>
@@ -3537,6 +3577,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('italic')}
                         className="p-1.5 text-slate-400 hover:text-white italic rounded transition-colors"
                         title="Italic"
+                        aria-label="Italic"
                       >
                         <Italic className="w-4 h-4" />
                       </button>
@@ -3545,6 +3586,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('underline')}
                         className="p-1.5 text-slate-400 hover:text-white underline rounded transition-colors"
                         title="Underline"
+                        aria-label="Underline"
                       >
                         <Underline className="w-4 h-4" />
                       </button>
@@ -3555,6 +3597,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('bullet')}
                         className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
                         title="Bullet List"
+                        aria-label="Bullet list"
                       >
                         <List className="w-4 h-4" />
                       </button>
@@ -3563,6 +3606,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('number')}
                         className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
                         title="Numbered List"
+                        aria-label="Numbered list"
                       >
                         <ListOrdered className="w-4 h-4" />
                       </button>
@@ -3571,6 +3615,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('link')}
                         className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
                         title="Insert Link"
+                        aria-label="Insert link"
                       >
                         <Link2 className="w-4 h-4" />
                       </button>
@@ -3579,6 +3624,7 @@ export default function Dashboard() {
                         onClick={() => handleToolbarClick('clear')}
                         className="p-1.5 text-slate-400 hover:text-white rounded transition-colors"
                         title="Clear Formatting"
+                        aria-label="Clear formatting"
                       >
                         <Type className="w-4 h-4" />
                       </button>

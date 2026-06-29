@@ -141,3 +141,148 @@ def test_scrape_runs_status_endpoints_auth(test_server, mock_auth):
     r = requests.get(f"{test_server}/api/scrape/active", headers=headers)
     assert r.status_code == 200
     assert "runs" in r.json()
+
+
+def test_new_jobs_endpoint_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/new-jobs")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/new-jobs", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_scraper_status_endpoint_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/scraper-status")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/scraper-status", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), dict)
+
+
+def test_watched_companies_get_requires_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/watched-companies")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/watched-companies", headers=headers)
+    assert r.status_code == 200
+    assert "companies" in r.json()
+
+
+def test_stale_status_endpoint_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/stale-status")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/stale-status", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), dict)
+
+
+def test_logs_endpoint_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/logs")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/logs", headers=headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), dict)
+
+
+def test_salary_insights_endpoint_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/salary-insights")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/salary-insights", headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert "yearly_count" in data
+    assert "hourly_count" in data
+
+
+def test_resume_get_endpoint_auth(test_server, mock_auth):
+    r = requests.get(f"{test_server}/api/resume")
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.get(f"{test_server}/api/resume", headers=headers)
+    assert r.status_code == 200
+
+
+def test_config_reset_target_titles_allows_any_authenticated_role(test_server, mock_auth):
+    # In _user_authed_post_paths (do_POST) - any authenticated role, not
+    # admin-only, since it only resets the caller's own scoped config.
+    r = requests.post(f"{test_server}/api/config/reset-target-titles", json={})
+    assert r.status_code == 401
+
+    user_headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(f"{test_server}/api/config/reset-target-titles", json={}, headers=user_headers)
+    assert r.status_code == 200
+
+    admin_headers = mock_auth.headers("admin@hailmary.ai", role="admin")
+    r = requests.post(f"{test_server}/api/config/reset-target-titles", json={}, headers=admin_headers)
+    assert r.status_code == 200
+
+
+def test_test_webhook_requires_admin(test_server, mock_auth):
+    user_headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(f"{test_server}/api/test-webhook", json={}, headers=user_headers)
+    assert r.status_code == 403
+
+
+def test_update_pipeline_stage_requires_admin(test_server, mock_auth):
+    user_headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(
+        f"{test_server}/api/update-pipeline-stage",
+        json={"job_url": "https://example.com/job/1", "pipeline_stage": "Applied"},
+        headers=user_headers,
+    )
+    assert r.status_code == 403
+
+
+def test_delete_requires_admin(test_server, mock_auth):
+    user_headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(
+        f"{test_server}/api/delete",
+        json={"job_url": "https://example.com/job/1"},
+        headers=user_headers,
+    )
+    assert r.status_code == 403
+
+
+def test_check_stale_requires_admin(test_server, mock_auth):
+    user_headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(f"{test_server}/api/check-stale", json={}, headers=user_headers)
+    assert r.status_code == 403
+
+
+def test_watched_companies_post_allows_any_authenticated_role(test_server, mock_auth):
+    # Also in _user_authed_post_paths (do_POST) - any authenticated role,
+    # not admin-only. Sending no "input" field hits the handler's own
+    # validation (400) rather than the network-calling happy path, so this
+    # proves the auth gate passed without making a live discovery request.
+    r = requests.post(f"{test_server}/api/watched-companies", json={})
+    assert r.status_code == 401
+
+    user_headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(f"{test_server}/api/watched-companies", json={}, headers=user_headers)
+    assert r.status_code == 400
+    assert "input" in r.json().get("message", "")
+
+
+def test_classifier_feedback_endpoint_is_reachable(test_server, mock_auth):
+    # Real bug, found 2026-06-30: this route (and reset-target-titles above)
+    # was chained as `elif` of the auth-gate `if path.startswith("/api/")`,
+    # which is always True for any /api/ path - so it was dead code and
+    # always 404'd regardless of auth, until fixed in dashboard_server.py.
+    r = requests.post(f"{test_server}/api/classifier-feedback", json={})
+    assert r.status_code == 401
+
+    headers = mock_auth.headers("user@hailmary.ai", role="user")
+    r = requests.post(f"{test_server}/api/classifier-feedback", json={}, headers=headers)
+    assert r.status_code != 404

@@ -1684,8 +1684,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if not self.check_admin():
                     return
 
+        # Real bug, found 2026-06-30 while writing route tests: these two
+        # branches were `elif` of the auth-gate `if path.startswith("/api/")`
+        # above - that condition is always True for any /api/ path, so this
+        # `elif` could never execute and both routes always 404'd regardless
+        # of auth. Changed to a fresh `if` so they're actually reachable;
+        # classifier-feedback right below stays `elif` of THIS if, which is
+        # correct (mutually exclusive with reset-target-titles, both already
+        # past the real auth gate above).
         # API: Reset target job titles to repo defaults (local scoped config + optional Supabase)
-        elif parsed_url.path == "/api/config/reset-target-titles":
+        if parsed_url.path == "/api/config/reset-target-titles":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_cors_headers()
