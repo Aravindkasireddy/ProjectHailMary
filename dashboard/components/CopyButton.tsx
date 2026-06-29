@@ -22,6 +22,7 @@ export default function CopyButton({ text }: CopyButtonProps) {
       type="button"
       className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors flex items-center"
       title="Copy to clipboard"
+      aria-label={copied ? 'Copied to clipboard' : 'Copy to clipboard'}
     >
       {copied ? (
         <Check className="w-3.5 h-3.5 text-emerald-400 animate-in zoom-in-50 duration-150" />

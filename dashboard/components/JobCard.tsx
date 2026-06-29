@@ -611,6 +611,7 @@ export default function JobCard({
                 onClick={() => onGenerateTailoring(job.job_url)}
                 className="p-1.5 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 hover:text-emerald-300 border border-emerald-800/40 rounded-xl transition-all"
                 title="AI Tailor Application"
+                aria-label="AI tailor application"
               >
                 <FileText className="w-4 h-4" />
               </button>
@@ -677,6 +678,7 @@ export default function JobCard({
               onClick={() => onDeleteJob(job.job_url)}
               className="inline-flex items-center p-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 rounded-xl text-xs font-semibold border border-rose-800/40 transition-colors shrink-0"
               title="Delete / Archive job posting"
+              aria-label="Delete or archive job posting"
             >
               <XCircle className="w-4 h-4" />
             </button>

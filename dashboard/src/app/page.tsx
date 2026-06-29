@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Briefcase,
   Settings as SettingsIcon,
@@ -256,6 +256,15 @@ export default function Dashboard() {
     last_metrics: {} as Record<string, number>,
   });
   const [searchTerm, setSearchTerm] = useState('');
+  // Debounced separately from searchTerm so the input feels instant while
+  // typing, but the (potentially expensive) job-list filter only re-runs
+  // ~250ms after the user pauses, not on every keystroke.
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchTerm(searchTerm), 250);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
   const [activeTab, setActiveTab] = useState<TabId>('approved');
   const [resume, setResume] = useState<string>('');
   const [resumeLoading, setResumeLoading] = useState<boolean>(false);
@@ -999,6 +1008,30 @@ export default function Dashboard() {
     }
   };
 
+  // Global "/" focuses the search box (ignored while typing in any field);
+  // Escape closes the job detail modal, or blurs the search box if it's
+  // focused. Declared after closeModal/isModalOpen so both are already
+  // initialized when this effect's dependency array is evaluated.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTyping = !!target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+      if (e.key === '/' && !isTyping) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape') {
+        if (isModalOpen) {
+          closeModal();
+        } else if (target && target === searchInputRef.current) {
+          target.blur();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeModal is a plain function recreated each render with an equivalent closure; adding it would only churn the dep array, not change behavior.
+  }, [isModalOpen]);
+
   // Open inspection / override modal
   const openModal = (job: Job, skipHistoryPush = false) => {
     setSelectedJob(job);
@@ -1735,23 +1768,47 @@ export default function Dashboard() {
 
   // Categorize jobs. Backend flags near-duplicates (near_dedup.group_and_flag_duplicates)
   // but never removes them from the response, so the UI must filter is_duplicate itself.
-  const dedupedJobs = jobs.filter(j => !j.is_duplicate);
-  const approvedJobs = dedupedJobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0));
-  const rejectedJobs = dedupedJobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0)));
-  const pendingJobs = dedupedJobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY');
-  const humanReviewJobs = dedupedJobs.filter(j => {
-    if (j.archived) return false;
-    const p = j.apply_decision_payload;
-    const rec =
-      p && typeof p === 'object' && 'recommendation' in p
-        ? String((p as { recommendation?: string }).recommendation || '').toUpperCase()
-        : '';
-    return rec === 'HUMAN_REVIEW';
-  });
+  // Memoized (previously plain consts re-filtered on every render) so these
+  // are stable references across renders - both a real perf win on its own
+  // (these run the full jobs[] array through .filter() on every keystroke/
+  // state change otherwise) and required for filteredJobs' own useMemo
+  // below to be valid: the React Compiler's lint rule
+  // (react-hooks/preserve-manual-memoization) refuses to trust a manual
+  // useMemo whose dependencies aren't themselves provably stable.
+  const dedupedJobs = useMemo(() => jobs.filter(j => !j.is_duplicate), [jobs]);
+  const approvedJobs = useMemo(
+    () => dedupedJobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0)),
+    [dedupedJobs]
+  );
+  const rejectedJobs = useMemo(
+    () => dedupedJobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0))),
+    [dedupedJobs]
+  );
+  const pendingJobs = useMemo(
+    () => dedupedJobs.filter(j => !j.archived && j.apply_decision !== 'APPLY' && j.apply_decision !== 'DO_NOT_APPLY'),
+    [dedupedJobs]
+  );
+  const humanReviewJobs = useMemo(
+    () => dedupedJobs.filter(j => {
+      if (j.archived) return false;
+      const p = j.apply_decision_payload;
+      const rec =
+        p && typeof p === 'object' && 'recommendation' in p
+          ? String((p as { recommendation?: string }).recommendation || '').toUpperCase()
+          : '';
+      return rec === 'HUMAN_REVIEW';
+    }),
+    [dedupedJobs]
+  );
 
 
 
-  const filteredJobs = () => {
+  // Memoized (was a plain function re-run on every render, including every
+  // keystroke before the debounce above existed) - this filter/sort chain
+  // touches the full job list for the active tab, so recomputing it only
+  // when an actual input changes (not on every unrelated re-render) matters
+  // once the list grows into the hundreds/thousands.
+  const filteredJobs = useMemo(() => {
     let list =
       activeTab === 'approved'
         ? approvedJobs
@@ -1788,8 +1845,8 @@ export default function Dashboard() {
       list = list.filter(j => (j.location_work_type || '').toLowerCase().includes('remote'));
     }
 
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
+    if (debouncedSearchTerm.trim()) {
+      const term = debouncedSearchTerm.toLowerCase();
       list = list.filter(j =>
         j.job_title.toLowerCase().includes(term) ||
         j.company_name.toLowerCase().includes(term) ||
@@ -1831,7 +1888,12 @@ export default function Dashboard() {
         return dateA - dateB;
       }
     });
-  };
+  }, [
+    activeTab, approvedJobs, rejectedJobs, humanReviewJobs, pendingJobs,
+    showActiveOnly, selectedSourceFilter, selectedRoleFilter,
+    confidenceBandFilter, remoteOnlyFilter, debouncedSearchTerm,
+    scrapedTimeframe, sortBy,
+  ]);
 
   const formatScrapedDate = (dateStr: string) => {
     try {
@@ -2357,6 +2419,36 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Search bar - prominent, always visible (except Settings, which
+              has no job list to search), with a "/" keyboard shortcut so
+              it's easy to find and reach without hunting through the
+              filter row below. */}
+          {activeTab !== 'settings' && (
+            <div className="border-t border-slate-800/40 pt-3">
+              <label htmlFor="job-search-input" className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                Search
+              </label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Search className="w-4 h-4" />
+                </span>
+                <input
+                  id="job-search-input"
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="Search by job title, company, or requirement id..."
+                  aria-label="Search jobs by title, company, or requirement ID"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-16 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner"
+                />
+                <span className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
+                  <span className="text-[10px] font-semibold border border-slate-700 rounded px-1.5 py-0.5">/</span>
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Saved Filter Presets */}
           {activeTab === 'approved' && (
             <div className="flex items-center gap-2 flex-wrap border-t border-slate-800/40 pt-3">
@@ -2474,18 +2566,6 @@ export default function Dashboard() {
                 </span>
               </div>
 
-              <div className="relative flex-1">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Search className="w-4 h-4" />
-                </span>
-                <input
-                  type="text"
-                  placeholder="Fuzzy search by job, company, or requirement id..."
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner"
-                />
-              </div>
             </div>
           )}
 
@@ -3025,7 +3105,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {filteredJobs().length === 0 ? (
+              {filteredJobs.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-2xl p-12 text-center bg-slate-900/10">
                   <Briefcase className="w-12 h-12 text-slate-600 mb-3" />
                   <h3 className="text-sm font-bold text-slate-400">No Job Postings Found</h3>
@@ -3037,7 +3117,7 @@ export default function Dashboard() {
                 /* Kanban Board Columns */
                 <div className="flex space-x-4 overflow-x-auto pb-4 custom-scrollbar items-start select-none">
                   {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(stage => {
-                    const stageJobs = filteredJobs().filter(j => (j.pipeline_stage || 'Approved') === stage || (stage === 'Rejected' && (j.pipeline_stage === 'Rejected' || j.pipeline_stage === 'Closed')));
+                    const stageJobs = filteredJobs.filter(j => (j.pipeline_stage || 'Approved') === stage || (stage === 'Rejected' && (j.pipeline_stage === 'Rejected' || j.pipeline_stage === 'Closed')));
                     return (
                       <div key={stage} className="bg-slate-900/25 border border-slate-800/50 rounded-2xl p-4 w-72 shrink-0 flex flex-col max-h-[70vh] backdrop-blur-sm">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
@@ -3117,10 +3197,10 @@ export default function Dashboard() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => selectedJobUrls.size > 0 ? clearSelection() : selectAllVisible(filteredJobs().map(j => j.job_url))}
+                          onClick={() => selectedJobUrls.size > 0 ? clearSelection() : selectAllVisible(filteredJobs.map(j => j.job_url))}
                           className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 bg-slate-900/60 text-slate-300 hover:border-violet-600/50 hover:text-violet-300 transition-colors"
                         >
-                          {selectedJobUrls.size > 0 ? `Clear (${selectedJobUrls.size})` : `Select all ${filteredJobs().length} visible`}
+                          {selectedJobUrls.size > 0 ? `Clear (${selectedJobUrls.size})` : `Select all ${filteredJobs.length} visible`}
                         </button>
                       </div>
                       {selectedJobUrls.size > 0 && (
@@ -3147,7 +3227,7 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {filteredJobs().map((job, idx) => (
+                    {filteredJobs.map((job, idx) => (
                       <div key={job.job_url + idx} className="relative">
                         {activeTab === 'approved' && authRole === 'admin' && (
                           <button
