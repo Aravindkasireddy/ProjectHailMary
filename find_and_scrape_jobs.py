@@ -3132,9 +3132,23 @@ def _stem_engineering(text):
     return re.sub(r"\bengineering\b", "engineer", text)
 
 
+_RETIRED_ROLE_TITLE_PATTERNS = (
+    "data platform engineer", "data infrastructure engineer",
+    "machine learning engineer", "ml engineer",
+    "mlops", "aiops", "ai platform engineer",
+    "database engineer", "dba engineer", "database administrator",
+    "cloud network engineer", "cloud security engineer",
+)
+
 def is_target_job(job_title, target_titles):
     jt = _stem_engineering(job_title.lower())
     if job_title and any(rx.search(job_title) for rx in _EXCLUDED_JOB_TITLE_RES):
+        return False
+    # Explicitly reject retired role families before any substring matching.
+    # Without this, "Data Platform Engineer" passes when searching for
+    # "Platform Engineering" because "platform engineer" is a substring of
+    # "data platform engineer" — the retired prefix "data" doesn't block it.
+    if any(p in jt for p in _RETIRED_ROLE_TITLE_PATTERNS):
         return False
 
     # 1. Strict substring and all-tokens checks
