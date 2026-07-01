@@ -175,6 +175,15 @@ def detect_input_type(input_str: str) -> InputKind:
     return "company_name"
 
 
+_SEARCH_ENGINE_HOSTS = frozenset({
+    "search.yahoo.com", "shopping.yahoo.com", "news.yahoo.com",
+    "google.com", "www.google.com",
+    "bing.com", "www.bing.com",
+    "duckduckgo.com", "html.duckduckgo.com",
+    "search.brave.com",
+})
+
+
 def detect_ats(url: str) -> AtsKind:
     # Check the host only, not the full URL string (real bug, 2026-06-24):
     # checking "greenhouse.io" in the whole lowercased URL meant a link whose
@@ -183,6 +192,10 @@ def detect_ats(url: str) -> AtsKind:
     # got misclassified as a genuine Greenhouse board. The host is the only
     # part of the URL that can honestly tell you which site you're on.
     host = (urlparse(url or "").netloc or "").lower()
+    # Search engines embed ATS domain names in their query strings/results —
+    # skip the page-content GET entirely for known search engine hosts.
+    if host in _SEARCH_ENGINE_HOSTS:
+        return "generic"
     if "greenhouse.io" in host:
         return "greenhouse"
     if "lever.co" in host:
