@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from company_scraper.http_utils import request_with_retry
 
 InputKind = Literal["company_name", "careers_url", "job_url"]
-AtsKind = Literal["greenhouse", "lever", "workday", "icims", "generic"]
+AtsKind = Literal["greenhouse", "lever", "workday", "icims", "ashby", "bamboohr", "breezy", "smartrecruiters", "jobvite", "workable", "taleo", "successfactors", "jazzhr", "teamtailor", "rippling", "paylocity", "generic"]
 
 
 _JOB_PATH_HINTS = re.compile(
@@ -191,6 +191,30 @@ def detect_ats(url: str) -> AtsKind:
         return "workday"
     if "icims.com" in host:
         return "icims"
+    if "ashbyhq.com" in host:
+        return "ashby"
+    if "bamboohr.com" in host:
+        return "bamboohr"
+    if "breezy.hr" in host:
+        return "breezy"
+    if "smartrecruiters.com" in host:
+        return "smartrecruiters"
+    if "jobvite.com" in host:
+        return "jobvite"
+    if "workable.com" in host:
+        return "workable"
+    if "taleo.net" in host:
+        return "taleo"
+    if "successfactors.com" in host or "sap-successfactors" in host:
+        return "successfactors"
+    if "jazzhr.com" in host or "resumatorads.com" in host:
+        return "jazzhr"
+    if "teamtailor.com" in host:
+        return "teamtailor"
+    if "rippling.com" in host:
+        return "rippling"
+    if "paylocity.com" in host:
+        return "paylocity"
     import time
 
     _t0 = time.perf_counter()
@@ -200,10 +224,40 @@ def detect_ats(url: str) -> AtsKind:
         r = request_with_retry("GET", url, timeout=15, max_attempts=2)
         text = (r.text or "").lower()
         ok = True
+        # Priority order: most distinctive signals first to avoid false matches.
+        # Workday/iCIMS were already here; extended with more ATS platforms
+        # detected from page content (for companies that host their own career
+        # page domain but embed a third-party ATS via script/iframe).
         if "myworkdayjobs.com" in text or "workdaycdn" in text or ("wdio" in text and "workday" in text):
             result = "workday"
         elif "icims" in text or "icims.com" in text:
             result = "icims"
+        elif "greenhouse.io" in text or "boards.greenhouse.io" in text:
+            result = "greenhouse"
+        elif "jobs.lever.co" in text or "api.lever.co" in text:
+            result = "lever"
+        elif "ashbyhq.com" in text:
+            result = "ashby"
+        elif "bamboohr.com" in text:
+            result = "bamboohr"
+        elif "breezy.hr" in text:
+            result = "breezy"
+        elif "smartrecruiters.com" in text:
+            result = "smartrecruiters"
+        elif "successfactors.com" in text:
+            result = "successfactors"
+        elif "taleo.net" in text:
+            result = "taleo"
+        elif "jobvite.com" in text:
+            result = "jobvite"
+        elif "teamtailor.com" in text:
+            result = "teamtailor"
+        elif "jazzhr.com" in text or "resumatorads.com" in text:
+            result = "jazzhr"
+        elif "workable.com" in text:
+            result = "workable"
+        elif "rippling.com" in text:
+            result = "rippling"
     except Exception:
         pass
     finally:
