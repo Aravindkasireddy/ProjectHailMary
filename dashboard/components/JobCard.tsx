@@ -88,7 +88,7 @@ export interface JobCardJob {
   };
 }
 
-export type JobCardTabId = 'approved' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
+export type JobCardTabId = 'approved' | 'new_today' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
 
 interface JobCardProps {
   job: JobCardJob;

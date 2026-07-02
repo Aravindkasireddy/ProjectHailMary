@@ -1162,12 +1162,31 @@ def scheduler_loop():
                 
                 target_hour = cfg.get("scheduler_run_at_hour", 8)
                 target_minute = cfg.get("scheduler_run_at_minute", 0)
-                
-                last_triggered_date = last_triggered_dates.get(user_id)
-                if now.hour == target_hour and now.minute == target_minute and last_triggered_date != today:
-                    print(f"[{now.isoformat()}] Scheduled trigger for {email} ({user_id}): Starting daily job sourcing scraper...")
-                    last_triggered_dates[user_id] = today
-                    
+                # Second daily run at 18:00 (6pm) to catch fresh ATS postings
+                # published throughout the day. Uses same minute as the morning
+                # run. No config knob needed — if the morning run is at 8:05,
+                # the evening run fires at 18:05.
+                evening_hour = 18
+
+                last_triggered = last_triggered_dates.get(user_id, {})
+                run_key_morning = f"{today}-morning"
+                run_key_evening = f"{today}-evening"
+
+                is_morning_slot = now.hour == target_hour and now.minute == target_minute
+                is_evening_slot = now.hour == evening_hour and now.minute == target_minute
+
+                should_run = (
+                    (is_morning_slot and run_key_morning not in last_triggered) or
+                    (is_evening_slot and run_key_evening not in last_triggered)
+                )
+                run_key = run_key_morning if is_morning_slot else run_key_evening
+
+                if should_run:
+                    slot = "morning" if is_morning_slot else "evening"
+                    print(f"[{now.isoformat()}] Scheduled {slot} trigger for {email} ({user_id}): Starting job sourcing scraper...")
+                    last_triggered[run_key] = True
+                    last_triggered_dates[user_id] = last_triggered
+
                     state = get_scraper_state(email)
                     if state["status"] != "running":
                         threading.Thread(target=scraper_worker, args=(email, False, user_id)).start()

@@ -45,7 +45,7 @@ import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
-type TabId = 'approved' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
+type TabId = 'approved' | 'new_today' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
 
 interface DecisionPayload {
   apply_decision?: string;
@@ -1213,7 +1213,7 @@ export default function Dashboard() {
       const jobParam = params.get('job');
 
       // 1. Sync active tab
-      const validTabs: TabId[] = ['approved', 'pending', 'rejected', 'human_review', 'settings', 'analytics', 'policy', 'resume'];
+      const validTabs: TabId[] = ['approved', 'new_today', 'pending', 'rejected', 'human_review', 'settings', 'analytics', 'policy', 'resume'];
       if (tabParam && validTabs.includes(tabParam as TabId)) {
         if (tabParam !== activeTab) {
           handleTabChange(tabParam as TabId);
@@ -1811,6 +1811,10 @@ export default function Dashboard() {
     () => dedupedJobs.filter(j => !j.archived),
     [dedupedJobs]
   );
+  const newTodayJobs = useMemo(() => {
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    return dedupedJobs.filter(j => !j.archived && j.scraped_at && new Date(j.scraped_at).getTime() >= oneDayAgo);
+  }, [dedupedJobs]);
   const rejectedJobs = useMemo(
     () => dedupedJobs.filter(j => !j.archived && j.apply_decision === 'DO_NOT_APPLY'),
     [dedupedJobs]
@@ -1843,11 +1847,13 @@ export default function Dashboard() {
     let list =
       activeTab === 'approved'
         ? approvedJobs
-        : activeTab === 'rejected'
-          ? rejectedJobs
-          : activeTab === 'human_review'
-            ? humanReviewJobs
-            : pendingJobs;
+        : activeTab === 'new_today'
+          ? newTodayJobs
+          : activeTab === 'rejected'
+            ? rejectedJobs
+            : activeTab === 'human_review'
+              ? humanReviewJobs
+              : pendingJobs;
 
     // Filter out stale/closed jobs if showActiveOnly is enabled
     if (activeTab === 'approved' && showActiveOnly) {
@@ -1920,7 +1926,7 @@ export default function Dashboard() {
       }
     });
   }, [
-    activeTab, approvedJobs, rejectedJobs, humanReviewJobs, pendingJobs,
+    activeTab, approvedJobs, newTodayJobs, rejectedJobs, humanReviewJobs, pendingJobs,
     showActiveOnly, selectedSourceFilter, selectedRoleFilter,
     confidenceBandFilter, remoteOnlyFilter, debouncedSearchTerm,
     scrapedTimeframe, sortBy,
@@ -2413,7 +2419,16 @@ export default function Dashboard() {
                     : 'text-slate-400 hover:text-slate-200'
                   }`}
               >
-                Approved ({approvedJobs.length})
+                All Jobs ({approvedJobs.length})
+              </button>
+              <button
+                onClick={() => handleTabChange('new_today')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'new_today'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                🆕 New Today ({newTodayJobs.length})
               </button>
               <button
                 onClick={() => handleTabChange('human_review')}

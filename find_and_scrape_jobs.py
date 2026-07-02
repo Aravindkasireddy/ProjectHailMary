@@ -2679,14 +2679,9 @@ def build_yahoo_queries(title, search_cfg):
     # Group 6: Custom Subdomain & Career Page Discovery
     g6 = f'"{title}" {us} (inurl:jobs OR inurl:careers OR inurl:people OR inurl:talent)'
     
-    core = [g1, g2, g3, g4, g5, g6]
-    
-    # Optional remote job boards
-    if search_cfg.get("include_remote_primary_boards", True):
-        g_remote = f'"{title}" {us} (site:weworkremotely.com OR site:remote.co)'
-        core.append(g_remote)
-        
-    return core
+    # remote.co and WeWorkRemotely removed — general remote job boards with
+    # low OPT-sponsor signal; direct ATS scraping covers far more and better.
+    return [g1, g2, g3, g4, g5, g6]
 
 
 def expand_target_titles_with_gemini(target_titles, api_key=None):
@@ -2776,8 +2771,6 @@ _DOMAIN_TO_ATS_SOURCE = (
     ("ashbyhq.com", "ashby"),
     ("workable.com", "workable"),
     ("smartrecruiters.com", "smartrecruiters"),
-    ("weworkremotely.com", "weworkremotely"),
-    ("remote.co", "remote_co"),
     ("linkedin.com", "linkedin"),
     ("workatastartup.com", "ycombinator"),
 )
