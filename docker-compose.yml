@@ -26,6 +26,7 @@ services:
     restart: unless-stopped
 
   web:
+    image: ${WEB_IMAGE:-}
     build:
       context: ./dashboard
       dockerfile: Dockerfile
