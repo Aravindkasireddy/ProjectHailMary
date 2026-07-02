@@ -2235,11 +2235,6 @@ def scrape_linkedin(url):
             return None
         final_url = resolved_url
 
-        # Drop explicit junior/entry-level postings (<5 years experience).
-        if _is_junior_experience(title, jd_text):
-            log(f"Dropping junior-scoped LinkedIn job: {title} at {company}")
-            return None
-
         return {
             "job_title": title,
             "company_name": company,
