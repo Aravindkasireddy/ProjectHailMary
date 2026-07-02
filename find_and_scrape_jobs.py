@@ -438,7 +438,8 @@ def search_serper(query):
         "Content-Type": "application/json"
     }
     payload = {
-        "q": query
+        "q": query,
+        "num": 100,  # max results per query — same quota cost as default 10
     }
     if PAST_24H:
         payload["tbs"] = "qdr:d"

@@ -721,14 +721,38 @@ def classify_job_dynamically(job):
         "Site Reliability Engineer (SRE)": 0,
         "Continuous Integration (CI/CD)": 0,
         "System Engineer": 0,
+        "Cloud Security Engineer": 0,
+        "Threat Detection Engineer": 0,
+        "Fraud Data Scientist": 0,
+        "Application Security Engineer": 0,
         "Database Engineer": 0,
         "Cloud Database Engineer": 0,
     }
-    
+
+    # New security/fraud/detection title signals
+    if "cloud security" in title:
+        label_scores["Cloud Security Engineer"] += 10
+    if any(k in title for k in ["detection engineer", "threat detection", "detection and response"]):
+        label_scores["Threat Detection Engineer"] += 10
+    if any(k in title for k in ["fraud", "aml", "anti-money", "risk scientist", "risk data"]):
+        label_scores["Fraud Data Scientist"] += 10
+    if any(k in title for k in ["application security", "appsec", "app sec"]):
+        label_scores["Application Security Engineer"] += 10
+
+    # New security/fraud description signals
+    if any(k in desc for k in ["wiz", "prisma cloud", "cspm", "cwpp", "cloud security posture", "aws security hub", "defender for cloud"]):
+        label_scores["Cloud Security Engineer"] += 3
+    if any(k in desc for k in ["mitre att&ck", "ttp", "detection rule", "siem", "splunk", "sentinel", "kql", "spl", "threat hunting"]):
+        label_scores["Threat Detection Engineer"] += 3
+    if any(k in desc for k in ["fraud detection", "aml", "anomaly detection", "risk model", "transaction monitoring", "fraud risk"]):
+        label_scores["Fraud Data Scientist"] += 3
+    if any(k in desc for k in ["sast", "dast", "sca", "snyk", "checkmarx", "veracode", "burp suite", "owasp"]):
+        label_scores["Application Security Engineer"] += 3
+
     # Simple keyword mapping
     if "devsecops" in title:
         label_scores["DevSecOps"] += 10
-    elif "secops" in title or ("security" in title and "engineer" in title):
+    elif "secops" in title or ("security" in title and "engineer" in title and "cloud" not in title and "application" not in title):
         label_scores["DevSecOps"] += 8
         label_scores["Cloud Infrastructure Engineer"] += 2
         

@@ -36,6 +36,10 @@ DevSecOps
 Site Reliability Engineer (SRE)
 Continuous Integration (CI/CD)
 System Engineer
+Cloud Security Engineer
+Threat Detection Engineer
+Fraud Data Scientist
+Application Security Engineer
 OutOfScope
 
 ---
@@ -1187,6 +1191,10 @@ cicd_score = 0
 sre_score = 0
 devsecops_score = 0
 system_score = 0
+cloud_security_score = 0
+threat_detection_score = 0
+fraud_ds_score = 0
+appsec_score = 0
 
 ---
 
@@ -1271,6 +1279,50 @@ SYSTEM WORK EVIDENCE
 - manage AD/SSSD, storage mounts/capacity, firewall/DNS basics, monitoring/logging, and runbooks
 
 system_score += 2
+
+--------------------------------------------------
+
+CLOUD SECURITY WORK EVIDENCE
+
+- secure cloud environments (AWS/Azure/GCP): IAM, SCPs, security groups, VPC, network policies, encryption at rest/in-transit
+- use cloud-native security tooling: Wiz, Prisma Cloud, AWS Security Hub, Defender for Cloud, GCP Security Command Center
+- detect misconfigurations, enforce compliance frameworks (SOC2, CIS, NIST), manage CSPM/CWPP tooling
+- conduct threat modeling, cloud penetration testing, or cloud security architecture reviews
+
+cloud_security_score += 3
+
+--------------------------------------------------
+
+THREAT DETECTION WORK EVIDENCE
+
+- build or tune detection rules, SIEM queries (KQL, SPL), or SOAR playbooks
+- investigate alerts, triage incidents, perform threat hunting across logs/EDR/NDR data
+- work with MITRE ATT&CK framework, TTPs, detection engineering lifecycle, or red/purple team exercises
+- operate Splunk, Sentinel, CrowdStrike, Elastic SIEM, or equivalent detection platforms
+
+threat_detection_score += 3
+
+--------------------------------------------------
+
+FRAUD / SECURITY DATA SCIENCE WORK EVIDENCE
+
+- build ML/statistical models for fraud detection, AML, risk scoring, anomaly detection, or transaction monitoring
+- work with Python, SQL, machine learning pipelines, feature engineering for fraud/risk signals
+- analyze financial transactions, user behavior, or network activity for suspicious patterns
+- deploy fraud models to production, monitor drift, improve recall/precision on fraud labels
+
+fraud_ds_score += 3
+
+--------------------------------------------------
+
+APPLICATION SECURITY WORK EVIDENCE
+
+- perform SAST, DAST, SCA, penetration testing, or code security review on application code
+- integrate security into SDLC: threat modeling, secure code review, developer security training
+- use tools like Snyk, Checkmarx, Veracode, Burp Suite, OWASP ZAP, or SonarQube
+- manage vulnerability remediation, CVE triage, or bug bounty programs
+
+appsec_score += 3
 
 ---
 
@@ -1358,7 +1410,11 @@ Return ONLY valid JSON.
     "sre": 0,
     "security": 0,
     "devsecops": 0,
-    "system": 0
+    "system": 0,
+    "cloud_security": 0,
+    "threat_detection": 0,
+    "fraud_ds": 0,
+    "appsec": 0
   },
 
   "dominant_domains": [],

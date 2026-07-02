@@ -41,6 +41,10 @@ ALLOWED_STRONGEST_LABELS = frozenset(
         "Site Reliability Engineer (SRE)",
         "Continuous Integration (CI/CD)",
         "System Engineer",
+        "Cloud Security Engineer",
+        "Threat Detection Engineer",
+        "Fraud Data Scientist",
+        "Application Security Engineer",
         "OutOfScope",
     }
 )
