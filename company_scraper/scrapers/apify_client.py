@@ -200,14 +200,55 @@ def fetch_jobs_via_apify(
     return _normalize_items(items, company_hint)
 
 
+def _resolve_workday_board_url(careers_url: str) -> str:
+    """
+    If careers_url is a custom company domain (e.g. careers.usaa.com), fetch the
+    page and extract the embedded myworkdayjobs.com board URL from links/iframes/scripts.
+    Returns the resolved myworkdayjobs.com URL, or the original URL if not found.
+    The Apify Workday actor requires a myworkdayjobs.com URL — custom domains fail silently.
+    """
+    from urllib.parse import urlparse
+    import re as _re
+
+    host = urlparse(careers_url).netloc.lower()
+    if "myworkdayjobs.com" in host or "myworkdaysite.com" in host:
+        return careers_url  # already a native Workday URL
+
+    try:
+        from company_scraper.http_utils import request_with_retry
+        r = request_with_retry("GET", careers_url, timeout=15, max_attempts=2)
+        text = r.text or ""
+        # Look for myworkdayjobs.com board URLs embedded in HTML
+        matches = _re.findall(
+            r'https?://[a-zA-Z0-9._-]+\.(?:myworkdayjobs|myworkdaysite)\.com/[^\s\'"<>]+',
+            text
+        )
+        if matches:
+            # Prefer board-level URLs (no /job/ in path) over individual job links
+            board_urls = [m for m in matches if "/job/" not in m.lower()]
+            best = (board_urls or matches)[0].rstrip("/?,;")
+            logging.getLogger("company_scraper").info(
+                "Resolved Workday board URL: %s -> %s", careers_url, best
+            )
+            return best
+    except Exception as e:
+        logging.getLogger("company_scraper").debug(
+            "Workday board URL resolution failed for %s: %s", careers_url, e
+        )
+    return careers_url
+
+
 def fetch_workday_jobs_via_apify(
     careers_url: str, company_hint: str = "", max_jobs: int = 500
 ) -> list[dict[str, Any]]:
     """Run the dedicated Workday jobs actor against a myworkdayjobs.com /
     myworkdaysite.com careers URL. Same output shape as ``fetch_jobs_via_apify``.
+    Automatically resolves custom company domains to their myworkdayjobs.com
+    board URL before calling the actor (custom domains fail silently in Apify).
     """
+    resolved_url = _resolve_workday_board_url(careers_url)
     items = run_actor(
         WORKDAY_JOBS_ACTOR,
-        {"startUrls": [careers_url], "maxJobsPerUrl": max_jobs},
+        {"startUrls": [resolved_url], "maxJobsPerUrl": max_jobs},
     )
     return _normalize_items(items, company_hint)
