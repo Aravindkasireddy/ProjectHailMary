@@ -62,8 +62,10 @@ def test_linkedin_genuine_job_is_accepted(monkeypatch):
         "</body></html>"
     )
     monkeypatch.setattr(f, "fetch_with_playwright", lambda url: html)
-    monkeypatch.setattr(f, "resolve_career_link", lambda *a, **k: None)
+    monkeypatch.setattr(f, "resolve_career_link", lambda *a, **k: "https://boards.greenhouse.io/acme/jobs/1")
+    monkeypatch.setattr(f, "_resolved_career_url_is_live", lambda url: True)
     result = f.scrape_linkedin("https://www.linkedin.com/jobs/view/12345")
     assert result is not None
     assert result["job_title"] == "DevOps Engineer"
     assert result["company_name"] == "Acme Corp"
+    assert "greenhouse.io" in result["job_url"]

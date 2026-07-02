@@ -1131,38 +1131,13 @@ def main():
         if "req_id_override" in cls:
             job["requirement_id"] = cls["req_id_override"]
             
-        # Approved-category gate
-        allowed_categories = {
-            "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
-            "Cloud Infrastructure Engineer", "DevSecOps",
-            "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
-            "System Engineer"
-        }
-        if (job["apply_decision"] == "APPLY" and 
-            len(job["red_flags"]) == 0 and 
-            job["strongest_label"] in allowed_categories and
-            job["job_url"] and
-            job["requirement_id"] and
-            job["requirement_id"] != "Unknown"):
+        # Store all jobs regardless of Gemini result — user runs their own
+        # LLM classifier separately. Gemini label is preserved as a signal
+        # but does not gate what gets written.
+        if job["job_url"]:
             approved_jobs.append(job)
-            
-    # Final sanity check: ensure no invalid jobs are written to approved_jobs.json
-    from scripts.scrape_and_filter_candidates import check_red_flags
-    allowed_categories = {
-        "DevOps Engineer", "Cloud Automation Engineer", "Platform Engineering",
-        "Cloud Infrastructure Engineer", "DevSecOps",
-        "Site Reliability Engineer (SRE)", "Continuous Integration (CI/CD)",
-        "System Engineer"
-    }
-    approved_jobs = [
-        j for j in approved_jobs
-        if j.get("apply_decision") == "APPLY" and
-           len(j.get("red_flags", [])) == 0 and
-           j.get("strongest_label") in allowed_categories and
-           len(check_red_flags(j)) == 0
-    ]
-    
-    # Write to approved_jobs.json
+
+    # Write ALL classified jobs to approved_jobs.json (no apply_decision gate).
     _t0 = time.perf_counter()
     output_path = str(resolve_path(WORKSPACE / "approved_jobs.json"))
     with open(output_path, "w") as f:
@@ -1171,11 +1146,11 @@ def main():
         "operation_name": "save_to_json", "stage": "classify",
         "duration_ms": int((time.perf_counter() - _t0) * 1000),
         "success": True, "jobs_processed": len(approved_jobs),
-        "metadata": {"jobs_in": len(jobs), "jobs_approved": len(approved_jobs)},
+        "metadata": {"jobs_in": len(jobs), "jobs_stored": len(approved_jobs)},
     })
 
     print(f"Successfully classified {len(jobs)} candidates.")
-    print(f"Saved {len(approved_jobs)} approved jobs to {output_path}:")
+    print(f"Saved {len(approved_jobs)} jobs to {output_path} (all stored regardless of decision):")
     for j in approved_jobs:
         print(f"  - [{j['company_name']}] {j['job_title']} ({j['strongest_label']}) - Req ID: {j['requirement_id']}")
 

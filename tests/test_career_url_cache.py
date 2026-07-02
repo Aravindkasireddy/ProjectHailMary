@@ -225,9 +225,8 @@ def test_failed_liveness_check_invalidates_cache_and_emits_event(tmp_path, monke
     monkeypatch.setattr(f, "_resolved_career_url_is_live", lambda url: False)
 
     result = f.scrape_linkedin("https://www.linkedin.com/jobs/view/12345")
-    assert result is not None
-    # Falls back to the real LinkedIn URL, exactly as the pre-cache behavior did.
-    assert "linkedin.com" in result["job_url"]
+    # Job is dropped entirely — no LinkedIn URL fallback; direct ATS URL required.
+    assert result is None
 
     assert cuc.get(str(tmp_path), "acme") is None
 

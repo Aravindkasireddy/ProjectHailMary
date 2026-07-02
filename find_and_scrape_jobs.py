@@ -2227,8 +2227,19 @@ def scrape_linkedin(url):
                         cache_invalidation_reason="failed_liveness_check",
                     )
                 resolved_url = None
-        final_url = resolved_url if resolved_url else fetch_url
-        
+        # Drop the job if we couldn't resolve to a direct ATS URL — a LinkedIn
+        # URL fallback means the applicant lands back on LinkedIn, not the
+        # company's hiring system. User wants direct-apply links only.
+        if not resolved_url:
+            log(f"Dropping LinkedIn job (no ATS URL resolved): {title} at {company}")
+            return None
+        final_url = resolved_url
+
+        # Drop explicit junior/entry-level postings (<5 years experience).
+        if _is_junior_experience(title, jd_text):
+            log(f"Dropping junior-scoped LinkedIn job: {title} at {company}")
+            return None
+
         return {
             "job_title": title,
             "company_name": company,
@@ -3109,8 +3120,44 @@ _EXCLUDED_JOB_TITLE_RES = [
     re.compile(r"\bcloud\s+database\b", re.I),
     re.compile(r"\bdba\b", re.I),
     re.compile(r"cloud\s+network(ing)?\s+engineer", re.I),
-    re.compile(r"cloud\s+security\s+engineer", re.I),
+    # cloud security engineer removed — now a target role
 ]
+
+# Junior/entry-level signals in job title that indicate <5 years scope.
+# Only title-level signals here; JD-level experience parsing is in _is_junior_experience().
+_JUNIOR_TITLE_RES = [
+    re.compile(r"\bjunior\b", re.I),
+    re.compile(r"\bjr\.?\b", re.I),
+    re.compile(r"\bentry[\s-]level\b", re.I),
+    re.compile(r"\bnew\s+grad\b", re.I),
+    re.compile(r"\bintern(ship)?\b", re.I),
+    re.compile(r"\bapprentice\b", re.I),
+    re.compile(r"\bassociate\s+(engineer|developer|analyst)\b", re.I),
+]
+
+# Matches explicit low-experience requirements in JD text: "0-2 years", "1-3 years", etc.
+_JUNIOR_EXPERIENCE_RE = re.compile(
+    r"\b([012])\s*[-–to]+\s*([1-3])\s*years?\s*(of\s+)?(experience|exp\.?)\b"
+    r"|\b(0|1|2)\s*years?\s*(of\s+)?(experience|exp\.?)\b"
+    r"|\b(zero|one|two)\s*years?\s*(of\s+)?(experience|exp\.?)\b",
+    re.I
+)
+
+def _is_junior_experience(job_title: str, job_description: str) -> bool:
+    """
+    Returns True if the job is explicitly scoped to <5 years experience.
+    Keeps jobs with 5+ years, senior/staff/principal/lead, or no mention at all.
+    Conservative: only rejects when there's an explicit low-year requirement.
+    """
+    title = (job_title or "").lower()
+    # Title-level junior signals
+    if any(rx.search(title) for rx in _JUNIOR_TITLE_RES):
+        return True
+    # JD-level: explicit "X-Y years" where both ends are ≤3
+    desc = (job_description or "")[:3000]  # only scan the first 3k chars
+    if _JUNIOR_EXPERIENCE_RE.search(desc):
+        return True
+    return False
 
 
 def _stem_engineering(text):
@@ -3137,7 +3184,8 @@ _RETIRED_ROLE_TITLE_PATTERNS = (
     "machine learning engineer", "ml engineer",
     "mlops", "aiops", "ai platform engineer",
     "database engineer", "dba engineer", "database administrator",
-    "cloud network engineer", "cloud security engineer",
+    "cloud network engineer",
+    # "cloud security engineer" removed — now a target role
 )
 
 def is_target_job(job_title, target_titles):

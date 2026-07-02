@@ -1805,12 +1805,14 @@ export default function Dashboard() {
   // (react-hooks/preserve-manual-memoization) refuses to trust a manual
   // useMemo whose dependencies aren't themselves provably stable.
   const dedupedJobs = useMemo(() => jobs.filter(j => !j.is_duplicate), [jobs]);
+  // Show ALL jobs — Gemini label is informational only, not a gate.
+  // User runs their own LLM classifier to make final apply decisions.
   const approvedJobs = useMemo(
-    () => dedupedJobs.filter(j => !j.archived && j.apply_decision === 'APPLY' && (!j.red_flags || j.red_flags.length === 0)),
+    () => dedupedJobs.filter(j => !j.archived),
     [dedupedJobs]
   );
   const rejectedJobs = useMemo(
-    () => dedupedJobs.filter(j => !j.archived && (j.apply_decision === 'DO_NOT_APPLY' || (j.red_flags && j.red_flags.length > 0))),
+    () => dedupedJobs.filter(j => !j.archived && j.apply_decision === 'DO_NOT_APPLY'),
     [dedupedJobs]
   );
   const pendingJobs = useMemo(

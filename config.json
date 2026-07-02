@@ -8,7 +8,21 @@
     "DevSecOps",
     "Site Reliability Engineer (SRE)",
     "Continuous Integration (CI/CD)",
-    "System Engineer"
+    "System Engineer",
+    "Fraud Data Scientist",
+    "Fraud Analytics Data Scientist",
+    "Risk Data Scientist",
+    "AML Data Scientist",
+    "Fraud Risk Data Scientist",
+    "Detection Engineer",
+    "Threat Detection Engineer",
+    "Detection and Response Engineer",
+    "Security Detection Engineer",
+    "Cloud Security Engineer",
+    "Cloud Security Analyst",
+    "Cloud Security Architect",
+    "DevSecOps Engineer",
+    "Application Security Engineer"
   ],
   "scheduler": {
     "enabled": true,

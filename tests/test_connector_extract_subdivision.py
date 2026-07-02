@@ -48,8 +48,9 @@ def test_scrape_linkedin_emits_html_parsing_and_career_resolution_events(tmp_pat
     monkeypatch.setattr(f, "fetch_with_playwright", lambda url: html)
     monkeypatch.setattr(f, "resolve_career_link", lambda *a, **k: None)
 
+    # Job is dropped when ATS URL can't be resolved — no LinkedIn URL fallback.
     result = f.scrape_linkedin("https://www.linkedin.com/jobs/view/12345")
-    assert result is not None
+    assert result is None
 
     import json
 
