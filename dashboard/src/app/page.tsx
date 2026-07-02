@@ -1811,10 +1811,11 @@ export default function Dashboard() {
     () => dedupedJobs.filter(j => !j.archived),
     [dedupedJobs]
   );
+  const [sessionStartMs] = useState(() => Date.now());
   const newTodayJobs = useMemo(() => {
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const oneDayAgo = sessionStartMs - 24 * 60 * 60 * 1000;
     return dedupedJobs.filter(j => !j.archived && j.scraped_at && new Date(j.scraped_at).getTime() >= oneDayAgo);
-  }, [dedupedJobs]);
+  }, [dedupedJobs, sessionStartMs]);
   const rejectedJobs = useMemo(
     () => dedupedJobs.filter(j => !j.archived && j.apply_decision === 'DO_NOT_APPLY'),
     [dedupedJobs]
