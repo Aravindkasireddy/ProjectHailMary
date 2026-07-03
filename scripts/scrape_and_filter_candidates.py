@@ -1143,7 +1143,11 @@ async def main():
         semaphore = asyncio.Semaphore(5)
 
         async with async_playwright() as p:
-            browser = await p.webkit.launch(headless=True)
+            try:
+                browser = await p.webkit.launch(headless=True)
+            except Exception as e:
+                print(f"WebKit launch failed ({e}), falling back to Chromium", flush=True)
+                browser = await p.chromium.launch(headless=True)
             async with httpx.AsyncClient(follow_redirects=True) as client:
                 tasks = [
                     process_single_job(semaphore, client, browser, job, idx, len(jobs))
