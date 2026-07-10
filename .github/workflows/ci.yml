@@ -132,6 +132,11 @@ jobs:
           command_timeout: 20m
           script: |
             set -e
+            # Prune dangling Docker layers before every deploy to avoid disk-full failures.
+            # --filter until=24h keeps anything created in the last 24h (covers the
+            # running containers' own layers); dangling images/cache older than that are safe to drop.
+            docker image prune -f --filter "until=24h" || true
+            docker builder prune -f --filter "until=24h" || true
             cd ${{ secrets.PROD_APP_DIR }}
             git fetch origin main
             git reset --hard origin/main
