@@ -153,6 +153,11 @@ def stale_check_worker(email=None, user_id=None):
             state["status"] = "idle"
             return
 
+        from datetime import datetime, timezone, timedelta
+        AUTO_ARCHIVE_DAYS = 30
+        now = datetime.now(timezone.utc)
+        auto_archived = 0
+
         updated_jobs = []
         for idx, job in enumerate(approved_jobs):
             url = job.get("job_url")
@@ -166,9 +171,24 @@ def stale_check_worker(email=None, user_id=None):
             else:
                 job["stale"] = False
 
+            # Auto-archive jobs that are stale AND older than AUTO_ARCHIVE_DAYS
+            scraped_at = job.get("scraped_at") or job.get("created_at")
+            should_archive = False
+            if is_stale and scraped_at:
+                try:
+                    age = now - datetime.fromisoformat(scraped_at.replace("Z", "+00:00"))
+                    if age.days >= AUTO_ARCHIVE_DAYS:
+                        should_archive = True
+                except Exception:
+                    pass
+
             if url and sb is not None:
                 try:
-                    sb.table("jobs").update({"stale": job["stale"]}).eq("job_url", url).eq(
+                    update = {"stale": job["stale"]}
+                    if should_archive:
+                        update["archived"] = True
+                        auto_archived += 1
+                    sb.table("jobs").update(update).eq("job_url", url).eq(
                         "user_id", str(user_id)
                     ).execute()
                 except Exception as e:
@@ -178,6 +198,9 @@ def stale_check_worker(email=None, user_id=None):
             state["completed"] = idx + 1
             state["progress"] = int((idx + 1) / len(approved_jobs) * 100)
             time.sleep(1)
+
+        if auto_archived:
+            print(f"Stale check worker: auto-archived {auto_archived} jobs older than {AUTO_ARCHIVE_DAYS} days")
 
         with open(approved_path, 'w') as f:
             json.dump(updated_jobs, f, indent=2)

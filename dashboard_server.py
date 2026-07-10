@@ -2216,6 +2216,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode('utf-8'))
             return
 
+        # API: Update application tracking status
+        elif parsed_url.path == "/api/job/application-status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+
+            job_url = (payload.get("job_url") or "").strip()
+            status = (payload.get("application_status") or "").strip() or None
+            notes = (payload.get("application_notes") or "").strip() or None
+            valid_statuses = {None, "applied", "phone_screen", "interview", "offer", "rejected"}
+            if status not in valid_statuses:
+                self.wfile.write(json.dumps({"success": False, "message": f"Invalid status: {status}"}).encode("utf-8"))
+                return
+            if not job_url:
+                self.wfile.write(json.dumps({"success": False, "message": "Missing job_url"}).encode("utf-8"))
+                return
+
+            uid = self.get_auth_user_id()
+            try:
+                from supabase_client import get_supabase_client
+                from datetime import datetime, timezone
+                sb = get_supabase_client()
+                update: dict = {"application_status": status}
+                if notes is not None:
+                    update["application_notes"] = notes
+                if status == "applied" and payload.get("applied_at"):
+                    update["applied_at"] = payload["applied_at"]
+                elif status == "applied":
+                    update["applied_at"] = datetime.now(timezone.utc).isoformat()
+                elif status is None:
+                    update["applied_at"] = None
+                sb.table("jobs").update(update).eq("job_url", job_url).eq("user_id", str(uid)).execute()
+                self.wfile.write(json.dumps({"success": True, "status": status}).encode("utf-8"))
+            except Exception as e:
+                self.wfile.write(json.dumps({"success": False, "message": str(e)}).encode("utf-8"))
+            return
+
         # API: Save base resume
         elif parsed_url.path == "/api/resume":
             self.send_response(200)

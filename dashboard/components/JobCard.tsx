@@ -86,9 +86,11 @@ export interface JobCardJob {
     checked_at: string;
     http_status?: number | null;
   };
+  application_status?: 'applied' | 'phone_screen' | 'interview' | 'offer' | 'rejected' | null;
+  applied_at?: string | null;
 }
 
-export type JobCardTabId = 'approved' | 'new_today' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
+export type JobCardTabId = 'approved' | 'new_today' | 'applications' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
 
 interface JobCardProps {
   job: JobCardJob;
@@ -106,6 +108,7 @@ interface JobCardProps {
   onOpenModal: (job: JobCardJob) => void;
   onApproveOverride: (job: JobCardJob) => void;
   onDeleteJob: (jobUrl: string) => void;
+  onUpdateApplicationStatus: (jobUrl: string, status: string | null) => void;
 }
 
 /** Single job card rendered in the job list grid (approved/pending/rejected/human_review tabs). */
@@ -125,6 +128,7 @@ export default function JobCard({
   onOpenModal,
   onApproveOverride,
   onDeleteJob,
+  onUpdateApplicationStatus,
 }: JobCardProps) {
   return (
     <div
@@ -672,6 +676,52 @@ export default function JobCard({
               </button>
             )
           )}
+
+          {/* Application Status Button */}
+          <div className="relative group">
+            <button
+              className={`inline-flex items-center px-2 py-1.5 rounded-xl text-xs font-semibold border transition-colors shrink-0 ${
+                job.application_status
+                  ? 'bg-blue-900/60 border-blue-700/60 text-blue-300'
+                  : 'bg-slate-800/60 border-slate-700/40 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Track application status"
+            >
+              {job.application_status
+                ? { applied: '📨', phone_screen: '📞', interview: '🎯', offer: '🎉', rejected: '❌' }[job.application_status]
+                : '📋'
+              }{' '}
+              {job.application_status
+                ? { applied: 'Applied', phone_screen: 'Phone Screen', interview: 'Interview', offer: 'Offer', rejected: 'Rejected' }[job.application_status]
+                : 'Track'
+              }
+            </button>
+            <div className="absolute bottom-full right-0 mb-1 hidden group-hover:flex flex-col bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 min-w-[130px] py-1">
+              {([
+                ['applied', '📨 Applied'],
+                ['phone_screen', '📞 Phone Screen'],
+                ['interview', '🎯 Interview'],
+                ['offer', '🎉 Offer'],
+                ['rejected', '❌ Rejected'],
+              ] as const).map(([s, label]) => (
+                <button
+                  key={s}
+                  onClick={() => onUpdateApplicationStatus(job.job_url, s)}
+                  className={`px-3 py-1.5 text-left text-xs hover:bg-slate-700 transition-colors ${job.application_status === s ? 'text-blue-400 font-bold' : 'text-slate-300'}`}
+                >
+                  {label}
+                </button>
+              ))}
+              {job.application_status && (
+                <button
+                  onClick={() => onUpdateApplicationStatus(job.job_url, null)}
+                  className="px-3 py-1.5 text-left text-xs text-red-400 hover:bg-slate-700 transition-colors border-t border-slate-700"
+                >
+                  ✕ Clear status
+                </button>
+              )}
+            </div>
+          </div>
 
           {/* Delete/Archive Button */}
           {authRole === 'admin' && (

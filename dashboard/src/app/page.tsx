@@ -45,7 +45,7 @@ import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
-type TabId = 'approved' | 'new_today' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
+type TabId = 'approved' | 'new_today' | 'applications' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
 
 interface DecisionPayload {
   apply_decision?: string;
@@ -104,6 +104,9 @@ interface Job {
     checked_at: string;
     http_status?: number | null;
   };
+  application_status?: 'applied' | 'phone_screen' | 'interview' | 'offer' | 'rejected' | null;
+  applied_at?: string | null;
+  application_notes?: string | null;
 }
 
 interface SponsorMetadata {
@@ -1213,7 +1216,7 @@ export default function Dashboard() {
       const jobParam = params.get('job');
 
       // 1. Sync active tab
-      const validTabs: TabId[] = ['approved', 'new_today', 'pending', 'rejected', 'human_review', 'settings', 'analytics', 'policy', 'resume'];
+      const validTabs: TabId[] = ['approved', 'new_today', 'applications', 'pending', 'rejected', 'human_review', 'settings', 'analytics', 'policy', 'resume'];
       if (tabParam && validTabs.includes(tabParam as TabId)) {
         if (tabParam !== activeTab) {
           handleTabChange(tabParam as TabId);
@@ -1462,6 +1465,32 @@ export default function Dashboard() {
       setJobs(prev => prev.map(j => j.job_url === job_url ? { ...j, archived: true } : j));
     } catch {
       showStatus('Failed to archive job.', 'error');
+    }
+  };
+
+  const APPLICATION_STATUS_LABELS: Record<string, string> = {
+    applied: '📨 Applied',
+    phone_screen: '📞 Phone Screen',
+    interview: '🎯 Interview',
+    offer: '🎉 Offer',
+    rejected: '❌ Rejected',
+  };
+
+  const updateApplicationStatus = async (job_url: string, status: string | null) => {
+    try {
+      const update: Record<string, string | null> = { application_status: status };
+      if (status === 'applied') update.applied_at = new Date().toISOString();
+      if (status === null) update.applied_at = null;
+      const { error } = await supabase.from('jobs').update(update).eq('job_url', job_url);
+      if (error) throw error;
+      setJobs(prev => prev.map(j => j.job_url === job_url ? {
+        ...j,
+        application_status: status as Job['application_status'],
+        applied_at: update.applied_at !== undefined ? update.applied_at : j.applied_at,
+      } : j));
+      showStatus(status ? `Status updated: ${APPLICATION_STATUS_LABELS[status]}` : 'Status cleared', 'success');
+    } catch {
+      showStatus('Failed to update application status.', 'error');
     }
   };
 
@@ -1816,6 +1845,10 @@ export default function Dashboard() {
     const oneDayAgo = sessionStartMs - 24 * 60 * 60 * 1000;
     return dedupedJobs.filter(j => !j.archived && j.scraped_at && new Date(j.scraped_at).getTime() >= oneDayAgo);
   }, [dedupedJobs, sessionStartMs]);
+  const applicationJobs = useMemo(
+    () => dedupedJobs.filter(j => !j.archived && j.application_status != null),
+    [dedupedJobs]
+  );
   const rejectedJobs = useMemo(
     () => dedupedJobs.filter(j => !j.archived && j.apply_decision === 'DO_NOT_APPLY'),
     [dedupedJobs]
@@ -1850,11 +1883,13 @@ export default function Dashboard() {
         ? approvedJobs
         : activeTab === 'new_today'
           ? newTodayJobs
-          : activeTab === 'rejected'
-            ? rejectedJobs
-            : activeTab === 'human_review'
-              ? humanReviewJobs
-              : pendingJobs;
+          : activeTab === 'applications'
+            ? applicationJobs
+            : activeTab === 'rejected'
+              ? rejectedJobs
+              : activeTab === 'human_review'
+                ? humanReviewJobs
+                : pendingJobs;
 
     // Filter out stale/closed jobs if showActiveOnly is enabled
     if (activeTab === 'approved' && showActiveOnly) {
@@ -1927,7 +1962,7 @@ export default function Dashboard() {
       }
     });
   }, [
-    activeTab, approvedJobs, newTodayJobs, rejectedJobs, humanReviewJobs, pendingJobs,
+    activeTab, approvedJobs, newTodayJobs, applicationJobs, rejectedJobs, humanReviewJobs, pendingJobs,
     showActiveOnly, selectedSourceFilter, selectedRoleFilter,
     confidenceBandFilter, remoteOnlyFilter, debouncedSearchTerm,
     scrapedTimeframe, sortBy,
@@ -2430,6 +2465,15 @@ export default function Dashboard() {
                   }`}
               >
                 🆕 New Today ({newTodayJobs.length})
+              </button>
+              <button
+                onClick={() => handleTabChange('applications')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'applications'
+                    ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                  }`}
+              >
+                📋 My Applications ({applicationJobs.length})
               </button>
               <button
                 onClick={() => handleTabChange('human_review')}
@@ -3036,6 +3080,75 @@ export default function Dashboard() {
                 );
               })()}
             </div>
+          ) : activeTab === 'applications' ? (
+            <div className="flex-1 p-4 overflow-auto">
+              <h2 className="text-lg font-bold text-white mb-4">📋 My Applications</h2>
+              {applicationJobs.length === 0 ? (
+                <div className="text-slate-400 text-sm text-center py-16">
+                  No applications tracked yet.<br/>
+                  Click &quot;Track Application&quot; on any job to start tracking.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  {(['applied', 'phone_screen', 'interview', 'offer', 'rejected'] as const).map(status => {
+                    const cols = applicationJobs.filter(j => j.application_status === status);
+                    const labels: Record<string, string> = {
+                      applied: '📨 Applied',
+                      phone_screen: '📞 Phone Screen',
+                      interview: '🎯 Interview',
+                      offer: '🎉 Offer',
+                      rejected: '❌ Rejected',
+                    };
+                    const colors: Record<string, string> = {
+                      applied: 'border-blue-500',
+                      phone_screen: 'border-yellow-500',
+                      interview: 'border-purple-500',
+                      offer: 'border-green-500',
+                      rejected: 'border-red-500',
+                    };
+                    return (
+                      <div key={status} className={`border-t-2 ${colors[status]} bg-slate-800/50 rounded-lg p-3`}>
+                        <div className="text-xs font-bold text-slate-300 mb-2">
+                          {labels[status]} <span className="text-slate-500">({cols.length})</span>
+                        </div>
+                        <div className="space-y-2">
+                          {cols.map(job => (
+                            <div key={job.job_url} className="bg-slate-700/70 rounded p-2 text-xs">
+                              <div className="font-semibold text-white truncate">{job.job_title}</div>
+                              <div className="text-slate-400 truncate">{job.company_name}</div>
+                              {job.applied_at && (
+                                <div className="text-slate-500 mt-1">
+                                  {new Date(job.applied_at).toLocaleDateString()}
+                                </div>
+                              )}
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {(['applied', 'phone_screen', 'interview', 'offer', 'rejected'] as const)
+                                  .filter(s => s !== status)
+                                  .map(s => (
+                                    <button
+                                      key={s}
+                                      onClick={() => updateApplicationStatus(job.job_url, s)}
+                                      className="px-1.5 py-0.5 rounded bg-slate-600 hover:bg-slate-500 text-slate-300 text-[10px] transition-colors"
+                                    >
+                                      → {labels[s].split(' ')[1]}
+                                    </button>
+                                  ))}
+                                <button
+                                  onClick={() => updateApplicationStatus(job.job_url, null)}
+                                  className="px-1.5 py-0.5 rounded bg-slate-600 hover:bg-red-700 text-slate-400 text-[10px] transition-colors"
+                                >
+                                  ✕ Remove
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           ) : activeTab === 'policy' ? (
             <PolicyPanel
               policyLoading={policyLoading}
@@ -3307,6 +3420,7 @@ export default function Dashboard() {
                           onOpenModal={openModal}
                           onApproveOverride={approveOverride}
                           onDeleteJob={deleteJob}
+                          onUpdateApplicationStatus={updateApplicationStatus}
                         />
                       </div>
                     ))}
