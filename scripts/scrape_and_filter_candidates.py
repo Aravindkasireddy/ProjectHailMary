@@ -68,35 +68,58 @@ def is_us_location(location_str):
     
     # Check for direct negative indicator match (e.g. EMEA, Canada, Europe, UK, etc.)
     negative_indicators = {
-        "europe", "uk", "london", "india", "germany", "france", "canada", "latam", 
-        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil", 
+        "europe", "uk", "london", "india", "germany", "france", "canada", "latam",
+        "emea", "apac", "australia", "asia", "singapore", "netherlands", "brazil",
         "spain", "poland", "ukraine", "philippines", "ireland", "tokyo", "japan",
-        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne", 
-        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo", 
+        "dublin", "toronto", "paris", "berlin", "munich", "sydney", "melbourne",
+        "bengaluru", "bangalore", "vancouver", "montreal", "bucharest", "sao paulo",
         "amsterdam", "krakow", "mexico", "sweden", "stockholm", "zurich",
         "pakistan", "lahore", "karachi", "islamabad", "italy", "rome", "milan",
         "portugal", "lisbon", "madrid", "barcelona", "china", "beijing",
         "shanghai", "hong kong", "taiwan", "taipei", "vietnam", "thailand", "bangkok",
         "croatia", "zagreb", "czech", "republic", "türkiye", "turkey", "noida",
         "argentina", "ankara", "mississauga", "copenhagen", "denmark", "south korea",
-        "korea", "belgrade", "serbia", "yerevan", "armenia"
+        "korea", "belgrade", "serbia", "yerevan", "armenia", "calgary", "ottawa",
+        "ontario", "british columbia", "quebec", "alberta", "pune", "hyderabad",
+        "chennai", "mumbai", "delhi", "gurugram", "gurgaon", "south america", "africa",
+        "middle east", "nz", "new zealand", "auckland", "dubai", "uae", "israel",
+        "tel aviv", "saudi arabia", "riyadh", "cape town", "johannesburg", "nairobi",
+        "vienna", "austria", "belgium", "brussels", "switzerland", "geneva", "greece",
+        "athens", "norway", "oslo", "finland", "helsinki", "malaysia", "indonesia",
+        "manila", "seoul", "jakarta", "kuala lumpur"
     }
-    
-    has_negative = any(ni in loc_lower for ni in negative_indicators)
+
+    # Use word-boundary regex — plain substring checks cause false positives:
+    # "uk" matches inside "Milwaukee"/"Tukwila", "la" matches inside "England".
+    def _term_present(term, text):
+        return re.search(r'\b' + re.escape(term) + r'\b', text) is not None
+
+    # Check explicit US evidence BEFORE the negative-indicator veto so that
+    # "Vienna, VA, United States" is not rejected because "vienna" is in the
+    # negative list — explicit US evidence always wins.
+    has_positive = any(_term_present(pi, loc_lower) for pi in us_indicators)
+    has_city = any(_term_present(city, loc_lower) for city in us_cities)
+    has_state_full = any(_term_present(state, loc_lower) for state in us_states_full)
+
+    has_state_abbr = False
+    for w in words:
+        if w in us_states_abbr:
+            if w in {"in", "or", "me", "la", "co", "ma"}:
+                if re.search(r'\b,\s*' + w + r'\b', loc_lower):
+                    has_state_abbr = True
+                    break
+            else:
+                has_state_abbr = True
+                break
+
+    if has_positive or has_city or has_state_full or has_state_abbr:
+        return True
+
+    has_negative = any(_term_present(ni, loc_lower) for ni in negative_indicators)
     if has_negative:
         return False
-        
-    has_positive = any(pi in loc_lower for pi in us_indicators)
-    if has_positive:
-        return True
-        
-    has_city = any(city in loc_lower for city in us_cities)
-    has_state_full = any(state in loc_lower for state in us_states_full)
-    
-    if has_city or has_state_full:
-        return True
-        
-    # Check individual words for states
+
+    # Check individual words for states (already handled above via has_state_abbr)
     for w in words:
         if w in us_states_abbr:
             # Avoid matching common words like "in", "or", "me", "la", "co" as states unless prefixed by a comma or space comma

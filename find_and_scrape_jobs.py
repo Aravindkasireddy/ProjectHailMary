@@ -3208,22 +3208,87 @@ def is_target_job(job_title, target_titles):
     return False
 
 
+def _build_indeed_rss_feeds(target_titles):
+    """Build Indeed RSS feed URLs for each target title (US only, last 7 days)."""
+    feeds = {}
+    for title in target_titles[:10]:  # cap at 10 to avoid quota abuse
+        q = quote_plus(title)
+        url = f"https://www.indeed.com/rss?q={q}&l=United+States&fromage=7&sort=date"
+        feeds[f"Indeed: {title}"] = url
+    return feeds
+
+
+def _parse_rss_feed(r_content, feed_name):
+    """Parse RSS XML, return list of (title, link, pub_date, description) tuples."""
+    import warnings
+    warnings.filterwarnings("ignore", module="bs4")
+    soup = BeautifulSoup(r_content, "html.parser")
+    items = soup.find_all("item")
+    results = []
+    for item in items:
+        title_el = item.find("title")
+        link_el = item.find("link")
+        desc_el = item.find("description")
+        pub_el = item.find("pubdate") or item.find("pubDate")
+        if not title_el or not link_el:
+            continue
+        results.append((
+            title_el.text.strip(),
+            link_el.text.strip(),
+            pub_el.text.strip() if pub_el else None,
+            desc_el.text if desc_el else "",
+        ))
+    return results
+
+
 def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
-    log("Fetching direct RSS feeds from WeWorkRemotely and Remote.co...")
+    log("Fetching RSS feeds: WeWorkRemotely, Remote.co, Indeed, Greenhouse/Lever boards...")
     discovered = []
     matched_count = 0
-    
-    feeds = {
+
+    config_data = load_config()
+    target_companies = config_data.get("target_companies", {})
+    greenhouse_slugs = target_companies.get("greenhouse", [])
+    lever_slugs = target_companies.get("lever", [])
+
+    static_feeds = {
         "WeWorkRemotely - All": "https://weworkremotely.com/remote-jobs.rss",
         "WeWorkRemotely - DevOps/SysAdmin": "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
-        "Remote.co": "https://remote.co/feed/?post_type=job_listing"
+        "Remote.co": "https://remote.co/feed/?post_type=job_listing",
     }
+
+    # Greenhouse boards expose RSS per company board
+    greenhouse_feeds = {
+        f"Greenhouse:{slug}": f"https://boards.greenhouse.io/{slug}/jobs.rss"
+        for slug in greenhouse_slugs
+    }
+
+    # Lever boards expose RSS per company
+    lever_feeds = {
+        f"Lever:{slug}": f"https://jobs.lever.co/{slug}/rss"
+        for slug in lever_slugs
+    }
+
+    # Indeed keyword RSS (US only)
+    indeed_feeds = _build_indeed_rss_feeds(target_titles)
+
+    feeds = {**static_feeds, **indeed_feeds, **greenhouse_feeds, **lever_feeds}
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/rss+xml, application/xml, text/xml, */*"
     }
-    
+
+    _non_us_phrases = [
+        "europe only", "uk only", "canada only", "asia only", "latam only",
+        "eu only", "apac only", "emea only", "germany only", "france only",
+        "outside us", "outside the us", "outside the united states",
+        "india only", "australia only", "south america only", "africa only",
+        "must be located in europe", "must be based in europe",
+        "must be located in uk", "must be based in uk",
+        "must be located in canada", "must be based in canada",
+    ]
+
     for feed_name, url in feeds.items():
         try:
             log(f"Fetching RSS feed: {feed_name}")
@@ -3231,59 +3296,77 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
             if r.status_code != 200:
                 log(f"Failed to fetch RSS feed {feed_name}: status code {r.status_code}")
                 continue
-            
-            import warnings
-            warnings.filterwarnings("ignore", module="bs4")
-            soup = BeautifulSoup(r.content, "html.parser")
-            items = soup.find_all("item")
+
+            items = _parse_rss_feed(r.content, feed_name)
             log(f"Found {len(items)} items in RSS feed: {feed_name}")
-            
-            for item in items:
-                title_elem = item.find("title")
-                link_elem = item.find("link")
-                desc_elem = item.find("description")
-                
-                if not title_elem or not link_elem:
-                    continue
-                
-                raw_title = title_elem.text.strip()
-                job_url = link_elem.text.strip()
-                
-                pub_date_elem = item.find("pubdate") or item.find("pubDate")
-                pub_date_str = pub_date_elem.text.strip() if pub_date_elem else None
+
+            is_greenhouse = feed_name.startswith("Greenhouse:")
+            is_lever = feed_name.startswith("Lever:")
+            is_indeed = feed_name.startswith("Indeed:")
+            slug = feed_name.split(":", 1)[1] if ":" in feed_name else ""
+
+            for raw_title, job_url, pub_date_str, raw_desc in items:
                 if not is_recent_date(pub_date_str):
                     continue
-                
+
                 if not is_target_job(raw_title, target_titles):
                     continue
-                
+
                 nu = normalize_job_url(job_url)
                 if not nu:
                     continue
                 if not add_if_new_url(nu, found_urls):
                     continue
-                
+
                 if dry_run:
                     matched_count += 1
                     log(f"  [DRY RUN MATCH] RSS {feed_name}: '{raw_title}' - {job_url}")
-                    append_dry_url({
-                        "job_url": job_url,
-                        "query": f"RSS: {feed_name}",
-                        "title_keyword": raw_title
-                    }, dry_urls)
+                    append_dry_url({"job_url": job_url, "query": f"RSS: {feed_name}", "title_keyword": raw_title}, dry_urls)
                     continue
-                
-                raw_desc = desc_elem.text if desc_elem else ""
+
                 jd_text = clean_text(raw_desc).strip()
-                
+                desc_lower = jd_text.lower()
+
+                # Drop explicitly non-US jobs
+                if any(kw in desc_lower for kw in _non_us_phrases):
+                    continue
+
+                # Derive company name and location per source
                 company_name = "Unknown"
                 job_title = raw_title
-                
-                if "weworkremotely" in job_url.lower():
+                location = "United States (Remote)"
+
+                if is_greenhouse:
+                    company_name = slug.replace("-", " ").title()
+                    location = "United States"
+                elif is_lever:
+                    company_name = slug.replace("-", " ").title()
+                    location = "United States"
+                elif is_indeed:
+                    # Indeed RSS: "Job Title - Company Name" or plain title
+                    if " - " in raw_title:
+                        parts = raw_title.rsplit(" - ", 1)
+                        job_title = parts[0].strip()
+                        company_name = parts[1].strip()
+                    # Extract location from description snippet
+                    loc_match = re.search(r'<location>([^<]+)</location>|([A-Z][a-z]+(?:,\s*[A-Z]{2})?)\s*(?:–|-)', raw_desc)
+                    if loc_match:
+                        loc_cand = (loc_match.group(1) or loc_match.group(2) or "").strip()
+                        if loc_cand and is_us_location(loc_cand):
+                            location = loc_cand
+                        elif loc_cand and not is_us_location(loc_cand):
+                            continue  # non-US Indeed job
+                elif "weworkremotely" in job_url.lower():
                     if ":" in raw_title:
                         parts = raw_title.split(":", 1)
                         company_name = parts[0].strip()
                         job_title = parts[1].strip()
+                    hq_match = re.search(r'Headquarters:\s*([^\n<]+)', raw_desc, re.IGNORECASE)
+                    if hq_match:
+                        hq_loc = hq_match.group(1).strip()
+                        if not is_us_location(hq_loc) and not any(ind in desc_lower for ind in ["united states", "us", "u.s.", "usa"]):
+                            continue
+                        location = f"{hq_loc} (Remote)"
                 elif "remote.co" in job_url.lower():
                     if " - " in raw_title:
                         title_parts = raw_title.split(" - ")
@@ -3295,40 +3378,12 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                                 job_title = p1
                     if company_name == "Unknown":
                         company_name = "Remote.co"
-                
-                # Geographic gating
-                desc_lower = jd_text.lower()
-                exclude_keywords = [
-                    "europe only", "uk only", "canada only", "asia only", "latam only", 
-                    "eu only", "apac only", "emea only", "germany only", "france only", 
-                    "outside us", "outside the us", "outside the united states",
-                    "india only", "australia only", "south america only", "africa only",
-                    "must be located in europe", "must be based in europe",
-                    "must be located in uk", "must be based in uk",
-                    "must be located in canada", "must be based in canada"
-                ]
-                if any(kw in desc_lower for kw in exclude_keywords):
-                    continue
-                
-                location = "Remote"
-                if "weworkremotely" in job_url.lower():
-                    hq_match = re.search(r'Headquarters:\s*([^\n<]+)', raw_desc, re.IGNORECASE)
-                    if hq_match:
-                        hq_loc = hq_match.group(1).strip()
-                        location = f"{hq_loc} (Remote)"
-                        if not is_us_location(hq_loc) and not any(ind in desc_lower for ind in ["united states", "us", "u.s.", "usa"]):
-                            continue
-                
+
                 parsed_url = urlparse(job_url)
                 path_parts = [p for p in parsed_url.path.split('/') if p]
                 req_id = path_parts[-1] if path_parts else "Unknown"
-                if "remote.co" in job_url.lower():
-                    uuid_match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', req_id)
-                    if uuid_match:
-                        req_id = uuid_match.group(1)
-                
+
                 desc_hash = compute_description_hash(jd_text)
-                
                 matched_count += 1
                 discovered.append({
                     "job_title": job_title,
@@ -3336,14 +3391,14 @@ def fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
                     "job_url": job_url,
                     "requirement_id": req_id,
                     "job_description": jd_text,
-                    "location_work_type": f"{location} (Remote)",
+                    "location_work_type": location,
                     "description_hash": desc_hash,
                     "scraped_at": get_cdt_now_iso(),
                     "posted_at": pub_date_str if pub_date_str else get_cdt_now_iso()
                 })
         except Exception as e:
             log(f"Error parsing RSS feed {feed_name}: {e}")
-            
+
     log(f"RSS Discovery complete. Found {matched_count} matching US jobs.")
     return discovered
 
