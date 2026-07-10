@@ -21,6 +21,7 @@ Single **monorepo**: Python sourcing pipeline + **`dashboard/`** Next.js UI. Dis
 | `scripts/scrape_runs.sql` | DDL + RLS for **`scrape_runs`** (also merged into `scripts/schema.sql`) |
 | `scripts/clear_local_jobsearch_data.sh` | **Wipe** local pipeline outputs (`*.json` job blobs, `data/`, `logs/`, `scratch/`, `dashboard/.next`). See [Local data vs Supabase](#local-data-vs-supabase). |
 | `find_and_scrape_jobs.py` | Yahoo `site:` discovery + ATS scrape → `scraped_jobs.json` |
+| `scripts/ats_aggregator.py` | Standalone CLI aggregator fetching directly from ATS APIs (Greenhouse, Lever, Ashby) using a target list of URLs. Features self-healing dynamic discovery and HTML metadata scraping for internal API tokens. |
 | `scripts/scrape_and_filter_candidates.py` | Re-scrape / validate + red-flag prefilter → `active_candidate_jobs.json`, `failed_candidate_jobs.json` |
 | `scripts/classify_and_save.py` | Gemini (optional) + rules → `approved_jobs.json` |
 | `company_scraper/` | On-demand **company-targeted** scrape: paste **company name**, **careers URL**, or **one job URL** → discovers listing pages (ATS + fallbacks), collects up to hundreds of roles, filters **IT-related** titles, upserts to Supabase `jobs` via `POST /api/scrape/company` (poll `GET /api/scrape/company/status`) |

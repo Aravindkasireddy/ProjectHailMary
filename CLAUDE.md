@@ -9,6 +9,7 @@ Multi-tenant job sourcing/matching platform for DevOps/SRE-type roles. Pipeline 
 
 ## Repo layout
 - `find_and_scrape_jobs.py` — Stage 1: Yahoo + ATS job discovery → `scraped_jobs.json`
+- `scripts/ats_aggregator.py` — Standalone ATS aggregator for discovering and fetching from Greenhouse/Lever/Ashby APIs given a target list of URLs. Uses HTML token scraping.
 - `scripts/scrape_and_filter_candidates.py` — Stage 2: re-scrape + regex red-flag filtering → `active_candidate_jobs.json` / `failed_candidate_jobs.json`
 - `scripts/classify_and_save.py` — Stage 3: Gemini/keyword classification → `approved_jobs.json`, upserts to Supabase `public.jobs`
 - `scripts/run_pipeline.sh` — orchestrates all 3 stages (`SKIP_SCRAPE=1`, `MAAS_USER_ID=...` env overrides)
