@@ -244,6 +244,11 @@ Use strong_signal_override = true only when responsibilities clearly justify ove
 
 Hard rule: if any item below is present, you MUST add the matching red flag and MUST set `apply_decision = DO_NOT_APPLY`.
 
+### Consulting / IT staffing company
+- If the hiring company is an IT outsourcing, body-shopping, or staff augmentation firm — not the end client — add red_flag: "IT consulting / staffing company — direct employment only" and set apply_decision = DO_NOT_APPLY.
+- Known firms in this category (non-exhaustive): Infosys, TCS / Tata Consultancy Services, Wipro, Cognizant, HCL / HCL Technologies, Tech Mahindra, Mphasis, Hexaware, Capgemini, Accenture, Atos, DXC Technology, NTT Data, Kyndryl, EPAM, Luxoft, LTIMindtree, CGI, TEKsystems, Insight Global, Robert Half, Randstad, Leidos, SAIC, Booz Allen Hamilton, CACI, GDIT.
+- Apply this rule when the company name itself matches a consulting/staffing firm, regardless of how interesting the JD reads — the role is a client placement, not direct employment.
+
 ### Work authorization restriction
 - US citizenship only / must be US citizen / US citizens only
 - active security clearance / government clearance / secret clearance / top secret clearance / TS/SCI

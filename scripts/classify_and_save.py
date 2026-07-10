@@ -822,6 +822,39 @@ def classify_job_dynamically(job):
     top_score = label_scores[top_label]
 
     red_flags = list(job.get("red_flags", []))
+
+    # Consulting / IT staffing companies: jobs are client-site placements, not
+    # direct employment — outside MAAS target pipeline. Check company_name first
+    # before any label scoring so we don't waste a APPLY slot on a staff-aug role.
+    _consulting_companies = {
+        # Indian IT outsourcing / body-shopping giants
+        "infosys", "tcs", "tata consultancy", "wipro", "cognizant", "hcl",
+        "hcl technologies", "tech mahindra", "mphasis", "hexaware", "niit",
+        "zensar", "l&t technology", "ltimindtree", "mindtree", "persistent systems",
+        "birlasoft", "cyient", "sonata software", "mastech", "igate",
+        # Global SI / consulting
+        "accenture", "capgemini", "atos", "cgi", "dxc technology",
+        "unisys", "ntt data", "fujitsu", "kyndryl",
+        "epam", "luxoft", "globallogic", "endava",
+        # US staffing / staff augmentation
+        "teksystems", "tek systems", "insight global", "robert half",
+        "randstad", "manpower", "staffmark", "adecco", "kelly services",
+        "ciber", "leidos", "saic", "booz allen", "caci",
+        "general dynamics information technology", "gdit",
+    }
+    company_raw = job.get("company_name", "").lower().strip()
+    _is_consulting = any(c in company_raw for c in _consulting_companies)
+    _consulting_flag = "IT consulting / staffing company — direct employment only"
+    if _is_consulting and _consulting_flag not in red_flags:
+        red_flags.append(_consulting_flag)
+        return {
+            **job,
+            "strongest_label": "OutOfScope",
+            "confidence_score": 85,
+            "apply_decision": "DO_NOT_APPLY",
+            "red_flags": red_flags,
+            "rationale": f"[Rule-based] Consulting/staffing company ({job.get('company_name','')}). {_consulting_flag}.",
+        }
     _nw = "Cloud network specialist role — outside MAAS consultant pipeline"
     _sw = "Cloud security specialist role — outside MAAS consultant pipeline"
     _rf = "Retired MAAS role family"
