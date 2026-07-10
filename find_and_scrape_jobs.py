@@ -186,6 +186,12 @@ DRY_URLS_LOCK = threading.Lock()
 # each task (HTTP requests, parsing), just not the browser session itself.
 PLAYWRIGHT_LOCK = threading.Lock()
 
+# In Docker containers the OS thread limit is much lower than on a dev machine.
+# Nested ThreadPoolExecutors (outer×inner) can hit 160+ threads at peak and
+# crash with "can't start new thread". Cap inner pools to a safe value.
+_IN_DOCKER = os.path.exists("/.dockerenv")
+_INNER_POOL_SIZE = 5 if _IN_DOCKER else 20
+
 def add_if_new_url(url, found_urls):
     with FOUND_URLS_LOCK:
         if url in found_urls:
@@ -3534,7 +3540,7 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
             log(f"Error querying Lever board '{company}': {e}")
         return local_discovered, local_matched
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=_INNER_POOL_SIZE) as executor:
         futures = []
         for company in greenhouse_companies:
             futures.append(executor.submit(process_greenhouse, company))
@@ -3646,7 +3652,7 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
             log(f"Error querying Ashby board '{company}': {e}")
         return local_discovered, local_matched
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=_INNER_POOL_SIZE) as executor:
         futures = []
         for company in ashby_companies:
             futures.append(executor.submit(process_ashby, company))
@@ -3974,7 +3980,7 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
         return local_discovered, local_matched
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=_INNER_POOL_SIZE) as executor:
         futures = []
         for company in smart_companies:
             futures.append(executor.submit(process_smart, company))
@@ -4138,8 +4144,9 @@ def main(dry_run=False):
         "Jooble API": lambda: fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls)
     }
 
-    log(f"Launching {len(tasks)} job sourcing channels concurrently...")
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    _outer_workers = 4 if _IN_DOCKER else 8
+    log(f"Launching {len(tasks)} job sourcing channels concurrently (max_workers={_outer_workers})...")
+    with ThreadPoolExecutor(max_workers=_outer_workers) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
         for future in as_completed(future_to_task):
             name = future_to_task[future]
