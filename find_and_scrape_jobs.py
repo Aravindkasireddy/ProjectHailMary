@@ -4052,6 +4052,161 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
     return discovered
 
 
+def fetch_workday_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls):
+    """Poll all Workday board URLs in config.target_companies.workday.
+
+    Uses Apify's dedicated workday-jobs-scraper actor when APIFY_API_TOKEN is
+    set; falls back to a lightweight Workday JSON API probe (no Playwright
+    required for board-level listing) when Apify is unavailable.
+
+    The Workday public JSON API:
+      GET https://<tenant>.myworkdayjobs.com/wday/cxs/<board>/jobs
+      Body: {"limit": 20, "offset": 0, "searchText": "<title>"}
+    Returns up to 20 matching jobs per request; we query once per target title
+    per board (capped to avoid Apify quota abuse).
+    """
+    board_urls = companies_cfg.get("workday", [])
+    if not board_urls:
+        log("No Workday board URLs configured — skipping.")
+        return []
+
+    log(f"Fetching Workday boards: {len(board_urls)} boards × {len(target_titles)} titles...")
+    discovered = []
+    matched_count = 0
+
+    try:
+        from company_scraper.scrapers import apify_client as _apify
+        apify_available = _apify.is_configured()
+    except Exception:
+        apify_available = False
+
+    def _board_slug(board_url):
+        """Extract <tenant> and <board> from https://<tenant>.myworkdayjobs.com/<board>"""
+        parsed = urlparse(board_url)
+        tenant = parsed.netloc.split(".")[0]
+        board = parsed.path.strip("/").split("/")[0]
+        return tenant, board
+
+    def _query_workday_api(board_url, title_keyword):
+        """
+        Hit Workday's undocumented but stable CXS JSON endpoint.
+        Returns list of raw job dicts or [].
+        """
+        tenant, board = _board_slug(board_url)
+        api_url = f"https://{tenant}.myworkdayjobs.com/wday/cxs/{tenant}/{board}/jobs"
+        payload = {"limit": 20, "offset": 0, "searchText": title_keyword}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)",
+        }
+        try:
+            r = requests.post(api_url, json=payload, headers=headers, timeout=12)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return data.get("jobPostings", [])
+        except Exception:
+            return []
+
+    def process_board_apify(board_url):
+        local = []
+        try:
+            company_hint = _board_slug(board_url)[0].title()
+            rows = _apify.fetch_workday_jobs_via_apify(board_url, company_hint)
+        except Exception as e:
+            log(f"Apify Workday failed for {board_url}: {e}")
+            return local
+        for row in rows:
+            title = (row.get("job_title") or "").strip()
+            if not is_target_job(title, target_titles):
+                continue
+            job_url = row.get("job_url", "")
+            if not job_url:
+                continue
+            loc = row.get("location_work_type") or "United States"
+            if not is_us_location(loc):
+                continue
+            nu = normalize_job_url(job_url)
+            if not nu or not add_if_new_url(nu, found_urls):
+                continue
+            if dry_run:
+                append_dry_url({"job_url": job_url, "query": f"Workday:{board_url}", "title_keyword": title}, dry_urls)
+                local.append(None)
+                continue
+            jd = row.get("job_description") or ""
+            local.append({
+                "job_title": title,
+                "company_name": row.get("company_name") or _board_slug(board_url)[0].title(),
+                "job_url": job_url,
+                "requirement_id": row.get("requirement_id") or "",
+                "job_description": clean_text(jd),
+                "location_work_type": loc,
+                "description_hash": compute_description_hash(jd),
+                "scraped_at": get_cdt_now_iso(),
+            })
+        return [j for j in local if j]
+
+    def process_board_api(board_url):
+        local = []
+        tenant, board = _board_slug(board_url)
+        company_name = tenant.title()
+        for title_kw in target_titles:
+            postings = _query_workday_api(board_url, title_kw)
+            for p in postings:
+                title = (p.get("title") or "").strip()
+                if not is_target_job(title, target_titles):
+                    continue
+                # Workday CXS returns relative externalPath
+                ext_path = p.get("externalPath") or ""
+                if ext_path:
+                    job_url = f"https://{tenant}.myworkdayjobs.com{ext_path}"
+                else:
+                    continue
+                loc_nodes = p.get("locationsText") or p.get("jobLocations") or ""
+                loc = loc_nodes if isinstance(loc_nodes, str) else "United States"
+                if not is_us_location(loc):
+                    continue
+                nu = normalize_job_url(job_url)
+                if not nu or not add_if_new_url(nu, found_urls):
+                    continue
+                if dry_run:
+                    append_dry_url({"job_url": job_url, "query": f"Workday:{board_url}", "title_keyword": title}, dry_urls)
+                    local.append(None)
+                    continue
+                local.append({
+                    "job_title": title,
+                    "company_name": company_name,
+                    "job_url": job_url,
+                    "requirement_id": ext_path.strip("/").split("/")[-1],
+                    "job_description": "",
+                    "location_work_type": loc or "United States",
+                    "description_hash": compute_description_hash(title),
+                    "scraped_at": get_cdt_now_iso(),
+                })
+        return [j for j in local if j]
+
+    process_board = process_board_apify if apify_available else process_board_api
+    mode = "Apify" if apify_available else "JSON API"
+    log(f"Workday: using {mode} strategy across {len(board_urls)} boards")
+
+    # Cap workers — Apify has daily quota; JSON API can tolerate more parallelism
+    workers = min(5 if apify_available else _INNER_POOL_SIZE, len(board_urls))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(process_board, url): url for url in board_urls}
+        for future in as_completed(futures):
+            board_url = futures[future]
+            try:
+                jobs = future.result()
+                discovered.extend(jobs)
+                matched_count += len(jobs)
+            except Exception as e:
+                log(f"Workday board error {board_url}: {e}")
+
+    log(f"Workday sourcing complete ({mode}). Found {matched_count} matching US jobs.")
+    return discovered
+
+
 def discover_new_slugs(discovered_urls, target_companies_cfg):
     log("Scanning discovered URLs for new company slugs...")
     greenhouse_slugs = set(target_companies_cfg.get("greenhouse", []))
@@ -4191,6 +4346,7 @@ def main(dry_run=False):
         "RSS Feeds": lambda: fetch_rss_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls),
         "Greenhouse/Lever APIs": lambda: fetch_company_board_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
         "Ashby API": lambda: fetch_ashby_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
+        "Workday Boards": lambda: fetch_workday_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
         "Workable API": lambda: fetch_workable_global_jobs(target_titles, found_urls, dry_run, dry_urls),
         "SmartRecruiters API": lambda: fetch_smartrecruiters_jobs(target_companies, target_titles, found_urls, dry_run, dry_urls),
         "The Muse API": lambda: fetch_themuse_jobs(target_titles, found_urls, dry_run, dry_urls),
