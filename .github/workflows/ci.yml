@@ -143,7 +143,10 @@ jobs:
             REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/${REPO}/web:latest
-            WEB_IMAGE=ghcr.io/${REPO}/web:latest docker compose up --build -d
+            # Build only the api service locally; web uses the pre-built image pulled above.
+            # `--build` on `up` would rebuild ALL services (including web), defeating the point.
+            WEB_IMAGE=ghcr.io/${REPO}/web:latest docker compose build api
+            WEB_IMAGE=ghcr.io/${REPO}/web:latest docker compose up -d
             sleep 5
             curl -sf http://localhost:${JOBSEARCH_API_HOST_PORT:-8080}/api/health
 
