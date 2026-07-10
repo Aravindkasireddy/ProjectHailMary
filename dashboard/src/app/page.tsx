@@ -175,6 +175,56 @@ function filterJobsOfficialCareersOnly(jobs: Job[], enabled: boolean): Job[] {
   return jobs.filter((j) => isOfficialCompanyCareersJobUrl(j.job_url || ''));
 }
 
+const _NON_US_TERMS = [
+  'india', 'bangalore', 'bengaluru', 'hyderabad', 'pune', 'mumbai', 'delhi', 'chennai', 'gurugram', 'gurgaon', 'noida',
+  'uk', 'london', 'united kingdom', 'england', 'scotland', 'wales',
+  'canada', 'toronto', 'vancouver', 'montreal', 'ottawa', 'calgary',
+  'germany', 'berlin', 'munich', 'frankfurt',
+  'france', 'paris',
+  'australia', 'sydney', 'melbourne', 'brisbane', 'perth',
+  'singapore', 'japan', 'tokyo', 'china', 'beijing', 'shanghai',
+  'ireland', 'dublin', 'netherlands', 'amsterdam', 'poland', 'warsaw', 'krakow',
+  'brazil', 'sao paulo', 'mexico', 'colombia', 'argentina', 'chile',
+  'emea', 'apac', 'latam', 'europe', 'asia', 'africa',
+  'philippines', 'manila', 'indonesia', 'jakarta', 'malaysia', 'kuala lumpur',
+  'ukraine', 'romania', 'bulgaria', 'serbia', 'croatia', 'czech',
+  'sweden', 'norway', 'finland', 'denmark', 'switzerland', 'austria', 'belgium',
+  'spain', 'madrid', 'barcelona', 'portugal', 'lisbon', 'italy', 'rome', 'milan',
+  'israel', 'tel aviv', 'dubai', 'uae', 'saudi arabia', 'south africa', 'egypt',
+  'new zealand', 'auckland',
+];
+
+function isUsLocation(location: string | null | undefined): boolean {
+  if (!location) return true; // no location = assume US (pipeline should have filtered)
+  const loc = location.toLowerCase();
+
+  // Explicit US signals win immediately
+  if (/\bunited states\b/.test(loc) || /\busa\b/.test(loc) || /\bu\.s\.a?\b/.test(loc)) return true;
+
+  // US state names / abbreviations
+  const usStates = ['alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware',
+    'florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine',
+    'maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada',
+    'new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma',
+    'oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah',
+    'vermont','virginia','washington','west virginia','wisconsin','wyoming'];
+  if (usStates.some(s => loc.includes(s))) return true;
+
+  // Major US cities
+  const usCities = ['san francisco','seattle','austin','chicago','boston','denver','los angeles','atlanta',
+    'dallas','houston','miami','philadelphia','phoenix','san diego','san jose','new york','nyc',
+    'sunnyvale','mountain view','palo alto','redmond','bellevue','raleigh','charlotte','nashville',
+    'salt lake','las vegas','orlando','tampa','portland','pittsburgh','minneapolis'];
+  if (usCities.some(c => loc.includes(c))) return true;
+
+  // Known non-US terms — word-boundary aware to avoid "uk" in "tukwila"
+  for (const term of _NON_US_TERMS) {
+    if (new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(loc)) return false;
+  }
+
+  return true; // ambiguous → assume US (safer than hiding real jobs)
+}
+
 function jobListPollUnchanged(prev: Job[], next: Job[]): boolean {
   if (prev.length !== next.length) return false;
   for (let i = 0; i < prev.length; i++) {
@@ -1833,7 +1883,10 @@ export default function Dashboard() {
   // below to be valid: the React Compiler's lint rule
   // (react-hooks/preserve-manual-memoization) refuses to trust a manual
   // useMemo whose dependencies aren't themselves provably stable.
-  const dedupedJobs = useMemo(() => jobs.filter(j => !j.is_duplicate), [jobs]);
+  const dedupedJobs = useMemo(
+    () => jobs.filter(j => !j.is_duplicate && isUsLocation(j.location_work_type)),
+    [jobs]
+  );
   // Show ALL jobs — Gemini label is informational only, not a gate.
   // User runs their own LLM classifier to make final apply decisions.
   const approvedJobs = useMemo(

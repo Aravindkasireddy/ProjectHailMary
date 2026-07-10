@@ -472,6 +472,24 @@ def upload_user_jobs(user_id: str, email: str):
         
         records_to_upload = list(jobs_to_upload.values())
 
+        # US-location gate: never upload non-US jobs to Supabase.
+        # The pipeline filters at discovery/scrape time but scraped_jobs.json
+        # (stage-1 output) is uploaded raw above — some non-US entries can
+        # slip through before stage 2/3 filtering runs. This is the final
+        # backstop so no non-US row ever lands in public.jobs.
+        try:
+            from find_and_scrape_jobs import is_us_location as _is_us
+            before_us = len(records_to_upload)
+            records_to_upload = [
+                r for r in records_to_upload
+                if _is_us(r.get("location_work_type") or "") or not (r.get("location_work_type") or "").strip()
+            ]
+            dropped_us = before_us - len(records_to_upload)
+            if dropped_us:
+                print(f"US-location gate: dropped {dropped_us} non-US jobs before Supabase upload for {email}.")
+        except Exception as e:
+            print(f"US-location gate unavailable, skipping: {e}")
+
         official_only = False
         try:
             cfg_res = (
