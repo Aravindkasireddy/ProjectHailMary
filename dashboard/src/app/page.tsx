@@ -274,9 +274,6 @@ const getJobSource = (url: string) => {
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [newJobsCount, setNewJobsCount] = useState<number>(0);
-  // New jobs list and loading state
-  const [newJobs, setNewJobs] = useState<Job[]>([]);
-  const [newJobsLoading, setNewJobsLoading] = useState<boolean>(false);
 
   // Authentication States
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -1001,14 +998,13 @@ export default function Dashboard() {
     }
   };
 
-  // Fetch new jobs list
+  // Fetch new jobs count for tab badge
   const fetchNewJobs = async () => {
-    setNewJobsLoading(true);
     try {
       const { data, error } = await supabase
         .from('jobs')
         .select('*')
-        .gt('scraped_at', new Date(Date.now() - 15 * 60 * 1000).toISOString()) // Scraped in the last 15 minutes
+        .gt('scraped_at', new Date(Date.now() - 15 * 60 * 1000).toISOString())
         .order('scraped_at', { ascending: false });
 
       if (error) throw error;
@@ -1017,13 +1013,10 @@ export default function Dashboard() {
           dedupeJobsByCanonicalUrl(data as Job[]),
           officialCareerUrlsOnlyRef.current
         );
-        setNewJobs(d);
         setNewJobsCount(d.length);
       }
     } catch (e) {
-      console.error('Failed to fetch new jobs', e);
-    } finally {
-      setNewJobsLoading(false);
+      console.error('Failed to fetch new jobs count', e);
     }
   };
 
