@@ -26,13 +26,14 @@ def test_expand_titles_fallback_on_exception():
         assert "DevOps" in expanded["DevOps Engineer"]
 
 @patch("find_and_scrape_jobs.time.sleep")
+@patch("find_and_scrape_jobs._yahoo_reachable", return_value=True)
+@patch("find_and_scrape_jobs._duckduckgo_reachable", return_value=True)
 @patch("find_and_scrape_jobs.search_brave", return_value=[])
 @patch("find_and_scrape_jobs.search_duckduckgo", return_value=[])
-@patch("find_and_scrape_jobs.search_serper")
+@patch("find_and_scrape_jobs.search_serper", return_value=[])
 @patch("find_and_scrape_jobs.search_yahoo")
-def test_search_and_scrape_for_keyword_uses_mocked_yahoo(mock_search, mock_serper, mock_ddg, mock_brave, mock_sleep):
+def test_search_and_scrape_for_keyword_uses_mocked_yahoo(mock_search, mock_serper, mock_ddg, mock_brave, mock_ddg_reach, mock_yahoo_reach, mock_sleep):
     mock_search.return_value = ["https://boards.greenhouse.io/testco/jobs/123"]
-    mock_serper.return_value = ["https://boards.greenhouse.io/testco/jobs/123"]
     
     search_cfg = {
         "country_phrase": "United States",
