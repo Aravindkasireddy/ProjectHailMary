@@ -432,10 +432,11 @@ def load_all_jobs(email=None, user_id=None):
         for j in jobs:
             j.setdefault('benefits', extract_benefits(j.get('job_description', '')))
 
-    # ── Dedup (Supabase rows are already deduped by (user_id, job_url) PK
-    #   but local JSON may have near-dupes) ─────────────────────────────────
-    jobs = group_and_flag_duplicates(jobs)
-    jobs = [j for j in jobs if not j.get('is_duplicate')]
+        # Near-dedup only for local JSON fallback — Supabase rows are already
+        # unique by (user_id, job_url) PK, and running N² similarity on thousands
+        # of rows is too slow (18s+ for 4k rows) and hides valid distinct postings.
+        jobs = group_and_flag_duplicates(jobs)
+        jobs = [j for j in jobs if not j.get('is_duplicate')]
 
     _cached_jobs_data[email_key] = jobs
     _cached_jobs_mtimes[email_key] = cache_key
