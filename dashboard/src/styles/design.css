@@ -1,75 +1,377 @@
-/* -------------------------------------------------
-   Design System – Teal‑Purple Gradient, Dark Mode
-   -------------------------------------------------
-   This file defines CSS custom properties for a premium UI
-   with a teal‑purple gradient, dark‑mode default, smooth
-   transitions, and a reusable button class.
-*/
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+/* ══════════════════════════════════════════════════════════
+   MAAS — Cyberpunk Mecha Component Library
+   ══════════════════════════════════════════════════════════ */
 
-:root {
-  /* Primary palette */
-  --color-primary: hsl(210, 70%, 55%);   /* teal‑blue */
-  --color-accent: hsl(280, 65%, 60%);    /* purple */
-
-  /* Backgrounds */
-  --bg-light: hsl(0, 0%, 98%);
-  --bg-dark: hsl(210, 10%, 12%);
-
-  /* Text */
-  --text-light: hsl(0, 0%, 10%);
-  --text-dark: hsl(0, 0%, 90%);
-
-  /* Misc */
-  --border-radius: 0.5rem;
-  --transition: 0.2s ease-in-out;
-  --font-family: 'Inter', sans-serif;
-
-  /* Default until [data-theme] is applied (matches dark) — avoids invalid var(--bg) flash */
-  --bg: var(--bg-dark);
-  --text: var(--text-dark);
+/* ── ARIA Floating Widget ─────────────────────────────── */
+#aria-widget {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
 }
 
-/* Dark‑mode default – applied on page load */
-[data-theme='dark'] {
-  --bg: var(--bg-dark);
-  --text: var(--text-dark);
-}
-[data-theme='light'] {
-  --bg: var(--bg-light);
-  --text: var(--text-light);
-}
-
-html {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-family);
-  /* Avoid animating the whole document on theme/CSS updates (causes visible flicker). */
+#aria-bubble {
+  max-width: 220px;
+  background: var(--navy2);
+  border: 1px solid var(--cyan-b);
+  padding: 10px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--t1);
+  line-height: 1.55;
+  position: relative;
+  animation: aria-bubble-in 0.3s ease;
+  font-family: system-ui, -apple-system, sans-serif;
 }
 
-/* Button – gradient background */
-.button {
-  background: linear-gradient(45deg, var(--color-primary), var(--color-accent));
-  border: none;
-  border-radius: var(--border-radius);
-  color: #fff;
-  padding: 0.6rem 1.2rem;
+#aria-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  right: 26px;
+  width: 12px;
+  height: 6px;
+  background: var(--navy2);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  border-left: 1px solid var(--cyan-b);
+  border-right: 1px solid var(--cyan-b);
+}
+
+#aria-bubble em {
+  color: var(--cyan);
+  font-style: normal;
+  font-weight: 800;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+@keyframes aria-bubble-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+#aria-float {
+  position: relative;
+  width: 68px;
+  height: 68px;
   cursor: pointer;
-  transition: var(--transition);
-}
-.button:hover {
-  filter: brightness(1.1);
+  flex-shrink: 0;
 }
 
-/* Loading spinner – uses primary color */
-.spinner {
-  border: 4px solid rgba(0,0,0,0.1);
-  border-left-color: var(--color-primary);
+#aria-float svg { display: block; }
+
+.aria-float-pulse {
+  position: absolute;
+  inset: -5px;
   border-radius: 50%;
-  width: 2rem;
-  height: 2rem;
-  animation: spin 0.8s linear infinite;
+  border: 1px solid var(--cyan);
+  opacity: 0;
+  animation: aria-ring 2.4s ease-out infinite;
 }
-@keyframes spin {
-  to { transform: rotate(360deg); }
+
+@keyframes aria-ring {
+  0%   { transform: scale(0.9); opacity: 0.6; }
+  100% { transform: scale(1.35); opacity: 0; }
 }
+
+.aria-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: aria-blink 1.6s ease-in-out infinite;
+  display: inline-block;
+}
+
+@keyframes aria-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+
+/* ── HUD Stat Cards ───────────────────────────────────── */
+.hud-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--navy);
+  border: 1px solid var(--t3);
+  padding: 20px 22px;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  transition: border-color 0.2s;
+}
+.hud-card:hover { border-color: var(--t2); }
+
+.hud-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--hud-accent, var(--cyan)), transparent);
+  opacity: 0.4;
+}
+
+.hud-corner {
+  position: absolute;
+  top: 0; right: 0;
+  width: 14px; height: 14px;
+  border-top: 1px solid;
+  border-right: 1px solid;
+}
+
+.hud-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t2);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  margin-bottom: 8px;
+}
+
+.hud-val {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Mission File Cards ───────────────────────────────── */
+.mission-card {
+  position: relative;
+  background: var(--navy);
+  border: 1px solid var(--t3);
+  overflow: hidden;
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.mission-card:hover {
+  border-color: var(--t2);
+  box-shadow: 0 0 20px rgba(0,240,255,0.05);
+}
+.mission-card.mc-approved { border-color: rgba(0,229,160,0.15); }
+.mission-card.mc-rejected { border-color: rgba(255,45,107,0.18); }
+.mission-card.mc-new      { border-color: rgba(0,240,255,0.18); }
+
+.mission-stripe {
+  height: 2px;
+  width: 100%;
+}
+
+.mission-id {
+  position: absolute;
+  top: 7px; right: 22px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--t3);
+  text-transform: uppercase;
+}
+
+/* ── Badge system ─────────────────────────────────────── */
+.bdg {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  text-transform: uppercase;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: nowrap;
+}
+.bdg-cyan   { background: var(--cyan-d);   color: var(--cyan);   border: 1px solid var(--cyan-b);   }
+.bdg-vio    { background: var(--violet-d); color: var(--violet); border: 1px solid var(--violet-b); }
+.bdg-red    { background: var(--red-d);    color: var(--red);    border: 1px solid var(--red-b);    }
+.bdg-amb    { background: var(--amber-d);  color: var(--amber);  border: 1px solid var(--amber-b);  }
+.bdg-ok     { background: var(--green-d);  color: var(--green);  border: 1px solid rgba(0,229,160,0.3); }
+.bdg-ghost  { background: rgba(255,255,255,0.04); color: var(--t2); border: 1px solid var(--t3); }
+
+/* ── Confidence bar ───────────────────────────────────── */
+.conf-track {
+  flex: 1;
+  height: 3px;
+  background: var(--t3);
+  overflow: hidden;
+}
+.conf-fill {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+.conf-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+/* ── Visa block ───────────────────────────────────────── */
+.visa-block {
+  background: rgba(96,165,250,0.04);
+  border: 1px solid rgba(96,165,250,0.14);
+  padding: 8px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.visa-eyebrow {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #60A5FA;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* ── Red flag block ───────────────────────────────────── */
+.rflag-block {
+  background: rgba(255,45,107,0.06);
+  border: 1px solid rgba(255,45,107,0.2);
+  padding: 8px 11px;
+  font-size: 12px;
+  color: #FF8FAD;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  line-height: 1.4;
+}
+.rflag-block strong { color: var(--red); font-weight: 800; }
+
+/* ── Mini action buttons ──────────────────────────────── */
+.btn-mission {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 800;
+  font-family: system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  border: 1px solid;
+  transition: all 0.15s;
+  letter-spacing: 0.02em;
+  border-radius: 0;
+}
+.btn-mission-cyan   { background: var(--cyan-d);   border-color: var(--cyan-b);               color: var(--cyan);   }
+.btn-mission-green  { background: var(--green-d);  border-color: rgba(0,229,160,0.3);         color: var(--green);  }
+.btn-mission-red    { background: var(--red-d);    border-color: var(--red-b);                color: var(--red);    }
+.btn-mission-ghost  { background: transparent;     border-color: var(--t3);                   color: var(--t2);     }
+
+.btn-mission-cyan:hover  { background: rgba(0,240,255,0.16); }
+.btn-mission-green:hover { background: rgba(0,229,160,0.16); }
+.btn-mission-red:hover   { background: rgba(255,45,107,0.18); }
+.btn-mission-ghost:hover { border-color: var(--t2); color: var(--t1); }
+
+/* ── Bulk action bar ──────────────────────────────────── */
+.bulk-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--navy2);
+  border: 1px solid var(--t2);
+  padding: 10px 18px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 30px rgba(0,240,255,0.06);
+  transition: opacity 0.2s, transform 0.2s;
+  white-space: nowrap;
+  z-index: 100;
+}
+.bulk-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(16px);
+}
+
+/* ── Tab strip overrides ──────────────────────────────── */
+.maas-tab {
+  padding: 9px 16px;
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  color: var(--t2);
+  letter-spacing: 0.02em;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  margin-bottom: -1px;
+}
+.maas-tab:hover  { color: var(--t1); }
+.maas-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+/* ── Filter chip ──────────────────────────────────────── */
+.filter-chip {
+  padding: 5px 12px;
+  border: 1px solid var(--t3);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  color: var(--t2);
+  transition: all 0.15s;
+  border-radius: 0;
+}
+.filter-chip:hover { color: var(--t1); border-color: var(--t2); }
+.filter-chip.on    { background: var(--cyan-d); border-color: var(--cyan-b); color: var(--cyan); }
+
+/* ── Selection checkbox accent ────────────────────────── */
+input[type="checkbox"] { accent-color: var(--cyan); cursor: pointer; }
+
+/* ── ARIA header badge ────────────────────────────────── */
+.aria-badge {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+.aria-badge svg { display: block; }
+.aria-badge-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--cyan);
+  opacity: 0;
+  animation: aria-ring 2.4s ease-out infinite;
+}
+
+/* ── View toggle ──────────────────────────────────────── */
+.view-toggle {
+  display: flex;
+  background: var(--navy);
+  border: 1px solid var(--t3);
+  gap: 2px;
+  padding: 3px;
+}
+.view-btn {
+  padding: 6px 14px;
+  border: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-family: system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  background: transparent;
+  color: var(--t2);
+  transition: all 0.15s;
+}
+.view-btn.on { background: var(--cyan-d); color: var(--cyan); }
+
+/* ── Particle canvas ──────────────────────────────────── */
+#aria-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── main z-index above canvas ───────────────────────── */
+body > div,
+body > main,
+.flex-1 { position: relative; z-index: 2; }

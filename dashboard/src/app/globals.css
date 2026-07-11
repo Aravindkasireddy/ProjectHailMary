@@ -1,8 +1,42 @@
 @import "tailwindcss";
 
+/* ══════════════════════════════════════════════════════════
+   MAAS SOURCING AGENT — Cyberpunk Mecha Design System
+   ARIA: Automated Reconnaissance Intelligence Agent
+   ══════════════════════════════════════════════════════════ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Core void palette */
+  --void:     #050714;
+  --navy:     #0C1035;
+  --navy2:    #111840;
+  --navy3:    #172050;
+
+  /* Neon accents */
+  --cyan:     #00F0FF;
+  --cyan-d:   rgba(0,240,255,0.10);
+  --cyan-b:   rgba(0,240,255,0.28);
+  --violet:   #B44FFF;
+  --violet-d: rgba(180,79,255,0.12);
+  --violet-b: rgba(180,79,255,0.30);
+  --red:      #FF2D6B;
+  --red-d:    rgba(255,45,107,0.12);
+  --red-b:    rgba(255,45,107,0.30);
+  --amber:    #FFB800;
+  --amber-d:  rgba(255,184,0,0.12);
+  --amber-b:  rgba(255,184,0,0.30);
+  --green:    #00E5A0;
+  --green-d:  rgba(0,229,160,0.10);
+
+  /* Text scale */
+  --t1: #D0E8FF;
+  --t2: #4A5888;
+  --t3: #1E2848;
+
+  /* Tailwind compat */
+  --background: var(--void);
+  --foreground: var(--t1);
+  --font-mono: 'SF Mono','Fira Code',ui-monospace,monospace;
 }
 
 @theme inline {
@@ -12,48 +46,280 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ── Base ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  background: var(--void) !important;
+  color: var(--t1) !important;
+  -webkit-font-smoothing: antialiased;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Scanline overlay — always on top of content, below modals */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.055) 2px,
+    rgba(0,0,0,0.055) 4px
+  );
 }
 
-/* Glass-morphism card for new jobs modal */
+/* ── Tailwind palette overrides (dark context only) ─── */
+/* Map Tailwind's slate/violet/indigo utilities onto our tokens */
+.bg-slate-950 { background-color: var(--void) !important; }
+.bg-slate-900,
+.bg-slate-900\/40,
+.bg-slate-900\/60,
+.bg-slate-900\/80,
+.bg-slate-900\/90 { background-color: var(--navy) !important; }
+.bg-slate-950\/60,
+.bg-slate-950\/80 { background-color: rgba(5,7,20,0.85) !important; }
+
+.border-slate-800,
+.border-slate-800\/80,
+.border-slate-800\/85 { border-color: var(--t3) !important; }
+.border-slate-700 { border-color: #2a3460 !important; }
+
+.text-slate-100 { color: var(--t1) !important; }
+.text-slate-200 { color: var(--t1) !important; }
+.text-slate-300 { color: rgba(208,232,255,0.8) !important; }
+.text-slate-400 { color: var(--t2) !important; }
+.text-slate-500 { color: #3a4570 !important; }
+.text-white     { color: var(--t1) !important; }
+
+.text-violet-300,
+.text-violet-400 { color: var(--violet) !important; }
+.text-violet-200  { color: rgba(180,79,255,0.9) !important; }
+.text-indigo-300  { color: var(--cyan) !important; }
+.text-indigo-400  { color: var(--cyan) !important; }
+
+.text-emerald-400 { color: var(--green) !important; }
+.text-rose-400    { color: var(--red) !important; }
+.text-amber-400   { color: var(--amber) !important; }
+.text-amber-300   { color: var(--amber) !important; }
+.text-amber-200   { color: rgba(255,184,0,0.9) !important; }
+
+.bg-violet-600,
+.bg-violet-700    { background-color: var(--violet) !important; }
+.bg-violet-500    { background-color: #c86bff !important; }
+.bg-violet-950\/40,
+.bg-violet-950\/50 { background-color: var(--violet-d) !important; }
+.border-violet-800\/50,
+.border-violet-600\/50 { border-color: var(--violet-b) !important; }
+.border-violet-500\/30 { border-color: rgba(180,79,255,0.3) !important; }
+
+.bg-emerald-500\/10 { background-color: var(--green-d) !important; }
+.border-emerald-500\/20 { border-color: rgba(0,229,160,0.25) !important; }
+.bg-rose-500\/10  { background-color: var(--red-d) !important; }
+.bg-amber-500\/10 { background-color: var(--amber-d) !important; }
+
+/* ── Header ───────────────────────────────────────────── */
+header.sticky {
+  background: rgba(5,7,20,0.92) !important;
+  border-bottom: 1px solid var(--cyan-b) !important;
+  backdrop-filter: blur(14px) !important;
+  position: relative;
+}
+
+header.sticky::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(0,240,255,0.04) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* brand gradient */
+header h1 {
+  font-size: 1.1rem !important;
+  font-weight: 900 !important;
+  letter-spacing: -0.03em !important;
+  background: linear-gradient(135deg, #D0E8FF 30%, var(--cyan)) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+header .p-2.bg-gradient-to-tr {
+  background: var(--violet-d) !important;
+  border: 1px solid var(--violet-b) !important;
+  box-shadow: 0 0 16px rgba(180,79,255,0.2) !important;
+  border-radius: 4px !important;
+}
+
+/* ── Stat cards ───────────────────────────────────────── */
+section.grid .rounded-2xl,
+section.grid > div.rounded-2xl {
+  background: var(--navy) !important;
+  border-color: var(--t3) !important;
+  border-radius: 3px !important;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  position: relative;
+  overflow: hidden;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+section.grid .rounded-2xl::before,
+section.grid > div.rounded-2xl::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0.35;
+}
+
+section.grid h3.text-3xl,
+section.grid .text-3xl {
+  font-size: 2rem !important;
+  font-weight: 900 !important;
+  letter-spacing: -0.04em !important;
+  font-variant-numeric: tabular-nums;
+}
+
+section.grid p.text-sm {
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  font-family: var(--font-mono) !important;
+  color: var(--t2) !important;
+}
+
+/* ── Tabs + filter bar ────────────────────────────────── */
+/* Tab container bg */
+.rounded-2xl.border.border-slate-800,
+.border.border-slate-800.rounded-2xl {
+  background: var(--navy) !important;
+  border-color: var(--t3) !important;
+  border-radius: 3px !important;
+}
+
+/* Tab buttons */
+button.text-violet-400,
+button.bg-violet-600 {
+  color: var(--cyan) !important;
+  border-bottom-color: var(--cyan) !important;
+}
+
+/* ── Metric mini cards (last run results) ─────────────── */
+.bg-slate-950\/60.border.border-slate-900\/60 {
+  background: var(--navy2) !important;
+  border-color: var(--t3) !important;
+  border-radius: 3px !important;
+}
+
+/* ── Running scraper banner ───────────────────────────── */
+.border-amber-500\/20 {
+  border-color: var(--amber-b) !important;
+  background: var(--amber-d) !important;
+  border-radius: 3px !important;
+}
+
+/* ── Login screen ─────────────────────────────────────── */
+.max-w-md.bg-slate-900\/60 {
+  background: var(--navy) !important;
+  border-color: var(--t3) !important;
+  border-radius: 4px !important;
+}
+
+.min-h-screen.bg-slate-950 {
+  background: var(--void) !important;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"],
+textarea,
+select {
+  background: rgba(5,7,20,0.9) !important;
+  border-color: var(--t3) !important;
+  color: var(--t1) !important;
+  border-radius: 3px !important;
+}
+
+input::placeholder { color: var(--t2) !important; }
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none !important;
+  border-color: var(--cyan-b) !important;
+  box-shadow: 0 0 0 2px rgba(0,240,255,0.12) !important;
+}
+
+/* ── Global scrollbar ─────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--void); }
+::-webkit-scrollbar-thumb { background: var(--t3); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--t2); }
+
+/* ── Dialog/Modal ─────────────────────────────────────── */
 .glass-card {
-  background: rgba(15, 23, 42, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(139, 92, 246, 0.25);
-  border-radius: 1rem;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(139, 92, 246, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: rgba(11,16,53,0.96) !important;
+  backdrop-filter: blur(16px) !important;
+  border: 1px solid var(--cyan-b) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 40px rgba(0,240,255,0.08), 0 24px 64px rgba(0,0,0,0.7) !important;
 }
 
 .glass-card h2 {
-  text-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  color: var(--cyan) !important;
+  text-shadow: 0 0 20px rgba(0,240,255,0.3) !important;
 }
 
-.glass-card ul li {
-  color: rgba(226, 232, 240, 0.9);
-  font-size: 0.875rem;
+/* ── Rounded pill overrides → angular ────────────────── */
+.rounded-full { border-radius: 3px !important; }
+.rounded-xl   { border-radius: 3px !important; }
+.rounded-2xl  { border-radius: 3px !important; }
+.rounded-lg   { border-radius: 3px !important; }
+
+/* ── Primary action buttons ───────────────────────────── */
+button.bg-violet-600,
+button.bg-violet-700,
+button.hover\:bg-violet-500,
+a.bg-violet-600 {
+  background: var(--violet-d) !important;
+  border: 1px solid var(--violet-b) !important;
+  color: var(--violet) !important;
+  border-radius: 3px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.02em !important;
 }
 
-.glass-card ul li a {
-  color: rgba(196, 181, 253, 0.95);
-  text-decoration-color: rgba(139, 92, 246, 0.4);
-  transition: color 0.2s ease, text-decoration-color 0.2s ease;
+button.bg-violet-600:hover,
+button.bg-violet-700:hover {
+  background: rgba(180,79,255,0.2) !important;
+  box-shadow: 0 0 16px rgba(180,79,255,0.25) !important;
 }
 
-.glass-card ul li a:hover {
-  color: rgb(167, 139, 250);
-  text-decoration-color: rgb(139, 92, 246);
+/* ── Run Source Agent button ──────────────────────────── */
+button[class*="bg-gradient"],
+button.from-violet-600 {
+  background: var(--cyan-d) !important;
+  border: 1px solid var(--cyan-b) !important;
+  color: var(--cyan) !important;
+  border-radius: 3px !important;
+  box-shadow: 0 0 14px rgba(0,240,255,0.15) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.02em !important;
 }
+
+button[class*="bg-gradient"]:hover {
+  background: rgba(0,240,255,0.16) !important;
+  box-shadow: 0 0 24px rgba(0,240,255,0.25) !important;
+}
+
+/* Emerald approve / rose reject buttons */
+button[class*="emerald"],
+.bg-emerald-600 { background: var(--green-d) !important; color: var(--green) !important; border-color: rgba(0,229,160,0.3) !important; }
+button[class*="rose"],
+.bg-rose-600    { background: var(--red-d)   !important; color: var(--red)   !important; border-color: var(--red-b) !important; }

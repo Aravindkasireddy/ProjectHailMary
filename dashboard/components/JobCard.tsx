@@ -132,13 +132,13 @@ export default function JobCard({
 }: JobCardProps) {
   return (
     <div
-      className={`relative bg-slate-900/30 backdrop-blur-md rounded-2xl p-5 border flex flex-col justify-between shadow-lg hover:shadow-2xl transition-all duration-300 group ${activeTab === 'approved'
-          ? 'border-emerald-500/20 hover:border-emerald-500/50 hover:bg-emerald-950/5'
+      className={`mission-card relative p-5 flex flex-col justify-between transition-all duration-200 group ${activeTab === 'approved'
+          ? 'mc-approved'
           : activeTab === 'rejected'
-            ? 'border-rose-500/20 hover:border-rose-500/50 hover:bg-rose-950/5'
+            ? 'mc-rejected'
             : activeTab === 'human_review'
-              ? 'border-violet-500/25 hover:border-violet-500/50 hover:bg-violet-950/10'
-            : 'border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-950/5'
+              ? 'mc-approved'
+            : ''
         }`}
     >
       {/* Top Job Headers */}
@@ -146,7 +146,7 @@ export default function JobCard({
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center flex-wrap gap-1.5 mr-2">
-              <h3 className="text-base font-bold text-white group-hover:text-violet-400 transition-colors truncate max-w-[250px] sm:max-w-md">
+              <h3 className="text-base font-bold text-[#D0E8FF] group-hover:text-[#00F0FF] transition-colors truncate max-w-[250px] sm:max-w-md" style={{letterSpacing:'-0.01em'}}>
                 {job.job_title}
               </h3>
               <CopyButton text={job.job_title} />
@@ -170,34 +170,32 @@ export default function JobCard({
 
           <div className="flex flex-col items-end space-y-1.5 shrink-0">
             {/* Label Badge */}
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${activeTab === 'approved'
-                ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
+            <span className={`bdg ${activeTab === 'approved'
+                ? 'bdg-ok'
                 : activeTab === 'rejected'
-                  ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
+                  ? 'bdg-red'
                   : activeTab === 'human_review'
-                    ? 'bg-violet-950/60 text-violet-300 border border-violet-800/40'
-                  : 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
+                    ? 'bdg-vio'
+                  : 'bdg-amb'
               }`}>
               {job.strongest_label}
             </span>
 
             {/* Stale / live probe badges */}
             {job.stale && (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-rose-950/80 text-rose-300 border border-rose-850 animate-pulse">
-                Closed / Stale
-              </span>
+              <span className="bdg bdg-red animate-pulse">Closed</span>
             )}
             {!job.stale && job.listing_health && !job.listing_health.uncertain && (
               <span
-                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-emerald-950/80 text-emerald-300 border border-emerald-800/60"
+                className="bdg bdg-ok"
                 title={job.listing_health.reason || 'Checked via posting URL'}
               >
-                Likely active
+                Live
               </span>
             )}
             {job.listing_health?.uncertain && (
               <span
-                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-amber-950/80 text-amber-200 border border-amber-800/50"
+                className="bdg bdg-amb"
                 title={job.listing_health.reason || 'Probe inconclusive'}
               >
                 Unverified
@@ -212,12 +210,12 @@ export default function JobCard({
             type="button"
             onClick={() => onCheckLive(job)}
             disabled={checkingLiveJobUrl === job.job_url || !authToken}
-            className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide border transition-colors ${
+            className={`btn-mission inline-flex items-center ${
               checkingLiveJobUrl === job.job_url
-                ? 'bg-slate-800/90 text-slate-500 border-slate-700 cursor-wait'
+                ? 'btn-mission-ghost cursor-wait opacity-60'
                 : !authToken
-                  ? 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
-                  : 'bg-violet-950/50 hover:bg-violet-900/55 text-violet-200 border-violet-800/50 hover:border-violet-600/50'
+                  ? 'btn-mission-ghost cursor-not-allowed opacity-40'
+                  : 'btn-mission-cyan'
             }`}
             title={
               !authToken
@@ -428,7 +426,7 @@ export default function JobCard({
         )}
 
         {/* Location / Req ID details */}
-        <div className={`mt-3 grid ${job.salary_text ? 'grid-cols-5' : 'grid-cols-4'} gap-3 text-xs text-slate-400 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/40`}>
+        <div className={`mt-3 grid ${job.salary_text ? 'grid-cols-5' : 'grid-cols-4'} gap-3 text-xs p-2.5 border`} style={{background:'rgba(5,7,20,0.6)',borderColor:'var(--t3)'}}>
           <div>
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider block">Location</span>
@@ -596,29 +594,29 @@ export default function JobCard({
       </div>
 
       {/* Card Actions Bottom */}
-      <div className="mt-5 pt-3.5 border-t border-slate-850 flex items-center justify-between">
+      <div className="mt-4 pt-3" style={{borderTop:'1px solid var(--t3)',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',flexWrap:'wrap'}}>
 
         <a
           href={browserOpenJobUrl(job.job_url)}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center text-xs text-violet-400 hover:text-violet-300 font-semibold group/link truncate min-w-0"
+          className="btn-mission btn-mission-cyan inline-flex items-center"
         >
-          View Site
-          <ExternalLink className="w-3 h-3 ml-1 shrink-0 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform" />
+          VIEW ↗
+          <ExternalLink className="w-3 h-3 ml-1 shrink-0" />
         </a>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center" style={{gap:'6px',flexWrap:'wrap'}}>
           {activeTab === 'approved' && authRole === 'admin' && (
             <>
               <button
                 type="button"
                 onClick={() => onGenerateTailoring(job.job_url)}
-                className="p-1.5 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 hover:text-emerald-300 border border-emerald-800/40 rounded-xl transition-all"
+                className="btn-mission btn-mission-green"
                 title="AI Tailor Application"
                 aria-label="AI tailor application"
               >
-                <FileText className="w-4 h-4" />
+                <FileText className="w-3.5 h-3.5" />
               </button>
               <ResumeGenerator
                 jd={job.job_description}
@@ -633,14 +631,14 @@ export default function JobCard({
               <select
                 value={job.pipeline_stage || 'Approved'}
                 onChange={e => onUpdatePipelineStage(job.job_url, e.target.value)}
-                className="bg-slate-900 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-300 focus:outline-none cursor-pointer hover:border-slate-700 transition-colors"
+                style={{background:'var(--navy2)',border:'1px solid var(--t3)',color:'var(--t1)',fontSize:'11.5px',fontWeight:700,padding:'5px 10px',cursor:'pointer'}}
               >
                 {['Approved', 'Applied', 'Phone Screen', 'Technical Interview', 'Offer', 'Rejected'].map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
             ) : (
-              <span className="inline-flex items-center text-xs font-semibold text-violet-400 bg-violet-950/40 px-2.5 py-1.5 rounded-xl border border-violet-900/30">
+              <span className="bdg bdg-vio">
                 {job.pipeline_stage || 'Approved'}
               </span>
             )
@@ -650,41 +648,33 @@ export default function JobCard({
             <button
               type="button"
               onClick={() => onSubmitClassifierFeedback(job)}
-              className="inline-flex items-center px-3 py-1.5 bg-violet-950/50 hover:bg-violet-900/60 text-violet-200 rounded-xl text-xs font-semibold border border-violet-800/40 transition-colors"
+              className="btn-mission btn-mission-cyan"
             >
               Log feedback
             </button>
           )}
-          {/* Inspect details button */}
+
           <button
             onClick={() => onOpenModal(job)}
-            className="inline-flex items-center px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition-colors"
+            className="btn-mission btn-mission-ghost"
           >
             <Edit3 className="w-3 h-3 mr-1" />
             {authRole === 'admin' ? 'Inspect & Edit' : 'Inspect'}
           </button>
 
-          {/* Action specific buttons */}
-          {activeTab === 'approved' ? null : (
-            /* If rejected or candidate, show quick Approve Override */
-            authRole === 'admin' && (
-              <button
-                onClick={() => onApproveOverride(job)}
-                className="inline-flex items-center px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold border border-violet-500/20 active:scale-95 shadow-md shadow-violet-500/10 transition-all"
-              >
-                Approve Override
-              </button>
-            )
+          {activeTab !== 'approved' && authRole === 'admin' && (
+            <button
+              onClick={() => onApproveOverride(job)}
+              className="btn-mission btn-mission-green"
+            >
+              ▲ Approve
+            </button>
           )}
 
-          {/* Application Status Button */}
+          {/* Application Status */}
           <div className="relative group">
             <button
-              className={`inline-flex items-center px-2 py-1.5 rounded-xl text-xs font-semibold border transition-colors shrink-0 ${
-                job.application_status
-                  ? 'bg-blue-900/60 border-blue-700/60 text-blue-300'
-                  : 'bg-slate-800/60 border-slate-700/40 text-slate-400 hover:text-slate-200'
-              }`}
+              className={`btn-mission ${job.application_status ? 'btn-mission-cyan' : 'btn-mission-ghost'}`}
               title="Track application status"
             >
               {job.application_status
@@ -692,11 +682,12 @@ export default function JobCard({
                 : '📋'
               }{' '}
               {job.application_status
-                ? { applied: 'Applied', phone_screen: 'Phone Screen', interview: 'Interview', offer: 'Offer', rejected: 'Rejected' }[job.application_status]
+                ? { applied: 'Applied', phone_screen: 'Screen', interview: 'Interview', offer: 'Offer', rejected: 'Rej' }[job.application_status]
                 : 'Track'
               }
             </button>
-            <div className="absolute bottom-full right-0 mb-1 hidden group-hover:flex flex-col bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 min-w-[130px] py-1">
+            <div className="absolute bottom-full right-0 mb-1 hidden group-hover:flex flex-col shadow-xl z-20 min-w-[130px] py-1"
+              style={{background:'var(--navy2)',border:'1px solid var(--t2)'}}>
               {([
                 ['applied', '📨 Applied'],
                 ['phone_screen', '📞 Phone Screen'],
@@ -707,7 +698,10 @@ export default function JobCard({
                 <button
                   key={s}
                   onClick={() => onUpdateApplicationStatus(job.job_url, s)}
-                  className={`px-3 py-1.5 text-left text-xs hover:bg-slate-700 transition-colors ${job.application_status === s ? 'text-blue-400 font-bold' : 'text-slate-300'}`}
+                  className={`px-3 py-1.5 text-left text-xs transition-colors`}
+                  style={{color: job.application_status === s ? 'var(--cyan)' : 'var(--t2)', background:'transparent', border:'none', cursor:'pointer'}}
+                  onMouseOver={e=>(e.currentTarget.style.background='var(--navy3)')}
+                  onMouseOut={e=>(e.currentTarget.style.background='transparent')}
                 >
                   {label}
                 </button>
@@ -715,23 +709,23 @@ export default function JobCard({
               {job.application_status && (
                 <button
                   onClick={() => onUpdateApplicationStatus(job.job_url, null)}
-                  className="px-3 py-1.5 text-left text-xs text-red-400 hover:bg-slate-700 transition-colors border-t border-slate-700"
+                  style={{color:'var(--red)',background:'transparent',border:'none',borderTop:'1px solid var(--t3)',cursor:'pointer'}}
+                  className="px-3 py-1.5 text-left text-xs transition-colors"
                 >
-                  ✕ Clear status
+                  ✕ Clear
                 </button>
               )}
             </div>
           </div>
 
-          {/* Delete/Archive Button */}
           {authRole === 'admin' && (
             <button
               onClick={() => onDeleteJob(job.job_url)}
-              className="inline-flex items-center p-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-200 rounded-xl text-xs font-semibold border border-rose-800/40 transition-colors shrink-0"
-              title="Delete / Archive job posting"
+              className="btn-mission btn-mission-red"
+              title="Delete / Archive"
               aria-label="Delete or archive job posting"
             >
-              <XCircle className="w-4 h-4" />
+              <XCircle className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
