@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "tailwindcss-animate";
 
 /* ══════════════════════════════════════════════════════════
    MAAS SOURCING AGENT — Cyberpunk Mecha Design System

@@ -132,7 +132,7 @@ export default function JobCard({
 }: JobCardProps) {
   return (
     <div
-      className={`mission-card relative p-5 flex flex-col justify-between transition-all duration-200 group ${activeTab === 'approved'
+      className={`mission-card relative p-5 flex flex-col justify-between transition-all duration-300 hover:-translate-y-0.5 hover:shadow-cyan-500/20 animate-in fade-in slide-in-from-bottom-2 group ${activeTab === 'approved'
           ? 'mc-approved'
           : activeTab === 'rejected'
             ? 'mc-rejected'
