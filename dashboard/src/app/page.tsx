@@ -2389,30 +2389,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {newJobsCount > 0 && (
-          <dialog open className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 p-6 rounded-2xl max-w-lg w-full glass-card">
-              <h2 className="text-xl font-bold text-violet-300 mb-4">{newJobsCount} New Job Posting{newJobsCount > 1 ? 's' : ''}</h2>
-              {newJobsLoading ? (
-                <p className="text-sm text-violet-200">Loading...</p>
-              ) : (
-                <ul className="space-y-2 max-h-80 overflow-y-auto">
-                  {newJobs.map((job) => (
-                    <li key={job.requirement_id} className="border-b border-violet-500/30 pb-2">
-                      <a href={browserOpenJobUrl(job.job_url)} target="_blank" rel="noopener noreferrer" className="underline hover:text-violet-300">
-                        {job.job_title} @ {job.company_name}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex justify-end mt-4 space-x-2">
-                <button onClick={() => { setNewJobsCount(0); setNewJobs([]); }} className="px-3 py-1 rounded bg-violet-600 hover:bg-violet-500 text-sm">Dismiss</button>
-                <button onClick={() => { fetchData(); setNewJobsCount(0); setNewJobs([]); }} className="px-3 py-1 rounded bg-violet-700 hover:bg-violet-600 text-sm">Refresh View</button>
-              </div>
-            </div>
-          </dialog>
-        )}
+        {/* new-jobs flash card removed — count surfaced as tab badge instead */}
 
         {scraperStatus.last_metrics && Object.keys(scraperStatus.last_metrics || {}).length > 0 && scraperStatus.status !== 'running' && (
           <div className="bg-slate-900/20 backdrop-blur-md border border-slate-800/80 p-5 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -2518,6 +2495,12 @@ export default function Dashboard() {
                   }`}
               >
                 🆕 New Today ({newTodayJobs.length})
+                {newJobsCount > 0 && (
+                  <span className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-extrabold leading-none rounded-full animate-pulse"
+                    style={{background:'var(--cyan)',color:'var(--void)',minWidth:'16px'}}>
+                    +{newJobsCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => handleTabChange('applications')}
