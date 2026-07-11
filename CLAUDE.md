@@ -263,3 +263,38 @@ All implemented purely client-side in `dashboard/src/app/page.tsx` (no backend c
 - **Saved filter presets** ("High-fit" / "Fresh jobs" / "Remote-first" / "Needs review" buttons above the Approved tab's filter row) — set `confidenceBandFilter`/`remoteOnlyFilter`/`scrapedTimeframe` combinations, toggle off via `activeFilterPreset`. `remoteOnlyFilter` matches on `location_work_type` containing "remote" (case-insensitive substring, no new backend field).
 - **Bulk actions** (admin + Approved tab only) — per-card checkbox overlay (rendered outside `JobCard.tsx` itself, not a prop change) plus a "Select all visible" / "Mark Applied" / "Reject Selected" toolbar. Writes directly to Supabase via `supabase.from('jobs').update(...).in('job_url', urls)` — true bulk update, not a client-side loop over the single-job REST endpoints.
 - **Classifier QA panel** (bottom of the Analytics tab) — confidence-band distribution histogram over all approved jobs, plus a "Recently Rejected (OutOfScope)" sample list for spot-checking policy drift. Computed entirely from already-loaded `dedupedJobs`/`jobs` state, no new API endpoint.
+
+## CI failures and deploy disk-space fix (2026-07-11)
+
+### Python CI broken by unmocked search functions
+`tests/test_query_expansion.py`'s `test_search_and_scrape_for_keyword_uses_mocked_yahoo` was only mocking `search_yahoo` but not the new functions added when Serper replaced Yahoo (`search_duckduckgo`, `search_brave`, `_yahoo_reachable`, `_duckduckgo_reachable`). On CI, `search_duckduckgo` (backed by the real `ddgs` library) made live network calls and returned 22 real job URLs, causing `assert 1 == 22`. Fixed by adding `@patch` decorators for all four new functions (with `return_value=[]` / `return_value=True`). **Decorator ordering gotcha**: `@patch` decorators apply bottom-up, so the bottom decorator maps to the first parameter after `self` — add new decorators at the top of the stack and add the corresponding parameter at the end of the function signature. Also added verbose pytest output + artifact upload to `.github/workflows/ci.yml` so future CI failures are diagnosable without `gh` CLI:
+```yaml
+- name: Pytest
+  run: python -m pytest tests/ -v --tb=long 2>&1 | tee /tmp/pytest-output.txt; exit ${PIPESTATUS[0]}
+- name: Upload pytest output
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: pytest-output
+    path: /tmp/pytest-output.txt
+```
+
+### Docker disk space exhaustion on GCP VM deploy
+`ddgs` package pulls large transitive dependencies (numpy 16.8MB, primp 5.3MB, google-api-python-client 15.6MB, brotli, etc.) — the `pip install` inside the Docker build ran out of disk. Previous deploy step used `docker image prune -f --filter "until=24h"` which kept recent layers. Fix: stop the api container first (so its layers aren't "in use"), then prune without time filter:
+```yaml
+docker compose stop api 2>/dev/null || true
+docker image prune -af || true
+docker builder prune -af || true
+docker volume prune -f || true
+```
+This runs before every deploy in `.github/workflows/ci.yml`. Safe because the web image is now pre-built in GitHub Actions (pushed to GHCR) and pulled on the VM — only the `api` image is built locally on the VM, so disk pressure is now bounded.
+
+## Dashboard showing only ~1000 jobs instead of 4000+ (fixed 2026-07-11)
+
+**Root cause**: `load_all_jobs()` in `dashboard_server.py` ran `group_and_flag_duplicates()` (N² Jaccard similarity, threshold 0.85) on ALL rows returned from Supabase, not just the local JSON fallback. With 4306 Supabase rows, this took ~18 seconds and removed 852 jobs flagged as near-duplicates (same company, similar description) — including many legitimately distinct postings (same company posting multiple similar roles, or the same role re-posted with a new URL). The comment at the call site already said "Supabase rows are already deduped by (user_id, job_url) PK" — the dedup was never intended to run on Supabase data.
+
+**Fix** (4-line indentation change, `dashboard_server.py`): moved `group_and_flag_duplicates()` + the `[j for j in jobs if not j.get('is_duplicate')]` filter inside the `if not jobs:` local-JSON-only block. Supabase path now bypasses near-dedup entirely.
+
+**Impact**: `/api/jobs` response time dropped from ~18s → under 1s. Dashboard now shows all ~4000+ unique Supabase rows instead of the ~1000 that survived near-dedup. The frontend's own `dedupedJobs = jobs.filter(j => !j.is_duplicate && isUsLocation(...))` still applies — but since backend no longer sets `is_duplicate=True` on Supabase rows, that filter only removes genuine non-US locations.
+
+**Lesson**: near-dedup belongs in the local JSON path only. If description-level dedup is ever needed for Supabase rows in the future, it should run offline (a batch job / one-off script) rather than on every `/api/jobs` call.
