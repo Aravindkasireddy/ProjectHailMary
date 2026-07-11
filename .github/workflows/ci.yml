@@ -33,7 +33,14 @@ jobs:
           pip install pytest
 
       - name: Pytest
-        run: python -m pytest tests/ -v --tb=long
+        run: python -m pytest tests/ -v --tb=long 2>&1 | tee /tmp/pytest-output.txt; exit ${PIPESTATUS[0]}
+
+      - name: Upload pytest output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: /tmp/pytest-output.txt
 
       - name: Byte-compile key modules
         run: |
