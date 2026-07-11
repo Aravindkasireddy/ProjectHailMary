@@ -33,7 +33,7 @@ jobs:
           pip install pytest
 
       - name: Pytest
-        run: python -m pytest tests/ -q --tb=short
+        run: python -m pytest tests/ -v --tb=long
 
       - name: Byte-compile key modules
         run: |
