@@ -21,10 +21,17 @@ def test_server():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
-    # Give it a second to start
-    time.sleep(0.5)
+    # Wait until the server actually accepts connections (up to 5s)
+    base = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            requests.get(f"{base}/api/health", timeout=0.5)
+            break
+        except Exception:
+            time.sleep(0.1)
 
-    yield f"http://127.0.0.1:{port}"
+    yield base
 
     server.shutdown()
     server.server_close()
