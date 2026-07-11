@@ -276,158 +276,169 @@ from dashboard_config_store import (  # noqa: E402,F401
 _cached_jobs_data = {}
 _cached_jobs_mtimes = {}
 
-def load_all_jobs(email=None):
+def _fetch_all_supabase_jobs(user_id: str) -> list:
+    """Paginate through public.jobs for this user, returning all rows.
+
+    Supabase's default page size is 1000 rows; we loop with .range() until
+    the response comes back short (< page_size), meaning we've hit the end.
+    Columns we skip: embedding (large vector, never needed by the dashboard),
+    synced/synced_data (internal sync bookkeeping).
+    """
+    SELECT_COLS = (
+        "id,user_id,job_title,company_name,job_url,requirement_id,"
+        "job_description,location_work_type,apply_decision,strongest_label,"
+        "confidence_score,rationale,red_flags,apply_decision_payload,"
+        "scraped_at,stale,archived,pipeline_stage,min_salary,max_salary,"
+        "is_hourly,salary_text,benefits,created_at,ats_source,sources,"
+        "sponsorship_status,sponsorship_confidence,canonical_fingerprint"
+    )
+    PAGE = 1000
+    rows = []
+    offset = 0
+    try:
+        from supabase_client import get_supabase_client
+        sb = get_supabase_client()
+        while True:
+            res = (
+                sb.table("jobs")
+                .select(SELECT_COLS)
+                .eq("user_id", user_id)
+                .order("scraped_at", desc=True)
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            page = res.data or []
+            rows.extend(page)
+            if len(page) < PAGE:
+                break
+            offset += PAGE
+    except Exception as e:
+        print(f"[load_all_jobs] Supabase fetch failed: {e}")
+    return rows
+
+
+def load_all_jobs(email=None, user_id=None):
     global _cached_jobs_data, _cached_jobs_mtimes
 
     email_key = email or "admin@hailmary.ai"
 
-    approved_path = resolve_path(APPROVED_PATH, email)
-    active_path = resolve_path(ACTIVE_PATH, email)
-    failed_path = resolve_path(FAILED_PATH, email)
+    # ── Cache key: wall-clock bucket (10-second granularity) so repeated
+    #   rapid calls within a scrape run don't hit Supabase on every poll.
+    import time as _time
+    cache_key = int(_time.time() // 10)
+    cached = _cached_jobs_data.get(email_key)
+    if cached is not None and _cached_jobs_mtimes.get(email_key) == cache_key:
+        return cached
 
-    paths_to_track = {
-        "approved": approved_path,
-        "active": active_path,
-        "failed": failed_path,
-    }
-
-    current_mtimes = {}
-    for key, path in paths_to_track.items():
-        if os.path.exists(path):
-            current_mtimes[key] = os.path.getmtime(path)
-        else:
-            current_mtimes[key] = 0.0
-            
-    if email_key in _cached_jobs_data and _cached_jobs_mtimes.get(email_key) == current_mtimes:
-        return _cached_jobs_data[email_key]
     jobs = []
-    approved_urls = set()
 
-    # Import salary extractor helper
-    try:
-        from salary_extractor import extract_salary
-    except ImportError:
-        extract_salary = None
+    # ── PRIMARY: Supabase public.jobs (full history) ──────────────────────
+    if user_id:
+        raw = _fetch_all_supabase_jobs(user_id)
+        print(f"[load_all_jobs] Fetched {len(raw)} rows from Supabase for {email}")
+        for j in raw:
+            # Normalise fields expected by the frontend / downstream helpers
+            if not j.get('archived'):
+                j['archived'] = False
+            if not j.get('pipeline_stage'):
+                j['pipeline_stage'] = (
+                    'Approved' if j.get('apply_decision') == 'APPLY' else 'Rejected'
+                )
+            # source_file tag so admin tools can tell provenance
+            j.setdefault('source_file', 'supabase')
+            jobs.append(j)
 
-    # Load approved jobs
-    approved_path = resolve_path(APPROVED_PATH, email)
-    if os.path.exists(approved_path):
+    # ── FALLBACK: local JSON files (used when Supabase is unreachable or
+    #   user has no user_configs row yet) ──────────────────────────────────
+    if not jobs:
+        print(f"[load_all_jobs] Supabase returned 0 rows — falling back to local JSON for {email}")
+        approved_path = resolve_path(APPROVED_PATH, email)
+        active_path   = resolve_path(ACTIVE_PATH, email)
+        failed_path   = resolve_path(FAILED_PATH, email)
+
         try:
-            with open(approved_path, 'r') as f:
-                app_jobs = json.load(f)
-                for j in app_jobs:
-                    url = j.get('job_url')
-                    if url in approved_urls:
-                        continue
-                    j['status'] = 'approved'
-                    j['source_file'] = 'approved_jobs.json'
-                    
-                    if 'archived' not in j:
-                        j['archived'] = False
-                    
-                    # Set default pipeline stage
-                    if 'pipeline_stage' not in j:
-                        j['pipeline_stage'] = 'Approved'
-                    
-                    # Retroactive salary parsing
-                    if not j.get('salary_text') and extract_salary and j.get('job_description'):
-                        sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
-                        if sal_info:
-                            j.update(sal_info)
-                            
-                    if url:
-                        approved_urls.add(url)
-                    jobs.append(j)
-        except Exception as e:
-            print(f"Error reading approved jobs: {e}")
+            from salary_extractor import extract_salary
+        except ImportError:
+            extract_salary = None
 
-    # Load active candidates
-    active_path = resolve_path(ACTIVE_PATH, email)
-    if os.path.exists(active_path):
-        try:
-            with open(active_path, 'r') as f:
-                act_jobs = json.load(f)
-                for j in act_jobs:
-                    url = j.get('job_url')
-                    if not url or url in approved_urls:
-                        continue
-                    
-                    # If not approved, it was rejected during classification
-                    j['status'] = 'rejected'
-                    j['source_file'] = 'active_candidate_jobs.json'
+        approved_urls: set = set()
 
-                    # Set default pipeline stage ("Unreviewed" retired 2026-06-25 -
-                    # there's no human-review step in this pipeline, classification
-                    # is always auto-decided, so a job reaching this branch was
-                    # rejected, not "pending review").
-                    if 'pipeline_stage' not in j:
-                        j['pipeline_stage'] = 'Rejected'
-                    
-                    # Retroactive salary parsing
-                    if not j.get('salary_text') and extract_salary and j.get('job_description'):
-                        sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
-                        if sal_info:
-                            j.update(sal_info)
-                    
-                    # Fill in defaults if classify_and_save.py didn't write them
-                    if 'apply_decision' not in j:
+        if os.path.exists(approved_path):
+            try:
+                with open(approved_path, 'r') as f:
+                    for j in json.load(f):
+                        url = j.get('job_url')
+                        if url in approved_urls:
+                            continue
+                        j['status'] = 'approved'
+                        j['source_file'] = 'approved_jobs.json'
+                        j.setdefault('archived', False)
+                        j.setdefault('pipeline_stage', 'Approved')
+                        if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                            sal = extract_salary(j['job_description'], j.get('job_title', ''))
+                            if sal:
+                                j.update(sal)
+                        if url:
+                            approved_urls.add(url)
+                        jobs.append(j)
+            except Exception as e:
+                print(f"Error reading approved jobs: {e}")
+
+        if os.path.exists(active_path):
+            try:
+                with open(active_path, 'r') as f:
+                    for j in json.load(f):
+                        url = j.get('job_url')
+                        if not url or url in approved_urls:
+                            continue
+                        j['status'] = 'rejected'
+                        j['source_file'] = 'active_candidate_jobs.json'
+                        j.setdefault('pipeline_stage', 'Rejected')
+                        j.setdefault('apply_decision', 'DO_NOT_APPLY')
+                        j.setdefault('strongest_label', 'OutOfScope')
+                        j.setdefault('confidence_score', 0)
+                        j.setdefault('rationale', 'Rejected by classification logic (OutOfScope).')
+                        if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                            sal = extract_salary(j['job_description'], j.get('job_title', ''))
+                            if sal:
+                                j.update(sal)
+                        jobs.append(j)
+            except Exception as e:
+                print(f"Error reading active candidates: {e}")
+
+        if os.path.exists(failed_path):
+            try:
+                seen = {x.get('job_url') for x in jobs}
+                with open(failed_path, 'r') as f:
+                    for j in json.load(f):
+                        url = j.get('job_url')
+                        if not url or url in seen:
+                            continue
+                        j['status'] = 'rejected'
+                        j['source_file'] = 'failed_candidate_jobs.json'
                         j['apply_decision'] = 'DO_NOT_APPLY'
-                    if 'strongest_label' not in j:
                         j['strongest_label'] = 'OutOfScope'
-                    if 'confidence_score' not in j:
-                        j['confidence_score'] = 0
-                    if 'rationale' not in j:
-                        j['rationale'] = 'Rejected by classification logic (OutOfScope).'
-                    jobs.append(j)
-        except Exception as e:
-            print(f"Error reading active candidates: {e}")
+                        j['confidence_score'] = 100
+                        j['rationale'] = f"Failed pre-screen regex checks. Red flags: {', '.join(j.get('red_flags', []))}"
+                        j.setdefault('pipeline_stage', 'Rejected')
+                        if not j.get('salary_text') and extract_salary and j.get('job_description'):
+                            sal = extract_salary(j['job_description'], j.get('job_title', ''))
+                            if sal:
+                                j.update(sal)
+                        jobs.append(j)
+            except Exception as e:
+                print(f"Error reading failed candidates: {e}")
 
-    # Load failed candidate jobs (failed pre-screen)
-    failed_path = resolve_path(FAILED_PATH, email)
-    if os.path.exists(failed_path):
-        try:
-            with open(failed_path, 'r') as f:
-                fail_jobs = json.load(f)
-                for j in fail_jobs:
-                    url = j.get('job_url')
-                    if not url:
-                        continue
-                    if any(x.get('job_url') == url for x in jobs):
-                        continue
-                    j['status'] = 'rejected'
-                    j['source_file'] = 'failed_candidate_jobs.json'
-                    j['apply_decision'] = 'DO_NOT_APPLY'
-                    j['strongest_label'] = 'OutOfScope'
-                    j['confidence_score'] = 100
-                    j['rationale'] = f"Failed pre-screen regex checks. Red flags: {', '.join(j.get('red_flags', []))}"
-                    
-                    # Set default pipeline stage
-                    if 'pipeline_stage' not in j:
-                        j['pipeline_stage'] = 'Rejected'
-                    
-                    # Retroactive salary parsing
-                    if not j.get('salary_text') and extract_salary and j.get('job_description'):
-                        sal_info = extract_salary(j['job_description'], j.get('job_title', ''))
-                        if sal_info:
-                            j.update(sal_info)
-                            
-                    jobs.append(j)
-        except Exception as e:
-            print(f"Error reading failed candidates: {e}")
+        for j in jobs:
+            j.setdefault('benefits', extract_benefits(j.get('job_description', '')))
 
-    # Retroactively extract benefits if missing
-    for j in jobs:
-        if "benefits" not in j:
-            j["benefits"] = extract_benefits(j.get("job_description", ""))
-            
-    # Group and flag duplicates, then filter them out
+    # ── Dedup (Supabase rows are already deduped by (user_id, job_url) PK
+    #   but local JSON may have near-dupes) ─────────────────────────────────
     jobs = group_and_flag_duplicates(jobs)
     jobs = [j for j in jobs if not j.get('is_duplicate')]
 
-    # Cache results
     _cached_jobs_data[email_key] = jobs
-    _cached_jobs_mtimes[email_key] = current_mtimes
-
+    _cached_jobs_mtimes[email_key] = cache_key
     return jobs
 
 def calculate_analytics(email=None):
@@ -1342,7 +1353,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             
             email = self.get_auth_email()
             uid = self.get_auth_user_id()
-            jobs = load_all_jobs(email)
+            jobs = load_all_jobs(email, user_id=uid)
             
             # Fetch match scores from Supabase
             if uid:
