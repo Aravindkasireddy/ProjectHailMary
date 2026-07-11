@@ -153,7 +153,7 @@ jobs:
             docker pull ghcr.io/${REPO}/web:latest
             # Build only the api service locally; web uses the pre-built image pulled above.
             # `--build` on `up` would rebuild ALL services (including web), defeating the point.
-            WEB_IMAGE=ghcr.io/${REPO}/web:latest docker compose build api
+            DOCKER_BUILDKIT=1 WEB_IMAGE=ghcr.io/${REPO}/web:latest docker compose build api
             WEB_IMAGE=ghcr.io/${REPO}/web:latest docker compose up -d
             sleep 5
             curl -sf http://localhost:${JOBSEARCH_API_HOST_PORT:-8080}/api/health
