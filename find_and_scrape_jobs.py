@@ -485,40 +485,70 @@ def search_serpapi(query):
         log(f"SerpApi error: {e}")
     return None
 
-def search_duckduckgo(query):
+def search_brave(query):
+    """Brave Search API — free tier: 2,000 queries/month, no credit card.
+    Set BRAVE_SEARCH_API_KEY in .env to enable.
+    Sign up free at https://api.search.brave.com/"""
+    api_key = os.environ.get("BRAVE_SEARCH_API_KEY")
+    if not api_key:
+        return []
     if SEARCH_STATE["aborted"]:
         return []
     t0 = time.perf_counter()
-    headers = {
-        "User-Agent": get_random_user_agent(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-    }
-    time_filter = "&df=d" if PAST_24H else ""
-    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}{time_filter}"
     links = []
     try:
-        r = http_get(url, headers=headers, timeout=10)
+        params = {"q": query, "count": 15, "search_lang": "en", "country": "US"}
+        if PAST_24H:
+            params["freshness"] = "pd"
+        r = http_get(
+            "https://api.search.brave.com/res/v1/web/search",
+            headers={"Accept": "application/json", "Accept-Encoding": "gzip",
+                     "X-Subscription-Token": api_key},
+            params=params, timeout=10,
+        )
         if r.status_code == 200:
+            data = r.json()
+            for item in data.get("web", {}).get("results", []):
+                href = item.get("url", "")
+                links.append(href)
             SEARCH_STATE["consecutive_failures"] = 0
-            soup = BeautifulSoup(r.text, 'html.parser')
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if 'uddg=' in href:
-                    parsed_href = urlparse(href)
-                    queries = parse_qs(parsed_href.query)
-                    actual_url = queries.get('uddg', [None])[0]
-                    if actual_url:
-                        href = actual_url
-                
-                # Filter to ensure it belongs to one of our target job boards and isn't a search engine URL
-                if any(tgt in href for tgt in ['boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com', 'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com', 'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view', 'workatastartup.com/jobs']):
-                    parsed_actual = urlparse(href)
-                    domain_actual = parsed_actual.netloc.lower()
-                    if not any(se in domain_actual for se in ['yahoo.com', 'yahoo.co', 'google.com', 'bing.com', 'duckduckgo.com']):
-                        links.append(href)
         else:
-            log(f"DuckDuckGo search error for '{query}': status code {r.status_code}")
+            log(f"Brave Search error {r.status_code} for '{query}'")
             SEARCH_STATE["consecutive_failures"] += 1
+    except Exception as e:
+        log(f"Brave Search error for '{query}': {e}")
+        SEARCH_STATE["consecutive_failures"] += 1
+    _record_search_op("brave_search", time.perf_counter() - t0, query, len(links))
+    return links
+
+
+def search_duckduckgo(query):
+    """DuckDuckGo search via the ddgs library (uses DDG API, not the HTML page
+    that is blocked on the production VM's IP). Requires Python 3.10+."""
+    if SEARCH_STATE["aborted"]:
+        return []
+    t0 = time.perf_counter()
+    links = []
+    _TARGET_DOMAINS = [
+        'boards.greenhouse.io', 'jobs.lever.co', 'myworkdayjobs.com',
+        'jobs.ashbyhq.com', 'apply.workable.com', 'jobs.smartrecruiters.com',
+        'weworkremotely.com', 'remote.co', 'linkedin.com/jobs/view',
+        'workatastartup.com/jobs',
+    ]
+    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS  # older package name fallback
+        timelimit = "d" if PAST_24H else None
+        with DDGS() as ddgs_client:
+            results = list(ddgs_client.text(query, max_results=15, timelimit=timelimit))
+        for r in results:
+            href = r.get("href") or r.get("url") or ""
+            if any(tgt in href for tgt in _TARGET_DOMAINS):
+                links.append(href)
+        SEARCH_STATE["consecutive_failures"] = 0
+        log(f"DDG search returned {len(links)} ATS links for '{query}'")
     except Exception as e:
         log(f"DuckDuckGo search error for '{query}': {e}")
         SEARCH_STATE["consecutive_failures"] += 1
@@ -1767,7 +1797,8 @@ def search_for_job_url(query):
     has_bing = bool(os.environ.get("BING_SEARCH_API_KEY"))
     has_serper = bool(os.environ.get("SERPER_API_KEY"))
     has_serpapi = bool(os.environ.get("SERPAPI_API_KEY"))
-    
+    has_brave = bool(os.environ.get("BRAVE_SEARCH_API_KEY"))
+
     urls = None
     if has_google:
         urls = search_google_custom(query)
@@ -1777,11 +1808,13 @@ def search_for_job_url(query):
         urls = search_serper(query)
     elif has_serpapi:
         urls = search_serpapi(query)
-        
+    elif has_brave:
+        urls = search_brave(query)
+
+    if not urls:
+        urls = search_duckduckgo(query)
     if not urls and _yahoo_reachable():
         urls = search_yahoo(query)
-    if not urls and _duckduckgo_reachable():
-        urls = search_duckduckgo(query)
 
     return urls or []
 
@@ -2885,7 +2918,8 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
         has_bing = bool(os.environ.get("BING_SEARCH_API_KEY"))
         has_serper = bool(os.environ.get("SERPER_API_KEY"))
         has_serpapi = bool(os.environ.get("SERPAPI_API_KEY"))
-        
+        has_brave = bool(os.environ.get("BRAVE_SEARCH_API_KEY"))
+
         if has_google:
             using_api = True
             log(f"Searching Google Custom Search API: {query}")
@@ -2902,14 +2936,18 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
             using_api = True
             log(f"Searching SerpApi: {query}")
             urls = search_serpapi(query)
-            
+        elif has_brave:
+            using_api = True
+            log(f"Searching Brave Search API (free): {query}")
+            urls = search_brave(query)
+
         if not urls and not SEARCH_STATE["aborted"]:
             using_api = False
-            log(f"Searching Yahoo: {query}")
-            urls = search_yahoo(query)
-            if not urls and not SEARCH_STATE["aborted"] and _duckduckgo_reachable():
-                log(f"Yahoo search returned 0 results for '{query}'. Falling back to DuckDuckGo...")
-                urls = search_duckduckgo(query)
+            log(f"Searching DuckDuckGo (free, no key): {query}")
+            urls = search_duckduckgo(query)
+            if not urls and not SEARCH_STATE["aborted"] and _yahoo_reachable():
+                log(f"DDG returned 0 results for '{query}'. Falling back to Yahoo...")
+                urls = search_yahoo(query)
         
         if SEARCH_STATE["aborted"]:
             break
