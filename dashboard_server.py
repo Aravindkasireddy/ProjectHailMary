@@ -654,6 +654,7 @@ def override_job_on_disk(updated_job, email=None):
             json.dump(failed, f, indent=2)
         with open(active_path, 'w') as f:
             json.dump(active, f, indent=2)
+        _invalidate_jobs_cache(email)
         return True, msg
     except Exception as e:
         return False, f"Failed to save changes: {str(e)}"
