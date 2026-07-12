@@ -186,11 +186,132 @@ DRY_URLS_LOCK = threading.Lock()
 # each task (HTTP requests, parsing), just not the browser session itself.
 PLAYWRIGHT_LOCK = threading.Lock()
 
-# In Docker containers the OS thread limit is much lower than on a dev machine.
-# Nested ThreadPoolExecutors (outer×inner) can hit 160+ threads at peak and
-# crash with "can't start new thread". Cap inner pools to a safe value.
+# In Docker containers the OS thread / PID limit is much lower than on a
+# bare-metal or macOS host. Nested ThreadPoolExecutors (outer sourcing
+# channels × inner per-company/per-URL pools) previously peaked at 100+
+# threads and crashed with RuntimeError: can't start new thread. Cap hard,
+# and every pool site falls back to sequential if thread creation fails.
 _IN_DOCKER = os.path.exists("/.dockerenv")
-_INNER_POOL_SIZE = 5 if _IN_DOCKER else 20
+
+
+def _env_int(name, default):
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return max(1, int(str(raw).strip()))
+    except ValueError:
+        return default
+
+
+# JOBSEARCH_MAX_WORKERS caps every pool (outer + inner + scrape). Useful when
+# the container still OOMs / hits pids.max after the Docker defaults below.
+_WORKER_CAP = _env_int("JOBSEARCH_MAX_WORKERS", 2 if _IN_DOCKER else 32)
+_INNER_POOL_SIZE = min(_env_int("JOBSEARCH_INNER_WORKERS", 2 if _IN_DOCKER else 20), _WORKER_CAP)
+_OUTER_POOL_SIZE = min(_env_int("JOBSEARCH_OUTER_WORKERS", 2 if _IN_DOCKER else 8), _WORKER_CAP)
+_SCRAPE_POOL_SIZE = min(_env_int("JOBSEARCH_SCRAPE_WORKERS", 2 if _IN_DOCKER else 4), _WORKER_CAP)
+
+
+def _pool_workers(requested, n_items=None):
+    w = max(1, min(int(requested), _WORKER_CAP))
+    if n_items is not None:
+        w = min(w, max(1, int(n_items)))
+    return w
+
+
+def map_parallel(fn, items, max_workers, *, label="tasks"):
+    """
+    Map ``fn`` over ``items`` with a ThreadPoolExecutor.
+
+    If the OS refuses new threads (common under Docker cgroup / pids limits),
+    fall back to sequential execution instead of crashing the pipeline.
+    Per-item exceptions are logged and recorded as ``None`` so one bad item
+    does not abort the rest of the batch.
+    """
+    items = list(items)
+    if not items:
+        return []
+    workers = _pool_workers(max_workers, len(items))
+
+    def _safe(item):
+        try:
+            return fn(item)
+        except Exception as e:
+            log(f"{label}: item failed ({e})")
+            return None
+
+    if workers <= 1:
+        return [_safe(item) for item in items]
+    try:
+        results = [None] * len(items)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_idx = {executor.submit(_safe, item): idx for idx, item in enumerate(items)}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    log(f"{label}: worker failed ({e})")
+                    results[idx] = None
+        return results
+    except RuntimeError as e:
+        msg = str(e).lower()
+        if "can't start new thread" in msg or "too many threads" in msg:
+            log(f"{label}: thread pool unavailable ({e}); running sequentially")
+            return [_safe(item) for item in items]
+        raise
+
+
+def run_named_callables(tasks, max_workers, *, label="channels"):
+    """
+    Run ``{name: callable}`` concurrently; return ``{name: result_or_exc}``.
+
+    On thread-creation failure, runs each callable sequentially.
+    """
+    if not tasks:
+        return {}
+    items = list(tasks.items())
+    workers = _pool_workers(max_workers, len(items))
+
+    def _call(pair):
+        name, func = pair
+        try:
+            return name, func(), None
+        except Exception as e:
+            return name, None, e
+
+    if workers <= 1:
+        out = {}
+        for name, func in items:
+            try:
+                out[name] = func()
+            except Exception as e:
+                out[name] = e
+        return out
+
+    try:
+        out = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_name = {executor.submit(func): name for name, func in items}
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    out[name] = future.result()
+                except Exception as e:
+                    out[name] = e
+        return out
+    except RuntimeError as e:
+        msg = str(e).lower()
+        if "can't start new thread" in msg or "too many threads" in msg:
+            log(f"{label}: thread pool unavailable ({e}); running sequentially")
+            out = {}
+            for name, func in items:
+                try:
+                    out[name] = func()
+                except Exception as err:
+                    out[name] = err
+            return out
+        raise
 
 def add_if_new_url(url, found_urls):
     with FOUND_URLS_LOCK:
@@ -2445,18 +2566,17 @@ def fetch_linkedin_guest_jobs(target_titles, search_cfg, found_urls, dry_run, dr
     scraped = []
     if not dry_run and urls_to_scrape:
         log(f"Scraping {len(urls_to_scrape)} LinkedIn URLs in parallel...")
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_url = {executor.submit(scrape_single_url, url): url for url in urls_to_scrape}
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    job_data = future.result()
-                    if job_data and job_data.get("job_description"):
-                        job_data["scraped_at"] = get_cdt_now_iso()
-                        scraped.append(job_data)
-                        log(f"  Scraped LinkedIn Guest Job: '{job_data['job_title']}' at '{job_data['company_name']}'")
-                except Exception as e:
-                    log(f"Thread execution error scraping LinkedIn URL {url}: {e}")
+        def _scrape_li(url):
+            try:
+                return scrape_single_url(url)
+            except Exception as e:
+                log(f"Thread execution error scraping LinkedIn URL {url}: {e}")
+                return None
+        for job_data in map_parallel(_scrape_li, urls_to_scrape, _SCRAPE_POOL_SIZE, label="LinkedIn scrape"):
+            if job_data and job_data.get("job_description"):
+                job_data["scraped_at"] = get_cdt_now_iso()
+                scraped.append(job_data)
+                log(f"  Scraped LinkedIn Guest Job: '{job_data['job_title']}' at '{job_data['company_name']}'")
     return scraped
 
 
@@ -2658,18 +2778,17 @@ def fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls):
     scraped = []
     if not dry_run and urls_to_scrape:
         log(f"Scraping {len(urls_to_scrape)} Jooble URLs in parallel...")
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_url = {executor.submit(scrape_single_url, url): url for url in urls_to_scrape}
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    job_data = future.result()
-                    if job_data and job_data.get("job_description"):
-                        job_data["scraped_at"] = get_cdt_now_iso()
-                        scraped.append(job_data)
-                        log(f"  Scraped Jooble Job: '{job_data['job_title']}' at '{job_data['company_name']}'")
-                except Exception as e:
-                    log(f"Thread execution error scraping Jooble URL {url}: {e}")
+        def _scrape_jooble(url):
+            try:
+                return scrape_single_url(url)
+            except Exception as e:
+                log(f"Thread execution error scraping Jooble URL {url}: {e}")
+                return None
+        for job_data in map_parallel(_scrape_jooble, urls_to_scrape, _SCRAPE_POOL_SIZE, label="Jooble scrape"):
+            if job_data and job_data.get("job_description"):
+                job_data["scraped_at"] = get_cdt_now_iso()
+                scraped.append(job_data)
+                log(f"  Scraped Jooble Job: '{job_data['job_title']}' at '{job_data['company_name']}'")
     return scraped
 
 
@@ -2988,24 +3107,26 @@ def search_and_scrape_for_keyword(keyword, search_cfg, found_urls, dry_run, dry_
 
     if not dry_run and urls_to_scrape:
         log(f"Scraping {len(urls_to_scrape)} URLs in parallel for keyword '{keyword}'...")
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_url = {executor.submit(scrape_single_url, url): url for url in urls_to_scrape}
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    job_data = future.result()
-                    if job_data and job_data.get("job_description"):
-                        if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
-                            log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
-                            job_data["scraped_at"] = get_cdt_now_iso()
-                            keyword_scraped_jobs.append(job_data)
-                        else:
-                            log(f"Discarded (No Requirement ID): {url}")
+        def _scrape_keyword(url):
+            try:
+                return url, scrape_single_url(url)
+            except Exception as e:
+                log(f"Thread execution error scraping URL {url}: {e}")
+                return url, None
+        for url, job_data in map_parallel(_scrape_keyword, urls_to_scrape, _SCRAPE_POOL_SIZE, label=f"keyword scrape:{keyword}"):
+            try:
+                if job_data and job_data.get("job_description"):
+                    if job_data.get("requirement_id") and job_data.get("requirement_id") != "Unknown":
+                        log(f"Scraped: '{job_data['job_title']}' at '{job_data['company_name']}' - Req ID: {job_data['requirement_id']}")
+                        job_data["scraped_at"] = get_cdt_now_iso()
+                        keyword_scraped_jobs.append(job_data)
                     else:
-                        if job_data:
-                            log(f"Discarded (No JD text or inactive): {url}")
-                except Exception as e:
-                    log(f"Thread execution error scraping {url}: {e}")
+                        log(f"Discarded (No Requirement ID): {url}")
+                else:
+                    if job_data:
+                        log(f"Discarded (No JD text or inactive): {url}")
+            except Exception as e:
+                log(f"Error processing scraped result for {url}: {e}")
                     
     return keyword_scraped_jobs, urls_found_for_keyword
 
@@ -3633,20 +3754,31 @@ def fetch_company_board_jobs(companies_cfg, target_titles, found_urls, dry_run, 
             log(f"Error querying Lever board '{company}': {e}")
         return local_discovered, local_matched
 
-    with ThreadPoolExecutor(max_workers=_INNER_POOL_SIZE) as executor:
-        futures = []
-        for company in greenhouse_companies:
-            futures.append(executor.submit(process_greenhouse, company))
-        for company in lever_companies:
-            futures.append(executor.submit(process_lever, company))
-            
-        for future in as_completed(futures):
-            try:
-                res_disc, res_match = future.result()
-                discovered.extend(res_disc)
-                matched_count += res_match
-            except Exception as e:
-                log(f"Error processing future: {e}")
+    board_tasks = (
+        [("greenhouse", c) for c in greenhouse_companies]
+        + [("lever", c) for c in lever_companies]
+    )
+
+    def _process_company_board(task):
+        kind, company = task
+        if kind == "greenhouse":
+            return process_greenhouse(company)
+        return process_lever(company)
+
+    for res in map_parallel(
+        _process_company_board,
+        board_tasks,
+        _INNER_POOL_SIZE,
+        label="Greenhouse/Lever boards",
+    ):
+        try:
+            if not res:
+                continue
+            res_disc, res_match = res
+            discovered.extend(res_disc)
+            matched_count += res_match
+        except Exception as e:
+            log(f"Error processing company board result: {e}")
             
     log(f"Company API Sourcing complete. Found {matched_count} matching US jobs.")
     return discovered
@@ -3745,18 +3877,20 @@ def fetch_ashby_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_urls
             log(f"Error querying Ashby board '{company}': {e}")
         return local_discovered, local_matched
 
-    with ThreadPoolExecutor(max_workers=_INNER_POOL_SIZE) as executor:
-        futures = []
-        for company in ashby_companies:
-            futures.append(executor.submit(process_ashby, company))
-            
-        for future in as_completed(futures):
-            try:
-                res_disc, res_match = future.result()
-                discovered.extend(res_disc)
-                matched_count += res_match
-            except Exception as e:
-                log(f"Error processing future: {e}")
+    for res in map_parallel(
+        process_ashby,
+        ashby_companies,
+        _INNER_POOL_SIZE,
+        label="Ashby boards",
+    ):
+        try:
+            if not res:
+                continue
+            res_disc, res_match = res
+            discovered.extend(res_disc)
+            matched_count += res_match
+        except Exception as e:
+            log(f"Error processing Ashby board result: {e}")
                 
     log(f"Ashby API Sourcing complete. Found {matched_count} matching US jobs.")
     return discovered
@@ -4072,19 +4206,20 @@ def fetch_smartrecruiters_jobs(companies_cfg, target_titles, found_urls, dry_run
             log(f"Error querying SmartRecruiters board '{company}': {e}")
         return local_discovered, local_matched
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=_INNER_POOL_SIZE) as executor:
-        futures = []
-        for company in smart_companies:
-            futures.append(executor.submit(process_smart, company))
-            
-        for future in as_completed(futures):
-            try:
-                res_disc, res_match = future.result()
-                discovered.extend(res_disc)
-                matched_count += res_match
-            except Exception as e:
-                log(f"Error processing future: {e}")
+    for res in map_parallel(
+        process_smart,
+        smart_companies,
+        _INNER_POOL_SIZE,
+        label="SmartRecruiters boards",
+    ):
+        try:
+            if not res:
+                continue
+            res_disc, res_match = res
+            discovered.extend(res_disc)
+            matched_count += res_match
+        except Exception as e:
+            log(f"Error processing SmartRecruiters board result: {e}")
                 
     log(f"SmartRecruiters API Sourcing complete. Found {matched_count} matching US jobs.")
     return discovered
@@ -4229,17 +4364,14 @@ def fetch_workday_jobs(companies_cfg, target_titles, found_urls, dry_run, dry_ur
     log(f"Workday: using {mode} strategy across {len(board_urls)} boards")
 
     # Cap workers — Apify has daily quota; JSON API can tolerate more parallelism
-    workers = min(5 if apify_available else _INNER_POOL_SIZE, len(board_urls))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(process_board, url): url for url in board_urls}
-        for future in as_completed(futures):
-            board_url = futures[future]
-            try:
-                jobs = future.result()
+    workers = min(5 if apify_available else _INNER_POOL_SIZE, len(board_urls) or 1)
+    for jobs in map_parallel(process_board, board_urls, workers, label="Workday boards"):
+        try:
+            if jobs:
                 discovered.extend(jobs)
                 matched_count += len(jobs)
-            except Exception as e:
-                log(f"Workday board error {board_url}: {e}")
+        except Exception as e:
+            log(f"Workday board result error: {e}")
 
     log(f"Workday sourcing complete ({mode}). Found {matched_count} matching US jobs.")
     return discovered
@@ -4393,21 +4525,22 @@ def main(dry_run=False):
         "Jooble API": lambda: fetch_jooble_jobs(target_titles, search_cfg, found_urls, dry_run, dry_urls)
     }
 
-    _outer_workers = 4 if _IN_DOCKER else 8
-    log(f"Launching {len(tasks)} job sourcing channels concurrently (max_workers={_outer_workers})...")
-    with ThreadPoolExecutor(max_workers=_outer_workers) as executor:
-        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
-        for future in as_completed(future_to_task):
-            name = future_to_task[future]
-            try:
-                jobs_list = future.result()
-                if jobs_list:
-                    scraped_jobs.extend(jobs_list)
-                    log(f"Finished concurrent channel '{name}': Sourced {len(jobs_list)} jobs.")
-                else:
-                    log(f"Finished concurrent channel '{name}': Sourced 0 jobs.")
-            except Exception as e:
-                log(f"Error executing concurrent channel '{name}': {e}")
+    _outer_workers = _OUTER_POOL_SIZE
+    log(
+        f"Launching {len(tasks)} job sourcing channels concurrently "
+        f"(max_workers={_outer_workers}, docker={_IN_DOCKER}, worker_cap={_WORKER_CAP})..."
+    )
+    channel_results = run_named_callables(tasks, _outer_workers, label="sourcing channels")
+    for name, result in channel_results.items():
+        if isinstance(result, Exception):
+            log(f"Error executing concurrent channel '{name}': {result}")
+            continue
+        jobs_list = result
+        if jobs_list:
+            scraped_jobs.extend(jobs_list)
+            log(f"Finished concurrent channel '{name}': Sourced {len(jobs_list)} jobs.")
+        else:
+            log(f"Finished concurrent channel '{name}': Sourced 0 jobs.")
 
     # 2. Yahoo Search Sourcing
     log("Starting Yahoo search for US job postings (remote / hybrid / onsite)...")
@@ -4453,15 +4586,17 @@ def main(dry_run=False):
                     title_jobs.extend(syn_jobs)
         return title_jobs
 
-    with ThreadPoolExecutor(max_workers=2) as search_executor:
-        search_futures = [search_executor.submit(process_title_search, title) for title in target_titles]
-        for fut in as_completed(search_futures):
-            try:
-                res_jobs = fut.result()
-                if res_jobs:
-                    scraped_jobs.extend(res_jobs)
-            except Exception as e:
-                log(f"Error processing Yahoo title search: {e}")
+    for res_jobs in map_parallel(
+        process_title_search,
+        target_titles,
+        2,
+        label="Yahoo title search",
+    ):
+        try:
+            if res_jobs:
+                scraped_jobs.extend(res_jobs)
+        except Exception as e:
+            log(f"Error processing Yahoo title search: {e}")
 
     # 3. Dynamic Slug Discovery (auto-detect new company boards from crawler logs)
     discover_new_slugs(found_urls, target_companies)

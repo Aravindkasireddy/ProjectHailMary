@@ -73,9 +73,23 @@ jobs:
         working-directory: dashboard
         run: npm run lint
 
+  docker-security:
+    name: Docker Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Hadolint on API Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+      - name: Run Hadolint on Dashboard Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: dashboard/Dockerfile
+
   build-web:
     name: Build & push web image
-    needs: [python, dashboard]
+    needs: [python, dashboard, docker-security]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

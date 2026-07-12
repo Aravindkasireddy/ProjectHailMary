@@ -17,9 +17,11 @@ RUN --mount=type=tmpfs,target=/root/.cache \
 # Browsers in base image match Playwright ~1.60; reinstall chromium and webkit if pip upgraded playwright
 RUN python -m playwright install chromium webkit
 
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser
 
-COPY . .
+COPY --chown=appuser:appuser . .
 
+USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV JOBSEARCH_DASHBOARD_PORT=8080
 EXPOSE 8080
