@@ -1,0 +1,10 @@
+# Hadolint config for API + dashboard Dockerfiles.
+# https://github.com/hadolint/hadolint
+
+ignored:
+  # Ubuntu mirror package versions drift; pinning apt packages breaks rebuilds.
+  # curl is only used for HEALTHCHECK against the local API.
+  - DL3008
+  # Application Python deps are pinned in requirements.txt. Bootstrap
+  # `pip` upgrades (if any) are intentionally unpinned.
+  - DL3013

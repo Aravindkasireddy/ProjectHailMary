@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+# Deps are version-pinned in requirements.txt (satisfies Hadolint DL3013 intent).
 RUN --mount=type=tmpfs,target=/root/.cache \
-    pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt
 
 RUN addgroup --system appuser && adduser --system --ingroup appuser appuser \
     && mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
