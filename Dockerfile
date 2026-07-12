@@ -4,6 +4,11 @@ FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
 
 WORKDIR /app
 
+# Shared browser cache for root (install) and non-root (runtime). The official
+# image usually sets this already; pin it explicitly so a USER switch never
+# leaves browsers only under /root/.cache/ms-playwright/.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # OS packages sometimes needed by native wheels / TLS
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -14,10 +19,14 @@ RUN --mount=type=tmpfs,target=/root/.cache \
     pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Browsers in base image match Playwright ~1.60; reinstall chromium and webkit if pip upgraded playwright
-RUN python -m playwright install chromium webkit
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser \
+    && mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && chown -R appuser:appuser "${PLAYWRIGHT_BROWSERS_PATH}"
 
-RUN addgroup --system appuser && adduser --system --ingroup appuser appuser
+# Reinstall chromium/webkit if pip upgraded playwright past the base image.
+# Keep ownership on appuser so runtime launches resolve the same path.
+RUN python -m playwright install chromium webkit \
+    && chown -R appuser:appuser "${PLAYWRIGHT_BROWSERS_PATH}"
 
 COPY --chown=appuser:appuser . .
 
