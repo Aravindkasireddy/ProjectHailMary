@@ -42,6 +42,7 @@ import JobCard from '../../components/JobCard';
 import { supabase } from '../supabaseClient';
 import { dedupeJobsByCanonicalUrl, browserOpenJobUrl } from '../lib/jobUrl';
 import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
+import { fetchAllSupabaseJobs } from '../lib/fetchAllSupabaseJobs';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
@@ -917,8 +918,9 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
+      // Must paginate: Supabase/PostgREST silently caps unpaginated selects at 1000 rows.
       const [{ data: jobsData, error: jobsError }, { data: configData, error: configError }] = await Promise.all([
-        supabase.from('jobs').select('*').order('scraped_at', { ascending: false }),
+        fetchAllSupabaseJobs<Job>(supabase),
         supabase.from('user_configs').select('*').maybeSingle(),
       ]);
 
@@ -1436,17 +1438,13 @@ export default function Dashboard() {
     if (staleCheckStatus.status === 'running' && authToken) {
       interval = setInterval(() => {
         checkStaleStatus();
-        // Periodically refresh jobs list directly from Supabase
-        supabase
-          .from('jobs')
-          .select('*')
-          .order('scraped_at', { ascending: false })
-          .then(({ data }) => {
-            if (!data) return;
-            const deduped = dedupeJobsByCanonicalUrl(data as Job[]);
-            const incoming = filterJobsOfficialCareersOnly(deduped, officialCareerUrlsOnlyRef.current);
-            setJobs((prev) => (jobListPollUnchanged(prev, incoming) ? prev : incoming));
-          });
+        // Periodically refresh jobs list directly from Supabase (paginated — default cap is 1000).
+        void fetchAllSupabaseJobs<Job>(supabase).then(({ data }) => {
+          if (!data) return;
+          const deduped = dedupeJobsByCanonicalUrl(data);
+          const incoming = filterJobsOfficialCareersOnly(deduped, officialCareerUrlsOnlyRef.current);
+          setJobs((prev) => (jobListPollUnchanged(prev, incoming) ? prev : incoming));
+        });
       }, 2000);
     }
     return () => clearInterval(interval);
