@@ -1083,99 +1083,113 @@ def fetch_with_playwright(url):
                 # Try Chromium first, fallback to WebKit
                 _t_launch = time.perf_counter()
                 browser = None
+                context = None
                 browser_type = "chromium"
                 try:
-                    browser = p.chromium.launch(**launch_kwargs)
-                except Exception as chromium_err:
-                    log(f"Playwright Chromium launch failed, falling back to WebKit: {chromium_err}")
-                    # Launch webkit as fallback
-                    launch_kwargs_fallback = {"headless": True}
-                    if proxy_obj:
-                        launch_kwargs_fallback["proxy"] = proxy_obj
-                    browser = p.webkit.launch(**launch_kwargs_fallback)
-                    browser_type = "webkit"
-                _record_substep("browser_launch", time.perf_counter() - _t_launch, metadata={"browser_type": browser_type})
+                    try:
+                        browser = p.chromium.launch(**launch_kwargs)
+                    except Exception as chromium_err:
+                        log(f"Playwright Chromium launch failed, falling back to WebKit: {chromium_err}")
+                        # Launch webkit as fallback
+                        launch_kwargs_fallback = {"headless": True}
+                        if proxy_obj:
+                            launch_kwargs_fallback["proxy"] = proxy_obj
+                        browser = p.webkit.launch(**launch_kwargs_fallback)
+                        browser_type = "webkit"
+                    _record_substep("browser_launch", time.perf_counter() - _t_launch, metadata={"browser_type": browser_type})
 
-                # Rotate viewport sizes
-                viewports = [
-                    {"width": 1920, "height": 1080},
-                    {"width": 1440, "height": 900},
-                    {"width": 1366, "height": 768},
-                    {"width": 1536, "height": 864}
-                ]
-                viewport = random.choice(viewports)
-                
-                # Rotate languages
-                locales = ["en-US", "en-GB", "en-CA"]
-                locale = random.choice(locales)
-                
-                _t_context = time.perf_counter()
-                context = browser.new_context(
-                    user_agent=get_random_user_agent(),
-                    viewport=viewport,
-                    locale=locale,
-                    timezone_id="America/Chicago",
-                    geolocation={"latitude": 37.7749, "longitude": -122.4194},
-                    permissions=["geolocation"]
-                )
-
-                page = context.new_page()
-
-                # Apply stealth mode if library is available (stealth_sync is designed for chromium)
-                if stealth_sync and browser_type == "chromium":
-                    stealth_sync(page)
-                _record_substep("browser_context_create", time.perf_counter() - _t_context)
-
-                # Navigate with a generous timeout
-                _t_nav = time.perf_counter()
-                page.goto(url, wait_until="commit", timeout=30000)
-                _record_substep("page_navigation", time.perf_counter() - _t_nav)
-
-                # 1. Cloudflare / Bot Verification Wait Loop
-                for cf_attempt in range(5):
-                    title = page.title().lower()
-                    content = page.content().lower()
-                    if any(term in title for term in ["cloudflare", "just a moment", "attention required"]) or "checking your browser" in content:
-                        log(f"Playwright detected Cloudflare or checking page for {url}. Waiting 2s (attempt {cf_attempt + 1}/5)...")
-                        time.sleep(2.0)
-                    else:
-                        break
-                
-                # 2. Simulate Human Interaction (Scroll)
-                try:
-                    # Scroll down to trigger lazy loading of assets and text
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.35)")
-                    time.sleep(random.uniform(0.5, 1.2))
-                    page.evaluate("window.scrollTo(0, 0)")
-                except Exception:
-                    pass
-                
-                # 3. Dynamic Selector/Network Wait
-                try:
-                    # Common selectors for job descriptions (Greenhouse, Lever, Ashby, Workday, etc.)
-                    selectors = [
-                        '[data-automation-id="jobPostingDescription"]',
-                        '[data-qa="job-description"]',
-                        '.job-description',
-                        '#job-description',
-                        '.job-body',
-                        '.jobDescription',
-                        'article',
-                        'main'
+                    # Rotate viewport sizes
+                    viewports = [
+                        {"width": 1920, "height": 1080},
+                        {"width": 1440, "height": 900},
+                        {"width": 1366, "height": 768},
+                        {"width": 1536, "height": 864}
                     ]
-                    # Wait for any of these selectors to be visible
-                    _t_sel = time.perf_counter()
-                    page.wait_for_selector(", ".join(selectors), timeout=6000)
-                    _record_substep("wait_for_selector", time.perf_counter() - _t_sel, success=True)
-                except Exception:
-                    _record_substep("wait_for_selector", time.perf_counter() - _t_sel, success=False)
-                    # Fallback sleep to let SPA routers finish loading
-                    time.sleep(random.uniform(2.5, 4.0))
+                    viewport = random.choice(viewports)
+                    
+                    # Rotate languages
+                    locales = ["en-US", "en-GB", "en-CA"]
+                    locale = random.choice(locales)
+                    
+                    _t_context = time.perf_counter()
+                    context = browser.new_context(
+                        user_agent=get_random_user_agent(),
+                        viewport=viewport,
+                        locale=locale,
+                        timezone_id="America/Chicago",
+                        geolocation={"latitude": 37.7749, "longitude": -122.4194},
+                        permissions=["geolocation"]
+                    )
 
-                html = page.content()
-                browser.close()
-                _log_playwright_timing(url, time.perf_counter() - t0, attempt, success=True)
-                return html
+                    page = context.new_page()
+
+                    # Apply stealth mode if library is available (stealth_sync is designed for chromium)
+                    if stealth_sync and browser_type == "chromium":
+                        stealth_sync(page)
+                    _record_substep("browser_context_create", time.perf_counter() - _t_context)
+
+                    # Navigate with a generous timeout
+                    _t_nav = time.perf_counter()
+                    page.goto(url, wait_until="commit", timeout=30000)
+                    _record_substep("page_navigation", time.perf_counter() - _t_nav)
+
+                    # 1. Cloudflare / Bot Verification Wait Loop
+                    for cf_attempt in range(5):
+                        title = page.title().lower()
+                        content = page.content().lower()
+                        if any(term in title for term in ["cloudflare", "just a moment", "attention required"]) or "checking your browser" in content:
+                            log(f"Playwright detected Cloudflare or checking page for {url}. Waiting 2s (attempt {cf_attempt + 1}/5)...")
+                            time.sleep(2.0)
+                        else:
+                            break
+                    
+                    # 2. Simulate Human Interaction (Scroll)
+                    try:
+                        # Scroll down to trigger lazy loading of assets and text
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.35)")
+                        time.sleep(random.uniform(0.5, 1.2))
+                        page.evaluate("window.scrollTo(0, 0)")
+                    except Exception:
+                        pass
+                    
+                    # 3. Dynamic Selector/Network Wait
+                    _t_sel = time.perf_counter()
+                    try:
+                        # Common selectors for job descriptions (Greenhouse, Lever, Ashby, Workday, etc.)
+                        selectors = [
+                            '[data-automation-id="jobPostingDescription"]',
+                            '[data-qa="job-description"]',
+                            '.job-description',
+                            '#job-description',
+                            '.job-body',
+                            '.jobDescription',
+                            'article',
+                            'main'
+                        ]
+                        # Wait for any of these selectors to be visible
+                        page.wait_for_selector(", ".join(selectors), timeout=6000)
+                        _record_substep("wait_for_selector", time.perf_counter() - _t_sel, success=True)
+                    except Exception:
+                        _record_substep("wait_for_selector", time.perf_counter() - _t_sel, success=False)
+                        # Fallback sleep to let SPA routers finish loading
+                        time.sleep(random.uniform(2.5, 4.0))
+
+                    html = page.content()
+                    _log_playwright_timing(url, time.perf_counter() - t0, attempt, success=True)
+                    return html
+                finally:
+                    # Always close browser/context so driver node processes do not leak
+                    # (prod incident: dozens of orphaned run-driver procs → can't start new thread).
+                    try:
+                        if context is not None:
+                            context.close()
+                    except Exception:
+                        pass
+                    try:
+                        if browser is not None:
+                            browser.close()
+                    except Exception:
+                        pass
         except Exception as e:
             last_err = e
             log(f"Playwright attempt {attempt} failed for {url}: {e}")

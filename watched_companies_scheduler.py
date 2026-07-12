@@ -26,7 +26,7 @@ _watched_scrape_inflight_lock = threading.Lock()
 # and the box needed a hard reset. Cap how many scrapes can run at once;
 # anything due beyond the cap waits for a slot on a later tick (60s later)
 # instead of all firing in the same instant.
-MAX_CONCURRENT_WATCHED_SCRAPES = 3
+MAX_CONCURRENT_WATCHED_SCRAPES = 2
 
 
 def _watched_hint_from_url(url: str) -> str:

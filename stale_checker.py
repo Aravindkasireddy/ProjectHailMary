@@ -113,13 +113,9 @@ def persist_job_stale_flag(email, job_url, stale):
 def stale_check_worker(email=None, user_id=None):
     """Bulk-check approved jobs for staleness and persist the result.
 
-    Real incident (2026-06-24): this used to only read/write the local
-    ``approved_jobs.json`` file. Supabase ``public.jobs`` is the sole
-    job-data store for the dashboard (see CLAUDE.md), so those local-only
-    writes never reached the table the UI actually reads from - confirmed
-    live, 0 of 2777 Supabase rows had ever been flagged stale despite jobs
-    sitting unverified for over a week. Now also updates Supabase per job
-    when a user_id is available, same as the single-job check-live endpoint.
+    Prefer Supabase ``public.jobs`` when ``user_id`` is set (the UI's source of
+    truth). Fall back to local ``approved_jobs*.json`` only when Supabase is
+    unavailable or empty. Always write ``stale`` back to Supabase when possible.
     """
     import dashboard_server as ds
 
@@ -141,12 +137,43 @@ def stale_check_worker(email=None, user_id=None):
 
     approved_path = ds.resolve_path(ds.APPROVED_PATH, email)
     try:
-        if not os.path.exists(approved_path):
-            state["status"] = "idle"
-            return
+        approved_jobs = []
+        source = "local_json"
 
-        with open(approved_path, 'r') as f:
-            approved_jobs = json.load(f)
+        if sb is not None and user_id:
+            try:
+                # Paginate — PostgREST default max rows can truncate large feeds.
+                offset = 0
+                page_size = 1000
+                while True:
+                    res = (
+                        sb.table("jobs")
+                        .select("id,job_url,scraped_at,created_at,stale,archived,apply_decision")
+                        .eq("user_id", str(user_id))
+                        .eq("archived", False)
+                        .order("scraped_at", desc=True)
+                        .range(offset, offset + page_size - 1)
+                        .execute()
+                    )
+                    batch = res.data or []
+                    approved_jobs.extend(batch)
+                    if len(batch) < page_size:
+                        break
+                    offset += page_size
+                if approved_jobs:
+                    source = "supabase"
+                    print(f"Stale check worker: loaded {len(approved_jobs)} jobs from Supabase")
+            except Exception as e:
+                print(f"Stale check worker: Supabase list failed, falling back to local JSON: {e}")
+                approved_jobs = []
+
+        if not approved_jobs:
+            if not os.path.exists(approved_path):
+                state["status"] = "idle"
+                return
+            with open(approved_path, "r") as f:
+                approved_jobs = json.load(f)
+            source = "local_json"
 
         state["total"] = len(approved_jobs)
         if not approved_jobs:
@@ -157,6 +184,7 @@ def stale_check_worker(email=None, user_id=None):
         AUTO_ARCHIVE_DAYS = 30
         now = datetime.now(timezone.utc)
         auto_archived = 0
+        url_to_stale = {}
 
         updated_jobs = []
         for idx, job in enumerate(approved_jobs):
@@ -176,7 +204,7 @@ def stale_check_worker(email=None, user_id=None):
             should_archive = False
             if is_stale and scraped_at:
                 try:
-                    age = now - datetime.fromisoformat(scraped_at.replace("Z", "+00:00"))
+                    age = now - datetime.fromisoformat(str(scraped_at).replace("Z", "+00:00"))
                     if age.days >= AUTO_ARCHIVE_DAYS:
                         should_archive = True
                 except Exception:
@@ -188,22 +216,51 @@ def stale_check_worker(email=None, user_id=None):
                     if should_archive:
                         update["archived"] = True
                         auto_archived += 1
-                    sb.table("jobs").update(update).eq("job_url", url).eq(
-                        "user_id", str(user_id)
-                    ).execute()
+                    q = sb.table("jobs").update(update).eq("user_id", str(user_id))
+                    job_id = job.get("id")
+                    if job_id:
+                        q = q.eq("id", job_id)
+                    else:
+                        q = q.eq("job_url", url)
+                    q.execute()
                 except Exception as e:
                     print(f"Stale check worker: Supabase update failed for {url}: {e}")
 
+            if url:
+                url_to_stale[url] = bool(job.get("stale"))
             updated_jobs.append(job)
             state["completed"] = idx + 1
             state["progress"] = int((idx + 1) / len(approved_jobs) * 100)
-            time.sleep(1)
+            time.sleep(0.35)
 
         if auto_archived:
             print(f"Stale check worker: auto-archived {auto_archived} jobs older than {AUTO_ARCHIVE_DAYS} days")
 
-        with open(approved_path, 'w') as f:
-            json.dump(updated_jobs, f, indent=2)
+        # Keep local JSON in sync when we used it as the source, or mirror stale flags onto it.
+        if source == "local_json" or os.path.exists(approved_path):
+            try:
+                if source == "local_json":
+                    with open(approved_path, "w") as f:
+                        json.dump(updated_jobs, f, indent=2)
+                elif url_to_stale and os.path.exists(approved_path):
+                    with open(approved_path, "r") as f:
+                        local_jobs = json.load(f)
+                    changed = False
+                    for j in local_jobs:
+                        u = j.get("job_url")
+                        if u in url_to_stale and j.get("stale") != url_to_stale[u]:
+                            j["stale"] = url_to_stale[u]
+                            changed = True
+                    if changed:
+                        with open(approved_path, "w") as f:
+                            json.dump(local_jobs, f, indent=2)
+            except Exception as e:
+                print(f"Stale check worker: local JSON sync skipped: {e}")
+
+        try:
+            ds._invalidate_jobs_cache(email)
+        except Exception:
+            pass
 
     except Exception as e:
         print(f"Error in stale check worker: {e}")

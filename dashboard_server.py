@@ -1048,6 +1048,14 @@ def company_scraper_worker(
             bufsize=1,
         )
         stderr_buf = []
+        # Hard cap so a hung Playwright/iCIMS scrape cannot exhaust container threads
+        # (prod incident 2026-07-12: orphaned company_scraper + run-driver → API 502).
+        try:
+            scrape_timeout_s = int(os.environ.get("COMPANY_SCRAPE_TIMEOUT_SECONDS", "1200"))
+        except ValueError:
+            scrape_timeout_s = 1200
+        scrape_timeout_s = max(120, scrape_timeout_s)
+        deadline = time.time() + scrape_timeout_s
 
         def _drain_stderr():
             try:
@@ -1072,18 +1080,52 @@ def company_scraper_worker(
         t_err = threading.Thread(target=_drain_stderr, daemon=True)
         t_err.start()
         stdout_chunks = []
+        timed_out = False
         try:
-            for line in iter(p.stdout.readline, ""):
-                stdout_chunks.append(line)
+            while True:
+                if p.poll() is not None:
+                    # Drain remaining stdout
+                    try:
+                        rest = p.stdout.read() if p.stdout else ""
+                        if rest:
+                            stdout_chunks.append(rest)
+                    except Exception:
+                        pass
+                    break
+                if time.time() >= deadline:
+                    timed_out = True
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                    try:
+                        p.wait(timeout=15)
+                    except Exception:
+                        pass
+                    break
+                line = p.stdout.readline() if p.stdout else ""
+                if line:
+                    stdout_chunks.append(line)
+                else:
+                    time.sleep(0.2)
         finally:
-            rc = p.wait()
+            if p.poll() is None:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            rc = p.wait() if p.poll() is None else p.returncode
+            if timed_out:
+                rc = rc if rc not in (None, 0) else 124
         t_err.join(timeout=5)
         full_out = "".join(stdout_chunks)
         full_err = "".join(stderr_buf)
+        if timed_out:
+            full_err += f"\n[timeout] company scrape exceeded {scrape_timeout_s}s; process killed\n"
         with open(log_path, "a", encoding="utf-8") as lf:
             lf.write(full_out + "\n")
             lf.write(full_err + "\n")
-            lf.write(f"[{datetime.utcnow().isoformat()}] company_scrape END rc={rc}\n")
+            lf.write(f"[{datetime.utcnow().isoformat()}] company_scrape END rc={rc} timed_out={timed_out}\n")
 
         summary = None
         for line in reversed(full_out.strip().splitlines()):
@@ -1097,7 +1139,12 @@ def company_scraper_worker(
                 except Exception:
                     continue
 
-        if rc != 0:
+        if timed_out:
+            err_msg = f"Company scrape timed out after {scrape_timeout_s}s"
+            _finish_state("failed", "failed", summary=summary, error=err_msg)
+            if db_tracker:
+                db_tracker.fail(err_msg)
+        elif rc != 0:
             err_msg = f"Process exited with code {rc}"
             _finish_state(
                 "failed",

@@ -2253,12 +2253,12 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Stale Check button (batch local JSON; per-row checks use “Check live” on each card) */}
+          {/* Stale Check button (bulk: Supabase jobs when logged in; else local JSON) */}
           {authRole === 'admin' && (
             <button
               onClick={triggerStaleCheck}
               disabled={staleCheckStatus.status === 'running'}
-              title="Admin: batch scan local approved_jobs*.json only. To flag Supabase rows, use “Check live” under each job title."
+              title="Admin: bulk-check posting URLs. Uses your Supabase jobs when available; also updates local JSON. Per-card Check live for one job."
               className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${staleCheckStatus.status === 'running'
                   ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                   : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
