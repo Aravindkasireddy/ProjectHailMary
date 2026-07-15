@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Briefcase,
   Settings as SettingsIcon,
@@ -18,20 +19,8 @@ import {
   BarChart3,
   Shield,
   Copy,
-  Undo,
-  Redo,
-  Bold,
-  Italic,
-  Underline,
-  List,
-  ListOrdered,
-  Link2,
-  Type,
   FileText,
-  Lock,
-  LogOut,
-  Globe,
-  Activity
+  Activity,
 } from 'lucide-react';
 import ResumeGenerator from '../../components/ResumeGenerator';
 import CopyButton from '../../components/CopyButton';
@@ -39,6 +28,7 @@ import LogConsole from '../../components/LogConsole';
 import SettingsPanel from '../../components/SettingsPanel';
 import PolicyPanel from '../../components/PolicyPanel';
 import JobCard from '../../components/JobCard';
+import AppNav from '../../components/AppNav';
 import { supabase } from '../supabaseClient';
 import { dedupeJobsByCanonicalUrl, browserOpenJobUrl } from '../lib/jobUrl';
 import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
@@ -82,11 +72,7 @@ export default function Dashboard() {
   const [authRole, setAuthRole] = useState<'admin' | 'user' | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
-  const [loginEmail, setLoginEmail] = useState<string>('');
-  const [loginPassword, setLoginPassword] = useState<string>('');
-  const [loginError, setLoginError] = useState<string>('');
-  const [loginLoading, setLoginLoading] = useState<boolean>(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const router = useRouter();
 
   // Analytics and Policy States
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
@@ -215,50 +201,6 @@ export default function Dashboard() {
     setTimeout(() => setStatusMessage(null), 5000);
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-    setLoginLoading(true);
-    try {
-      if (authMode === 'login') {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: loginEmail,
-          password: loginPassword,
-        });
-        if (error) throw error;
-        if (data.session) {
-          const token = data.session.access_token;
-          const userEmail = data.session.user.email || loginEmail;
-          const role = userEmail === 'admin@hailmary.ai' ? 'admin' : 'user';
-          
-          localStorage.setItem('maas_auth_token', token);
-          localStorage.setItem('maas_auth_role', role);
-          localStorage.setItem('maas_auth_email', userEmail);
-          
-          setAuthToken(token);
-          setAuthRole(role);
-          setAuthEmail(userEmail);
-          setLoginPassword('');
-          setLoginEmail('');
-          showStatus(`Welcome, logged in as ${role === 'admin' ? 'Admin' : 'User'}.`, 'success');
-        }
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email: loginEmail,
-          password: loginPassword,
-        });
-        if (error) throw error;
-        setAuthMode('login');
-        showStatus('Account created successfully! Please check your email or log in.', 'success');
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Authentication failed.';
-      setLoginError(errMsg);
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem('maas_auth_token');
@@ -267,7 +209,7 @@ export default function Dashboard() {
     setAuthToken(null);
     setAuthRole(null);
     setAuthEmail(null);
-    showStatus('Logged out successfully.', 'info');
+    router.push('/login');
   };
 
   useEffect(() => {
@@ -1775,253 +1717,23 @@ export default function Dashboard() {
   }
 
   if (!authToken) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 px-4 relative overflow-hidden">
-        {/* Background gradients */}
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full filter blur-[80px] pointer-events-none" />
-        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-600/10 rounded-full filter blur-[80px] pointer-events-none" />
-
-        <div className="w-full max-w-md bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-8 shadow-2xl relative z-10 animate-in fade-in zoom-in-95 duration-300">
-          <div className="flex flex-col items-center space-y-6">
-            <div className="p-4 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-2xl shadow-xl shadow-violet-500/10 flex items-center justify-center">
-              <Lock className="w-8 h-8 text-white" />
-            </div>
-            
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-                MAAS Sourcing Agent
-              </h2>
-              <p className="text-sm text-slate-400">Master Classifier Policy Dashboard</p>
-            </div>
-
-            <form onSubmit={handleLogin} className="w-full space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  placeholder="name@example.com"
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-600/50 focus:border-violet-500 transition-all"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-600/50 focus:border-violet-500 transition-all"
-                  required
-                />
-              </div>
-
-              {loginError && (
-                <div className="flex items-center space-x-2 bg-rose-950/30 border border-rose-800/50 rounded-xl p-3 text-rose-400 text-sm animate-in shake duration-200">
-                  <XCircle className="w-4 h-4 shrink-0" />
-                  <span>{loginError}</span>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loginLoading}
-                className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed group"
-              >
-                {loginLoading ? (
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                ) : (
-                  <>
-                    <span>{authMode === 'login' ? 'Authenticate' : 'Create Account'}</span>
-                    <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                  </>
-                )}
-              </button>
-
-              <div className="text-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode(authMode === 'login' ? 'register' : 'login');
-                    setLoginError('');
-                  }}
-                  className="text-xs text-violet-400 hover:text-violet-300 font-medium transition-colors"
-                >
-                  {authMode === 'login' ? "Don't have an account? Create one" : 'Already have an account? Sign in'}
-                </button>
-              </div>
-            </form>
-
-            <div className="text-xs text-slate-500 text-center border-t border-slate-800/60 pt-4 w-full">
-              Sign in with Supabase. The dashboard talks to your MAAS API using{' '}
-              <code className="text-slate-400">NEXT_PUBLIC_API_URL</code> and a bearer token.
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    if (!isAuthChecking) router.replace('/login');
+    return null;
   }
 
+
   return (
-    <div className="flex-1 min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-violet-600/30">
-
-      {/* Background gradients */}
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full filter blur-[80px] pointer-events-none" />
-      <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-indigo-600/10 rounded-full filter blur-[80px] pointer-events-none" />
-
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-start gap-3 min-w-0">
-          <div className="p-2 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-xl shadow-lg shadow-violet-500/20 shrink-0">
-            <Briefcase className="w-6 h-6 text-white" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-              MAAS Sourcing Agent
-            </h1>
-            <p className="text-xs text-slate-400">Master Classifier Policy Dashboard</p>
-            <Link
-              href="/company-scraper"
-              className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-300 hover:text-white bg-violet-950/50 hover:bg-violet-800/50 border border-violet-600/50 hover:border-violet-500 px-3 py-1.5 rounded-lg transition-colors shadow-sm shadow-violet-900/20"
-            >
-              <Globe className="w-3.5 h-3.5 shrink-0" />
-              <span>Company job scraper · watched employers</span>
-              <ChevronRight className="w-3.5 h-3.5 shrink-0 opacity-80" />
-            </Link>
-          </div>
-        </div>
-
-        {/* Integration status + actions (wrap so Company Scraper is not clipped on narrow viewports) */}
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 min-w-0 max-w-[min(100%,72rem)]">
-
-          {/* Role Status Pill */}
-          <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 shadow-inner">
-            <Shield className={`w-3.5 h-3.5 ${authRole === 'admin' ? 'text-violet-400' : 'text-slate-400'}`} />
-            <span className="text-xs font-medium text-slate-300">Role:</span>
-            <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full border ${
-              authRole === 'admin' 
-                ? 'text-violet-400 bg-violet-950/40 border-violet-800/50' 
-                : 'text-slate-400 bg-slate-950/40 border-slate-800/50'
-            }`}>
-              {authRole === 'admin' ? 'Admin' : 'Read-Only'}{authEmail ? ` (${authEmail})` : ''}
-            </span>
-          </div>
-
-          {/* Logout Button */}
-          <button
-            onClick={handleLogout}
-            className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-full transition-colors active:scale-95"
-            title="Log out"
-          >
-            <LogOut className="w-3.5 h-3.5 mr-1.5" />
-            Logout
-          </button>
-
-          {/* Webhook Status indicator */}
-          {(config.webhook_url || config.webhook_source === 'environment') && (
-            <div className="flex items-center space-x-1.5 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5 text-xs text-indigo-300">
-              <BellRing className="w-3.5 h-3.5" />
-              <span>Discord {config.webhook_source === 'environment' ? '(env)' : ''}</span>
-            </div>
-          )}
-
-          {/* Scraper Status */}
-          <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-800 rounded-full px-3 py-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${scraperStatus.status === 'running' ? 'bg-amber-400' : 'bg-slate-400'}`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${scraperStatus.status === 'running' ? 'bg-amber-500' : 'bg-slate-500'}`}></span>
-            </span>
-            <span className="text-xs text-slate-300 capitalize">
-              {scraperStatus.status === 'running'
-                ? 'Sourcing...'
-                : scraperStatus.status === 'failed'
-                  ? 'Failed'
-                  : scraperStatus.status === 'completed'
-                    ? 'Ready'
-                    : 'Idle'}
-            </span>
-          </div>
-
-          {/* Stale Check Status */}
-          {staleCheckStatus.status === 'running' && (
-            <div className="flex items-center space-x-2 bg-indigo-950/40 border border-indigo-900/60 rounded-full px-3 py-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-indigo-400"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-              </span>
-              <span className="text-xs text-indigo-300">
-                Checking Closed: {staleCheckStatus.progress}% ({staleCheckStatus.completed}/{staleCheckStatus.total})
-              </span>
-            </div>
-          )}
-
-          {/* Stale Check button (bulk: Supabase jobs when logged in; else local JSON) */}
-          {authRole === 'admin' && (
-            <button
-              onClick={triggerStaleCheck}
-              disabled={staleCheckStatus.status === 'running'}
-              title="Admin: bulk-check posting URLs. Uses your Supabase jobs when available; also updates local JSON. Per-card Check live for one job."
-              className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${staleCheckStatus.status === 'running'
-                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                  : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 active:scale-95'
-                }`}
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${staleCheckStatus.status === 'running' ? 'animate-spin' : ''}`} />
-              Check Closed Jobs
-            </button>
-          )}
-
-          {/* Past 24h Toggle — Admin Only */}
-          {authRole === 'admin' && (
-            <label
-              className="group inline-flex items-center gap-2.5 bg-slate-900/80 backdrop-blur-sm border border-slate-800 hover:border-violet-500/40 rounded-xl px-3.5 py-1.5 cursor-pointer select-none transition-all duration-300"
-              title="When enabled, the sourcing agent will only find jobs posted within the last 24 hours"
-            >
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={past24hOnly}
-                  onChange={e => setPast24hOnly(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-8 h-[18px] rounded-full bg-slate-700 peer-checked:bg-gradient-to-r peer-checked:from-violet-600 peer-checked:to-indigo-500 transition-all duration-300 shadow-inner" />
-                <div className="absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-slate-300 peer-checked:bg-white peer-checked:translate-x-[14px] transition-all duration-300 shadow-md" />
-              </div>
-              <span className={`text-[11px] font-bold tracking-tight transition-colors duration-200 ${past24hOnly ? 'text-violet-300' : 'text-slate-400 group-hover:text-slate-300'}`}>
-                Last 24h Only
-              </span>
-              {past24hOnly && (
-                <span className="flex h-1.5 w-1.5 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500" />
-                </span>
-              )}
-            </label>
-          )}
-
-          {/* Manual Run button — Admin Only */}
-          {authRole === 'admin' && (
-            <button
-              onClick={triggerScrape}
-              disabled={scraperStatus.status === 'running'}
-              className={`inline-flex items-center px-4 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all ${scraperStatus.status === 'running'
-                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-violet-600/10 border border-violet-500/20 active:scale-95'
-                }`}
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${scraperStatus.status === 'running' ? 'animate-spin' : ''}`} />
-              {past24hOnly ? 'Source 24h Jobs' : 'Run Sourcing Agent'}
-            </button>
-          )}
-        </div>
-      </header>
+    <div className="flex h-screen bg-slate-950 text-slate-100 font-sans selection:bg-violet-600/30 overflow-hidden">
+      <AppNav
+        authRole={authRole}
+        authEmail={authEmail}
+        activeTab={activeTab}
+        onTabChange={(tab) => handleTabChange(tab as TabId)}
+        onLogout={handleLogout}
+        webhookActive={!!(config.webhook_url || config.webhook_source === 'environment')}
+        webhookSource={config.webhook_source}
+      />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
       {/* Floating Status Message */}
       {statusMessage && (
@@ -2037,7 +1749,7 @@ export default function Dashboard() {
       )}
 
       {/* Main Layout Grid */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6 flex flex-col">
+      <main className="flex-1 overflow-y-auto w-full p-6 space-y-6 flex flex-col">
 
         {/* Bold, standalone search - the first thing in the content area so
             it's unmissable, not just another field inside the filter
@@ -2702,6 +2414,7 @@ export default function Dashboard() {
         </div>
       )}
 
+      </div>{/* end flex-1 content column */}
     </div>
   );
 }
