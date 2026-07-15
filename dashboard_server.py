@@ -2290,7 +2290,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             uid = self.get_auth_user_id()
             try:
                 from supabase_client import get_supabase_client
-                from datetime import datetime, timezone
                 sb = get_supabase_client()
                 update: dict = {"application_status": status}
                 if notes is not None:
