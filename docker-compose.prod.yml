@@ -1,0 +1,19 @@
+# Production overrides — used on the VM via:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The VM already runs its own Nginx (TLS, DNS for jobs.arkfarms.store).
+# We skip the compose nginx and bind api + web directly so the VM's Nginx
+# can route to them the same way it always has (api:8080, web:3000).
+
+services:
+  api:
+    ports:
+      - "${JOBSEARCH_API_HOST_PORT:-8080}:8080"
+
+  web:
+    ports:
+      - "${JOBSEARCH_WEB_HOST_PORT:-3000}:3000"
+
+  nginx:
+    profiles:
+      - local   # never starts unless --profile local is explicitly passed
