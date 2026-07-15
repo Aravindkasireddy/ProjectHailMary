@@ -13,6 +13,7 @@ import {
   LogOut,
   BellRing,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AppNavProps {
@@ -23,6 +24,8 @@ interface AppNavProps {
   onLogout: () => void;
   webhookActive: boolean;
   webhookSource?: string;
+  scraperRunning?: boolean;
+  onScrape?: () => void;
 }
 
 const NAV_ITEMS = [
@@ -43,6 +46,8 @@ export default function AppNav({
   onLogout,
   webhookActive,
   webhookSource,
+  scraperRunning,
+  onScrape,
 }: AppNavProps) {
   const pathname = usePathname();
   const onDashboard = pathname === '/';
@@ -83,6 +88,23 @@ export default function AppNav({
             </button>
           );
         })}
+
+        {authRole === 'admin' && onScrape && (
+          <div className="pt-2 border-t border-slate-800/60 mt-2">
+            <button
+              onClick={onScrape}
+              disabled={scraperRunning}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                scraperRunning
+                  ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-violet-900/30'
+              }`}
+            >
+              <RefreshCw className={`w-4 h-4 shrink-0 ${scraperRunning ? 'animate-spin' : ''}`} />
+              {scraperRunning ? 'Sourcing…' : 'Run Sourcing Agent'}
+            </button>
+          </div>
+        )}
 
         <div className="pt-2 border-t border-slate-800/60 mt-2">
           <Link

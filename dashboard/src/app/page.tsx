@@ -1732,6 +1732,8 @@ export default function Dashboard() {
         onLogout={handleLogout}
         webhookActive={!!(config.webhook_url || config.webhook_source === 'environment')}
         webhookSource={config.webhook_source}
+        scraperRunning={scraperStatus.status === 'running'}
+        onScrape={triggerScrape}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
