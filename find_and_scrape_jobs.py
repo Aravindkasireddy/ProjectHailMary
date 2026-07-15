@@ -886,11 +886,14 @@ def _setup_run_logging():
     if root.handlers:
         return root
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    fh = logging.FileHandler(log_path, encoding="utf-8")
-    fh.setFormatter(fmt)
+    try:
+        fh = logging.FileHandler(log_path, encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except OSError:
+        pass  # non-fatal — logs still go to stdout
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
-    root.addHandler(fh)
     root.addHandler(sh)
     return root
 
