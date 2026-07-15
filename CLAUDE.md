@@ -5,7 +5,7 @@ Multi-tenant job sourcing/matching platform for DevOps/SRE-type roles. Pipeline 
 ## Stack
 - **Backend**: Python 3.11+, stdlib `http.server` (no FastAPI/Flask), Playwright (WebKit) for scraping, BeautifulSoup, Apify (hosted scraping actors, see below), Supabase (Postgres+Auth+RLS), Gemini API for classification, OpenAI for resume tailoring, Discord/Slack webhooks.
 - **Frontend**: `dashboard/` — Next.js 16.2.6 (App Router), React 19.2.4, Tailwind 4, TypeScript, Supabase JS client.
-- **Infra**: Docker Compose (API on 8080, Web on 3000), GitHub Actions CI + auto-deploy to prod (see "Production deployment" below).
+- **Infra**: Docker Compose — Nginx on port 80 is the single entry point (`/api/*` → api:8080, `/*` → web:3000; neither api nor web expose host ports). `NGINX_HOST_PORT` overrides 80 if busy. GitHub Actions CI + auto-deploy to prod (see "Production deployment" below).
 
 ## Repo layout
 - `find_and_scrape_jobs.py` — Stage 1: Yahoo + ATS job discovery → `scraped_jobs.json`

@@ -1,13 +1,14 @@
-# Gemini-jobsearch — API + Next.js dashboard
+# Gemini-jobsearch — API + Next.js dashboard behind Nginx
 #
-# Default host ports: API 8080, web 3000. If busy, set in .env (see .env.example):
-#   JOBSEARCH_API_HOST_PORT=8081
-#   JOBSEARCH_WEB_HOST_PORT=3001
-# Then: docker compose up --build  (web image rebuild picks up NEXT_PUBLIC_API_URL)
+# Single entry point: http://localhost:${NGINX_HOST_PORT:-80}
+#   /api/* → api:8080 (Python backend)
+#   /*     → web:3000 (Next.js frontend)
+#
+# api and web no longer expose host ports — all traffic goes through nginx.
+# Override the nginx port if 80 is busy:
+#   NGINX_HOST_PORT=8090
 #
 #   docker compose up --build
-#
-# Open http://localhost:${JOBSEARCH_WEB_HOST_PORT:-3000}
 
 services:
   redis:
@@ -32,8 +33,9 @@ services:
     environment:
       JOBSEARCH_DASHBOARD_PORT: "8080"
       REDIS_URL: "redis://redis:6379/0"
-    ports:
-      - "${JOBSEARCH_API_HOST_PORT:-8080}:8080"
+    # Port not exposed to host — nginx is the sole entry point
+    expose:
+      - "8080"
     volumes:
       - .:/app
     working_dir: /app
@@ -48,14 +50,41 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        # /api is a same-origin path — no host/port needed in browser requests
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
         NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
-    ports:
-      - "${JOBSEARCH_WEB_HOST_PORT:-3000}:3000"
+    # Port not exposed to host — nginx is the sole entry point
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     depends_on:
       api:
         condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${NGINX_HOST_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     restart: unless-stopped
 
 volumes:
