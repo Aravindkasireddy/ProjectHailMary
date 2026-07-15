@@ -764,11 +764,14 @@ def send_daily_digest_alert(new_jobs, total_new_count):
 
 def _append_pipeline_log(message):
     log_dir = os.path.join(WORKSPACE_DIR, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, "pipeline.log")
-    ts = datetime.utcnow().isoformat()
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(f"[{ts}] {message}\n")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, "pipeline.log")
+        ts = datetime.utcnow().isoformat()
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {message}\n")
+    except OSError:
+        pass  # non-fatal — pipeline continues even if log write fails
 
 
 # Scraper worker thread

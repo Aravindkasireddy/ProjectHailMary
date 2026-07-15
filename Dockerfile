@@ -30,6 +30,12 @@ RUN python -m playwright install chromium webkit \
 
 COPY --chown=appuser:appuser . .
 
+# Ensure writable runtime dirs exist with correct ownership before switching user.
+# The bind-mount (volumes: .:/app) may overlay these, but if logs/ doesn't exist
+# on the host yet Docker will create it as root — this mkdir makes the host dir
+# get created by the entrypoint as appuser instead.
+RUN mkdir -p /app/logs /app/data && chown -R appuser:appuser /app/logs /app/data
+
 USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV JOBSEARCH_DASHBOARD_PORT=8080
