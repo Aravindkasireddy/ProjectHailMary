@@ -10,6 +10,19 @@
 # Open http://localhost:${JOBSEARCH_WEB_HOST_PORT:-3000}
 
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   api:
     build:
       context: .
@@ -18,12 +31,16 @@ services:
       - .env
     environment:
       JOBSEARCH_DASHBOARD_PORT: "8080"
+      REDIS_URL: "redis://redis:6379/0"
     ports:
       - "${JOBSEARCH_API_HOST_PORT:-8080}:8080"
     volumes:
       - .:/app
     working_dir: /app
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
 
   web:
     image: ${WEB_IMAGE:-}
@@ -40,3 +57,6 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  redis_data:

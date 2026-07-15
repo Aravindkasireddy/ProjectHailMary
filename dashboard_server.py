@@ -111,9 +111,7 @@ from stale_checker import get_stale_check_state  # noqa: E402
 
 
 def _invalidate_jobs_cache(email=None):
-    email_key = email or "admin@hailmary.ai"
-    _cached_jobs_data.pop(email_key, None)
-    _cached_jobs_mtimes.pop(email_key, None)
+    _jobs_cache.invalidate(email or "admin@hailmary.ai")
 
 
 _ZERO_UUID_STR = "00000000-0000-0000-0000-000000000000"
@@ -273,8 +271,7 @@ from dashboard_config_store import (  # noqa: E402,F401
     rebuild_classifier_prompt,
 )
 
-_cached_jobs_data = {}
-_cached_jobs_mtimes = {}
+import redis_cache as _jobs_cache
 
 def _fetch_all_supabase_jobs(user_id: str) -> list:
     """Paginate through public.jobs for this user, returning all rows.
@@ -318,16 +315,10 @@ def _fetch_all_supabase_jobs(user_id: str) -> list:
 
 
 def load_all_jobs(email=None, user_id=None):
-    global _cached_jobs_data, _cached_jobs_mtimes
-
     email_key = email or "admin@hailmary.ai"
 
-    # ── Cache key: wall-clock bucket (10-second granularity) so repeated
-    #   rapid calls within a scrape run don't hit Supabase on every poll.
-    import time as _time
-    cache_key = int(_time.time() // 10)
-    cached = _cached_jobs_data.get(email_key)
-    if cached is not None and _cached_jobs_mtimes.get(email_key) == cache_key:
+    cached = _jobs_cache.get(email_key)
+    if cached is not None:
         return cached
 
     jobs = []
@@ -438,8 +429,7 @@ def load_all_jobs(email=None, user_id=None):
         jobs = group_and_flag_duplicates(jobs)
         jobs = [j for j in jobs if not j.get('is_duplicate')]
 
-    _cached_jobs_data[email_key] = jobs
-    _cached_jobs_mtimes[email_key] = cache_key
+    _jobs_cache.set(email_key, jobs)
     return jobs
 
 def calculate_analytics(email=None):
