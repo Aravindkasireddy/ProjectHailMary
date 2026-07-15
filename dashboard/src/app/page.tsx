@@ -43,234 +43,32 @@ import { supabase } from '../supabaseClient';
 import { dedupeJobsByCanonicalUrl, browserOpenJobUrl } from '../lib/jobUrl';
 import { isOfficialCompanyCareersJobUrl } from '../lib/employerJobUrl';
 import { fetchAllSupabaseJobs } from '../lib/fetchAllSupabaseJobs';
+import {
+  type TabId,
+  type DecisionPayload,
+  type Job,
+  type SponsorMetadata,
+  type AnalyticsData,
+  type PolicyConfig,
+  type Config,
+  type ScraperStatus,
+  type StaleCheckStatus,
+  type SalaryInsights,
+} from './home/types';
+import { type ScrapedTimeframe, CATEGORIES } from './home/constants';
+import {
+  filterJobsOfficialCareersOnly,
+  jobListPollUnchanged,
+  isUsLocation,
+  computeAnalytics,
+  computeSalaryInsights,
+  getJobSource,
+} from './home/utils';
+import HomeJobsToolbar from './home/HomeJobsToolbar';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
 
-type TabId = 'approved' | 'new_today' | 'applications' | 'pending' | 'rejected' | 'human_review' | 'settings' | 'analytics' | 'policy' | 'resume';
-
-interface DecisionPayload {
-  apply_decision?: string;
-  strongest_label?: string;
-  red_flags?: string[];
-  confidence_score?: number;
-  rationale?: string;
-  recommendation?: string;
-  fit_score?: number;
-  ownership_strength?: string;
-  review_reason?: string;
-  cloud?: {
-    primary_cloud?: string;
-  };
-  [key: string]: unknown;
-}
-
-interface Job {
-  job_title: string;
-  company_name: string;
-  job_url: string;
-  requirement_id: string;
-  job_description: string;
-  location_work_type: string;
-  apply_decision: string;
-  strongest_label: string;
-  confidence_score: number;
-  match_score?: number;
-  rationale: string;
-  red_flags?: string[];
-  apply_decision_payload?: DecisionPayload;
-  scraped_at?: string;
-  posted_at?: string;
-  stale?: boolean;
-  archived?: boolean;
-  cloud?: string;
-  seniority?: string;
-  source?: string;
-  pipeline_stage?: string;
-  min_salary?: number;
-  max_salary?: number;
-  is_hourly?: boolean;
-  visa_sponsor?: boolean;
-  sponsor_metadata?: SponsorMetadata;
-  salary_text?: string;
-  job_id?: string;
-  description_hash?: string;
-  id?: string;
-  /** Set by near_dedup.group_and_flag_duplicates on the backend; the original is kept. */
-  is_duplicate?: boolean;
-  duplicate_of?: string | null;
-  /** Last on-demand HTTP probe from /api/job/check-live */
-  listing_health?: {
-    uncertain: boolean;
-    reason?: string;
-    checked_at: string;
-    http_status?: number | null;
-  };
-  application_status?: 'applied' | 'phone_screen' | 'interview' | 'offer' | 'rejected' | null;
-  applied_at?: string | null;
-  application_notes?: string | null;
-}
-
-interface SponsorMetadata {
-  id?: string;
-  company_name: string;
-  company_type?: string;
-  w2_contractor?: string;
-  employee_count?: number;
-  linkedin_account?: string;
-  career_portal?: string;
-  website?: string;
-  sponsor_status?: string;
-  recommended_action?: string;
-  opt_friendly_score?: number;
-  cases_2024?: number;
-  cases_2025?: number;
-  cases_2026?: number;
-  recent_cases?: number;
-  recent_approvals?: number;
-  trend_label?: string;
-  top_state?: string;
-}
-
-interface AnalyticsData {
-  total_sourced: number;
-  approved: number;
-  rejected: number;
-  approval_rate: number;
-  labels_distribution: Record<string, number>;
-  sources_distribution: Record<string, number>;
-  rejection_reasons: Record<string, number>;
-}
-
-interface PolicyConfig {
-  max_experience_years: number;
-  min_salary_annual: number;
-  min_salary_hourly: number;
-  enforce_visa_sponsorship: boolean;
-  enforce_no_clearance: boolean;
-  custom_red_flag_keywords: string[];
-}
-
-interface Config {
-  target_titles: string[];
-  scheduler: {
-    enabled: boolean;
-    run_at_hour: number;
-    run_at_minute: number;
-  };
-  webhook_url: string;
-  webhook_source?: string;
-  search?: {
-    country_phrase?: string;
-    include_remote_primary_boards?: boolean;
-    merge_previous_scrape?: boolean;
-    send_digest_only?: boolean;
-    max_digest_items?: number;
-    jooble_api_key?: string;
-    official_career_job_urls_only?: boolean;
-  };
-}
-
-/** Avoid replacing `jobs` every poll tick when nothing material changed (reduces list flicker). */
-function filterJobsOfficialCareersOnly(jobs: Job[], enabled: boolean): Job[] {
-  if (!enabled) return jobs;
-  return jobs.filter((j) => isOfficialCompanyCareersJobUrl(j.job_url || ''));
-}
-
-const _NON_US_TERMS = [
-  'india', 'bangalore', 'bengaluru', 'hyderabad', 'pune', 'mumbai', 'delhi', 'chennai', 'gurugram', 'gurgaon', 'noida',
-  'uk', 'london', 'united kingdom', 'england', 'scotland', 'wales',
-  'canada', 'toronto', 'vancouver', 'montreal', 'ottawa', 'calgary',
-  'germany', 'berlin', 'munich', 'frankfurt',
-  'france', 'paris',
-  'australia', 'sydney', 'melbourne', 'brisbane', 'perth',
-  'singapore', 'japan', 'tokyo', 'china', 'beijing', 'shanghai',
-  'ireland', 'dublin', 'netherlands', 'amsterdam', 'poland', 'warsaw', 'krakow',
-  'brazil', 'sao paulo', 'mexico', 'colombia', 'argentina', 'chile',
-  'emea', 'apac', 'latam', 'europe', 'asia', 'africa',
-  'philippines', 'manila', 'indonesia', 'jakarta', 'malaysia', 'kuala lumpur',
-  'ukraine', 'romania', 'bulgaria', 'serbia', 'croatia', 'czech',
-  'sweden', 'norway', 'finland', 'denmark', 'switzerland', 'austria', 'belgium',
-  'spain', 'madrid', 'barcelona', 'portugal', 'lisbon', 'italy', 'rome', 'milan',
-  'israel', 'tel aviv', 'dubai', 'uae', 'saudi arabia', 'south africa', 'egypt',
-  'new zealand', 'auckland',
-];
-
-function isUsLocation(location: string | null | undefined): boolean {
-  if (!location) return true; // no location = assume US (pipeline should have filtered)
-  const loc = location.toLowerCase();
-
-  // Explicit US signals win immediately
-  if (/\bunited states\b/.test(loc) || /\busa\b/.test(loc) || /\bu\.s\.a?\b/.test(loc)) return true;
-
-  // US state names / abbreviations
-  const usStates = ['alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware',
-    'florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine',
-    'maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada',
-    'new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma',
-    'oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah',
-    'vermont','virginia','washington','west virginia','wisconsin','wyoming'];
-  if (usStates.some(s => loc.includes(s))) return true;
-
-  // Major US cities
-  const usCities = ['san francisco','seattle','austin','chicago','boston','denver','los angeles','atlanta',
-    'dallas','houston','miami','philadelphia','phoenix','san diego','san jose','new york','nyc',
-    'sunnyvale','mountain view','palo alto','redmond','bellevue','raleigh','charlotte','nashville',
-    'salt lake','las vegas','orlando','tampa','portland','pittsburgh','minneapolis'];
-  if (usCities.some(c => loc.includes(c))) return true;
-
-  // Known non-US terms — word-boundary aware to avoid "uk" in "tukwila"
-  for (const term of _NON_US_TERMS) {
-    if (new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(loc)) return false;
-  }
-
-  return true; // ambiguous → assume US (safer than hiding real jobs)
-}
-
-function jobListPollUnchanged(prev: Job[], next: Job[]): boolean {
-  if (prev.length !== next.length) return false;
-  for (let i = 0; i < prev.length; i++) {
-    const a = prev[i];
-    const b = next[i];
-    if (!b || a.job_url !== b.job_url) return false;
-    if (
-      a.scraped_at !== b.scraped_at ||
-      a.apply_decision !== b.apply_decision ||
-      a.pipeline_stage !== b.pipeline_stage ||
-      a.archived !== b.archived
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-const CATEGORIES = [
-  "DevOps Engineer",
-  "Cloud Automation Engineer",
-  "Platform Engineering",
-  "Cloud Infrastructure Engineer",
-  "DevSecOps",
-  "Site Reliability Engineer (SRE)",
-  "Continuous Integration (CI/CD)",
-  "System Engineer",
-  "OutOfScope"
-];
-
-const getJobSource = (url: string) => {
-  if (!url) return 'Other';
-  const lUrl = url.toLowerCase();
-  if (lUrl.includes('greenhouse.io')) return 'Greenhouse';
-  if (lUrl.includes('lever.co')) return 'Lever';
-  if (lUrl.includes('myworkdayjobs.com')) return 'Workday';
-  if (lUrl.includes('ashbyhq.com')) return 'Ashby';
-  if (lUrl.includes('workable.com')) return 'Workable';
-  if (lUrl.includes('smartrecruiters.com')) return 'SmartRecruiters';
-  if (lUrl.includes('weworkremotely.com')) return 'We Work Remotely';
-  if (lUrl.includes('remote.co')) return 'Remote.co';
-  if (lUrl.includes('linkedin.com')) return 'LinkedIn';
-  if (lUrl.includes('workatastartup.com') || lUrl.includes('ycombinator.com')) return 'Y Combinator';
-  return 'Other';
-};
+// Types, constants, and pure helpers live in ./home/{types,constants,utils}.ts
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -591,106 +389,19 @@ export default function Dashboard() {
     }
   };
 
-  // Client-Side Analytics Calculations
-  const computeAnalyticsLocally = (jobsList: Job[]) => {
-    const total_sourced = jobsList.length;
-    const approvedJobs = jobsList.filter(j => j.apply_decision === 'APPLY');
-    const rejectedJobs = jobsList.filter(j => j.apply_decision === 'DO_NOT_APPLY');
-    const approved = approvedJobs.length;
-    const rejected = rejectedJobs.length;
-    const approval_rate = total_sourced > 0 ? (approved / total_sourced) * 100 : 0;
-
-    const labels_distribution: Record<string, number> = {};
-    const sources_distribution: Record<string, number> = {};
-    const rejection_reasons: Record<string, number> = {};
-
-    jobsList.forEach(j => {
-      const label = j.strongest_label || 'OutOfScope';
-      labels_distribution[label] = (labels_distribution[label] || 0) + 1;
-
-      const source = getJobSource(j.job_url);
-      sources_distribution[source] = (sources_distribution[source] || 0) + 1;
-
-      if (j.apply_decision === 'DO_NOT_APPLY' && j.red_flags) {
-        j.red_flags.forEach(flag => {
-          rejection_reasons[flag] = (rejection_reasons[flag] || 0) + 1;
-        });
-      }
-    });
-
-    setAnalyticsData({
-      total_sourced,
-      approved,
-      rejected,
-      approval_rate,
-      labels_distribution,
-      sources_distribution,
-      rejection_reasons
-    });
-  };
-
-  // Client-Side Salary Insights Calculations
-  const computeSalaryInsightsLocally = (jobsList: Job[]) => {
-    const approvedJobs = jobsList.filter(j => j.apply_decision === 'APPLY' && !j.archived);
-    const yearly_salaries: number[] = [];
-    const hourly_salaries: number[] = [];
-
-    approvedJobs.forEach(j => {
-      const min = j.min_salary;
-      const max = j.max_salary;
-      const is_h = j.is_hourly;
-      if (min !== undefined && min !== null && max !== undefined && max !== null) {
-        const avg = (min + max) / 2.0;
-        if (is_h) {
-          hourly_salaries.push(avg);
-        } else {
-          yearly_salaries.push(avg);
-        }
-      }
-    });
-
-    const calculateStats = (arr: number[]) => {
-      if (arr.length === 0) return { count: 0, avg: 0, min: 0, max: 0, distribution: [] };
-      const sum = arr.reduce((a, b) => a + b, 0);
-      const avg = sum / arr.length;
-      const min = Math.min(...arr);
-      const max = Math.max(...arr);
-      return { count: arr.length, avg, min, max, distribution: arr };
-    };
-
-    const yearly = calculateStats(yearly_salaries);
-    const hourly = calculateStats(hourly_salaries);
-
-    setSalaryInsights({
-      yearly_count: yearly.count,
-      yearly_avg: yearly.avg,
-      yearly_min: yearly.min,
-      yearly_max: yearly.max,
-      hourly_count: hourly.count,
-      hourly_avg: hourly.avg,
-      hourly_min: hourly.min,
-      hourly_max: hourly.max,
-      yearly_distribution: yearly.distribution,
-      hourly_distribution: hourly.distribution
-    });
-  };
-
-  // Trigger local calculations when jobs update
+  // Trigger analytics + salary calculations whenever jobs list changes
   useEffect(() => {
     if (jobs.length > 0) {
       setTimeout(() => {
-        computeAnalyticsLocally(jobs);
-        computeSalaryInsightsLocally(jobs);
+        setAnalyticsData(computeAnalytics(jobs));
+        setSalaryInsights(computeSalaryInsights(jobs));
       }, 0);
     }
   }, [jobs]);
 
   // Fetch API Functions
   const fetchAnalytics = async () => {
-    // Analytics computed locally via useEffect
-    if (jobs.length > 0) {
-      computeAnalyticsLocally(jobs);
-    }
+    if (jobs.length > 0) setAnalyticsData(computeAnalytics(jobs));
   };
 
   const fetchPolicy = async () => {
@@ -720,10 +431,7 @@ export default function Dashboard() {
   };
 
   const fetchSalaryInsights = async () => {
-    // Salary insights computed locally via useEffect
-    if (jobs.length > 0) {
-      computeSalaryInsightsLocally(jobs);
-    }
+    if (jobs.length > 0) setSalaryInsights(computeSalaryInsights(jobs));
   };
 
   const fetchResume = async () => {
@@ -2463,232 +2171,33 @@ export default function Dashboard() {
         </section>
 
         {/* Toolbar & Filter Tabs */}
-        <section className="flex flex-col bg-slate-900/30 backdrop-blur-md border border-slate-800/80 p-4 rounded-2xl gap-4 shadow-xl">
-
-          {/* Top Row: Navigation Tabs */}
-          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
-            {/* Navigation Tabs */}
-            <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/50 flex-wrap gap-1">
-              <button
-                onClick={() => handleTabChange('approved')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'approved'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                All Jobs ({approvedJobs.length})
-              </button>
-              <button
-                onClick={() => handleTabChange('new_today')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'new_today'
-                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                🆕 New Today ({newTodayJobs.length})
-                {newJobsCount > 0 && (
-                  <span className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-extrabold leading-none rounded-full animate-pulse"
-                    style={{background:'var(--cyan)',color:'var(--void)',minWidth:'16px'}}>
-                    +{newJobsCount}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => handleTabChange('applications')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'applications'
-                    ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                📋 My Applications ({applicationJobs.length})
-              </button>
-              <button
-                onClick={() => handleTabChange('human_review')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'human_review'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                Human review ({humanReviewJobs.length})
-              </button>
-              <button
-                onClick={() => handleTabChange('rejected')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'rejected'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                Rejected ({rejectedJobs.length})
-              </button>
-              <button
-                onClick={() => handleTabChange('analytics')}
-                className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'analytics'
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                  }`}
-              >
-                <BarChart3 className="w-3.5 h-3.5 mr-1" />
-                Analytics
-              </button>
-              {authRole === 'admin' && (
-                <>
-                  <button
-                    onClick={() => handleTabChange('policy')}
-                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'policy'
-                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                        : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                  >
-                    <Shield className="w-3.5 h-3.5 mr-1" />
-                    Classifier Policy
-                  </button>
-                  <button
-                    onClick={() => handleTabChange('resume')}
-                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'resume'
-                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                        : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                  >
-                    <FileText className="w-3.5 h-3.5 mr-1" />
-                    Base Resume
-                  </button>
-                  <button
-                    onClick={() => handleTabChange('settings')}
-                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${activeTab === 'settings'
-                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md'
-                        : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                  >
-                    <SettingsIcon className="w-3.5 h-3.5 mr-1" />
-                    Settings
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-
-          {/* Saved Filter Presets */}
-          {activeTab === 'approved' && (
-            <div className="flex items-center gap-2 flex-wrap border-t border-slate-800/40 pt-3">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">Quick filters:</span>
-              {([
-                { key: 'high_fit', label: 'High-fit', apply: () => { setConfidenceBandFilter('high'); setRemoteOnlyFilter(false); setScrapedTimeframe('all'); } },
-                { key: 'fresh', label: 'Fresh jobs', apply: () => { setScrapedTimeframe('today'); setConfidenceBandFilter('all'); setRemoteOnlyFilter(false); } },
-                { key: 'remote', label: 'Remote-first', apply: () => { setRemoteOnlyFilter(true); setConfidenceBandFilter('all'); setScrapedTimeframe('all'); } },
-                { key: 'needs_review', label: 'Needs review', apply: () => { setConfidenceBandFilter('borderline'); setRemoteOnlyFilter(false); setScrapedTimeframe('all'); } },
-              ] as const).map(preset => (
-                <button
-                  key={preset.key}
-                  type="button"
-                  onClick={() => {
-                    if (activeFilterPreset === preset.key) {
-                      // toggle off: clear everything this preset touches
-                      setActiveFilterPreset(null);
-                      setConfidenceBandFilter('all');
-                      setRemoteOnlyFilter(false);
-                      setScrapedTimeframe('all');
-                    } else {
-                      setActiveFilterPreset(preset.key);
-                      preset.apply();
-                    }
-                  }}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
-                    activeFilterPreset === preset.key
-                      ? 'bg-violet-600/90 text-white border-violet-500'
-                      : 'bg-slate-900/60 text-slate-300 border-slate-700 hover:border-violet-600/50 hover:text-violet-300'
-                  }`}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Bottom Row: Search bar & Category filter */}
-          {activeTab !== 'settings' && (
-            <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 w-full justify-between border-t border-slate-800/40 pt-3 flex-wrap">
-              {activeTab === 'approved' && (
-                <div className="relative shrink-0">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <Sliders className="w-4 h-4 text-violet-400" />
-                  </span>
-                  <select
-                    value={selectedRoleFilter}
-                    onChange={e => setSelectedRoleFilter(e.target.value)}
-                    className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[180px]"
-                  >
-                    <option value="all">All Roles</option>
-                    {Array.from(new Set(approvedJobs.map(j => j.strongest_label).filter(Boolean))).map(role => (
-                      <option key={role} value={role}>{role}</option>
-                    ))}
-                  </select>
-                  <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
-                    <ChevronRight className="w-4 h-4 rotate-90" />
-                  </span>
-                </div>
-              )}
-
-              {/* Sort By Dropdown */}
-              <div className="relative shrink-0">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Sliders className="w-4 h-4 text-violet-400" />
-                </span>
-                <select
-                  value={sortBy}
-                  onChange={e => setSortBy(e.target.value as 'newest' | 'oldest')}
-                  className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[150px]"
-                >
-                  <option value="newest">Newest Scrape</option>
-                  <option value="oldest">Oldest Scrape</option>
-                </select>
-                <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
-                  <ChevronRight className="w-4 h-4 rotate-90" />
-                </span>
-              </div>
-
-              {/* Show Active Only Toggle */}
-              {activeTab === 'approved' && (
-                <button
-                  type="button"
-                  onClick={() => setShowActiveOnly(prev => !prev)}
-                  className={`inline-flex items-center px-4 py-2 border rounded-xl text-sm font-semibold transition-colors shrink-0 shadow-inner ${showActiveOnly
-                      ? 'bg-violet-950/40 border-violet-850 text-violet-300'
-                      : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                >
-                  <Sliders className="w-4 h-4 mr-2 text-violet-400" />
-                  {showActiveOnly ? 'Active Only' : 'Include Closed'}
-                </button>
-              )}
-
-              {/* Scraped Timeframe Filter */}
-              <div className="relative shrink-0">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Sliders className="w-4 h-4 text-violet-400" />
-                </span>
-                <select
-                  value={scrapedTimeframe}
-                  onChange={e => setScrapedTimeframe(e.target.value as 'all' | 'recent' | 'today' | 'week' | 'month' | 'posted_today' | 'posted_week')}
-                  className="bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-600/70 transition-colors shadow-inner appearance-none cursor-pointer w-full sm:w-auto min-w-[170px]"
-                >
-                  <option value="all">All Times</option>
-                  <option value="recent">Sourced: Last 4 Hours</option>
-                  <option value="today">Sourced: Last 24 Hours</option>
-                  <option value="posted_today">Posted: Last 24 Hours</option>
-                  <option value="week">Sourced: Last 7 Days</option>
-                  <option value="posted_week">Posted: Last 7 Days</option>
-                  <option value="month">Sourced: Last 30 Days</option>
-                </select>
-                <span className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-500">
-                  <ChevronRight className="w-4 h-4 rotate-90" />
-                </span>
-              </div>
-
-            </div>
-          )}
-
-        </section>
+        <HomeJobsToolbar
+          activeTab={activeTab}
+          authRole={authRole}
+          approvedJobs={approvedJobs}
+          newTodayJobs={newTodayJobs}
+          applicationJobs={applicationJobs}
+          humanReviewJobs={humanReviewJobs}
+          rejectedJobs={rejectedJobs}
+          newJobsCount={newJobsCount}
+          searchTerm={searchTerm}
+          selectedRoleFilter={selectedRoleFilter}
+          sortBy={sortBy}
+          scrapedTimeframe={scrapedTimeframe}
+          showActiveOnly={showActiveOnly}
+          remoteOnlyFilter={remoteOnlyFilter}
+          confidenceBandFilter={confidenceBandFilter}
+          activeFilterPreset={activeFilterPreset}
+          onTabChange={handleTabChange}
+          onSearchChange={setSearchTerm}
+          onRoleFilterChange={setSelectedRoleFilter}
+          onSortChange={setSortBy}
+          onTimeframeChange={setScrapedTimeframe}
+          onShowActiveOnlyToggle={() => setShowActiveOnly(prev => !prev)}
+          onRemoteOnlyChange={setRemoteOnlyFilter}
+          onConfidenceBandChange={setConfidenceBandFilter}
+          onPresetToggle={v => setActiveFilterPreset(v || null)}
+        />
 
         {/* Tab Content Panels */}
         <section className="flex-1 flex flex-col">          {activeTab === 'analytics' ? (
